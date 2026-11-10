@@ -1,4 +1,4 @@
-// Stremio Origin for Android. The native libraries (libmain.so, libSDL2.so, libcurl.so, libsbengine.so), SDL's Java
+// Origin for Android. The native libraries (libmain.so, libSDL2.so, libcurl.so, libsbengine.so), SDL's Java
 // sources and the app's assets are put in place by tools/android/build-apk.sh; this file only packages them.
 plugins { id 'com.android.application' }
 
