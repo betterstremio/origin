@@ -20,6 +20,7 @@ EMU = os.path.join(SDK, 'emulator', 'emulator.exe' if os.name == 'nt' else 'emul
 PKG = 'tv.stremioorigin.app'; ACT = PKG + '/.MainActivity'
 AVD = os.environ.get('SB_AVD', 'sbtv')
 WSL_REPO = '/mnt/' + REPO[0].lower() + REPO[2:].replace('\\', '/') if os.name == 'nt' else REPO
+APKS = ('/root/obuild/%s/android/apk' % os.path.basename(REPO)) if os.name == 'nt' else REPO + '/build/android/apk'   # tools/paths.sh's BUILD_ROOT
 HOST = '10.0.2.2'; PORT = 8765
 
 ap = argparse.ArgumentParser(); ap.add_argument('tests', nargs='*'); ap.add_argument('--build', action='store_true')
@@ -83,13 +84,13 @@ def device_reaches_host():
 
 def build():
     print('building the dev APK (%s)' % A.abis)
-    rc, out = wsl('ABIS="%s" ROOT=%s bash <(sed "s/\\r$//" %s/tools/android/build-apk.sh) --dev 2>&1 | tail -5' % (A.abis, WSL_REPO, WSL_REPO), timeout=1800)
+    rc, out = wsl('ABIS="%s" ROOT=%s bash %s/tools/android/build-apk.sh --dev 2>&1 | tail -5' % (A.abis, WSL_REPO, WSL_REPO), timeout=1800)
     if 'APK_OK' not in out: print(out); raise RuntimeError('build failed')
 def apk_path(ver=None):
     ver = ver or json.load(open(os.path.join(REPO, 'pkg', 'appinfo.json')))['version']
     out = os.path.join(WORK, 'out'); os.makedirs(out, exist_ok=True)
     name = '%s_%s_android_dev.apk' % (PKG, ver)
-    wsl('cp /root/abuild/apk/%s %s/' % (name, '/mnt/' + out[0].lower() + out[2:].replace('\\', '/')))
+    wsl('cp %s/%s %s/' % (APKS, name, '/mnt/' + out[0].lower() + out[2:].replace('\\', '/')))
     return os.path.join(out, name)
 
 # ---- the app ----
@@ -299,7 +300,7 @@ def t_update():
     rc, out = wsl('ls /root/abuild/testmedia/rel/%s_%s_android.apk' % (PKG, newer))
     if rc:
         print('  building %s for the update test' % newer)
-        rc, out = wsl('''python3 -c 'import json;d=json.load(open("%s/pkg/appinfo.json"));d["version"]="%s";json.dump(d,open("/root/abuild/appinfo-next.json","w"))' && APPINFO=/root/abuild/appinfo-next.json ABIS="%s" ROOT=%s bash <(sed "s/\\r$//" %s/tools/android/build-apk.sh) --dev 2>&1 | tail -2 && rm -rf /root/abuild/testmedia/rel && mkdir -p /root/abuild/testmedia/rel && cp /root/abuild/apk/%s_%s_android_dev.apk /root/abuild/testmedia/rel/%s_%s_android.apk''' % (WSL_REPO, newer, A.abis, WSL_REPO, WSL_REPO, PKG, newer, PKG, newer), timeout=1800)
+        rc, out = wsl('''python3 -c 'import json;d=json.load(open("%s/pkg/appinfo.json"));d["version"]="%s";json.dump(d,open("/root/abuild/appinfo-next.json","w"))' && APPINFO=/root/abuild/appinfo-next.json ABIS="%s" ROOT=%s bash %s/tools/android/build-apk.sh --dev 2>&1 | tail -2 && rm -rf /root/abuild/testmedia/rel && mkdir -p /root/abuild/testmedia/rel && cp %s/%s_%s_android_dev.apk /root/abuild/testmedia/rel/%s_%s_android.apk''' % (WSL_REPO, newer, A.abis, WSL_REPO, WSL_REPO, APKS, PKG, newer, PKG, newer), timeout=1800)
         if 'APK_OK' not in out: return False, 'could not build %s: %s' % (newer, out[-300:])
     adb('install', '-r', '-d', apk_path(base), timeout=180)
     if ('versionName=' + base) not in sh('dumpsys package ' + PKG): return False, 'could not put %s back' % base

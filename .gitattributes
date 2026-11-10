@@ -1,0 +1,11 @@
+# LF on every checkout, Windows included: WSL runs the scripts as they are, and packages never carry CRLF text.
+* text=auto eol=lf
+# third-party code stays byte for byte as its authors published it
+third_party/** -text
+*.png binary
+*.jpg binary
+*.webp binary
+*.wav binary
+*.ttf binary
+*.mp4 binary
+*.bin binary

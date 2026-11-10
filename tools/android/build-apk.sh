@@ -2,30 +2,28 @@
 # The Android APK (Linux or WSL), after tools/android/build-deps.sh and tools/build-engine.sh android-<abi>:
 #   tools/android/build-apk.sh            release: arm64-v8a + armeabi-v7a  -> <appid>_<ver>_android.apk
 #   tools/android/build-apk.sh --dev      dev build (SB_* test settings from the launch intent), + x86 for the emulator
+#   --clean                               compile everything again (always for a release)
 # Every build is signed with the release key ($ORIGIN_BUILD/keys/android-release.jks, made on the first run): an
 # update only installs over an APK signed with the same key, so that file must never be lost.
 set -euo pipefail
-ROOT="${ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
-AB="${AB:-$HOME/abuild}"; OB="${ORIGIN_BUILD:-$HOME/origin-build}"; SDK="${ANDROID_HOME:-$HOME/android-sdk}"
-DEV=0; for a in "$@"; do [ "$a" = --dev ] && DEV=1; done
+source "$(dirname "${BASH_SOURCE[0]}")/../paths.sh"
+OB="$ORIGIN_BUILD"; SDK="${ANDROID_HOME:-$HOME/android-sdk}"; BA="$BUILD_ROOT/android"
+DEV=0; CLEAN=""; for a in "$@"; do case "$a" in --dev) DEV=1;; --clean) CLEAN=--clean;; esac; done
 if [ $DEV = 1 ]; then ABIS="${ABIS:-arm64-v8a armeabi-v7a x86}"; else ABIS="${ABIS:-arm64-v8a armeabi-v7a}"; fi
 APPINFO="${APPINFO:-$ROOT/pkg/appinfo.json}"   # APPINFO=other.json: another version (the updater test builds a newer one)
 APPID=tv.stremioorigin.app; VER="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['version'])" "$APPINFO")"
 
-ROOT="$ROOT" bash <(sed 's/\r$//' "$ROOT/tools/android/build-native.sh") $ABIS
+bash "$ROOT/tools/build.sh" android $ABIS $CLEAN
 
 # ---- the Gradle project, staged outside the repo ----
-G="$AB/gradle"; mkdir -p "$G"
+G="$BA/gradle"; mkdir -p "$G"
 rm -rf "$G/app/src" "$G/app/build/sdl-java"; mkdir -p "$G/app"
 cp -r "$ROOT/android/settings.gradle" "$ROOT/android/build.gradle" "$ROOT/android/gradle.properties" "$G/"
 cp "$ROOT/android/app/build.gradle" "$G/app/"; cp -r "$ROOT/android/app/src" "$G/app/"
-find "$G" -maxdepth 1 -type f -name '*.gradle' -exec sed -i 's/\r$//' {} +
-find "$G/app" -path "$G/app/build" -prune -o -type f \( -name '*.gradle' -o -name '*.java' -o -name '*.xml' -o -name '*.properties' \) -exec sed -i 's/\r$//' {} +
 mkdir -p "$G/app/build"; cp -r "$AB/deps/sdl-java" "$G/app/build/sdl-java"
-for ABI in $ABIS; do J="$G/app/src/main/jniLibs/$ABI"; mkdir -p "$J"; cp "$AB/out/$ABI"/{libmain.so,libSDL2.so,libcurl.so} "$J/"
-  [ -f "$AB/out/$ABI/libsbengine.so" ] && cp "$AB/out/$ABI/libsbengine.so" "$J/"; done
+for ABI in $ABIS; do J="$G/app/src/main/jniLibs/$ABI"; mkdir -p "$J"; cp "$BA/out/$ABI"/{libmain.so,libSDL2.so,libcurl.so} "$J/"
+  [ -f "$BA/out/$ABI/libsbengine.so" ] && cp "$BA/out/$ABI/libsbengine.so" "$J/"; done
 A="$G/app/src/main/assets/app"; mkdir -p "$A"; cp -r "$ROOT/assets" "$A/assets"; cp "$APPINFO" "$A/appinfo.json"
-find "$A/assets" -name '*.json' -exec sed -i 's/\r$//' {} +
 # the launcher icon and the TV banner, drawn from the webOS icons
 python3 - "$ROOT" "$G/app/src/main/res" <<'PY'
 import sys, os
@@ -58,7 +56,7 @@ cd "$G"
 SB_ABIS="$ABIS" SB_APPINFO="$APPINFO" SB_KEYSTORE="$KS" SB_KEYSTORE_PASS="$(cat "$KP")" \
   "$GH/bin/gradle" --no-daemon -q assembleRelease $([ $DEV = 1 ] && echo -Pdev) 2>&1 | grep -v "^$" | grep -vi "warning: \[options\]\|deprecat" || true
 APK="$G/app/build/outputs/apk/release/app-release.apk"; [ -f "$APK" ] || { echo "APK FAILED"; exit 1; }
-mkdir -p "$AB/apk"; SUF=""; [ $DEV = 1 ] && SUF=_dev; NAME="${APPID}_${VER}_android${SUF}.apk"; cp "$APK" "$AB/apk/$NAME"
-"$SDK/build-tools/35.0.0/apksigner" verify "$AB/apk/$NAME" && echo "signed ok"
-ls -l "$AB/apk/$NAME" | awk '{printf "%s  %.1f MB\n", $NF, $5/1048576}'; sha256sum "$AB/apk/$NAME" | cut -c1-64
+mkdir -p "$BA/apk"; SUF=""; [ $DEV = 1 ] && SUF=_dev; NAME="${APPID}_${VER}_android${SUF}.apk"; cp "$APK" "$BA/apk/$NAME"
+"$SDK/build-tools/35.0.0/apksigner" verify "$BA/apk/$NAME" && echo "signed ok"
+ls -l "$BA/apk/$NAME" | awk '{printf "%s  %.1f MB\n", $NF, $5/1048576}'; sha256sum "$BA/apk/$NAME" | cut -c1-64
 echo APK_OK
