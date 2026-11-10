@@ -50,4 +50,15 @@ int plat_color_keys(void);
 int plat_install_start(const char *url, const char *sha256, const char *version);
 /* where it is: 0 = on its way (msg: progress, may be ""), 1 = with the installer (msg says so), -1 = failed (msg: why) */
 int plat_install_poll(char *msg, int cap);
+/* n random bytes from the system (tokens, keys); 1 when all came */
+int plat_random(void *buf, int n);
+#if SB_PLAT_GL
+/* where the platform makes the GL surface itself (target.h): the context on window w (NULL on failure), the swap, the
+   swap interval, and the surface's size in pixels */
+void *plat_gl_create(SDL_Window *w);
+void plat_gl_swap(SDL_Window *w);
+void plat_gl_interval(int n);
+void plat_gl_size(SDL_Window *w, int *pw, int *ph);
+void plat_gl_destroy(void *ctx);
+#endif
 #endif

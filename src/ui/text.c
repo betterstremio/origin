@@ -127,6 +127,12 @@ static const FbSpec MACFONTS[] = {
   { "Supplemental/Kannada Sangam MN.ttc", 0, { HB_SCRIPT_KANNADA } }, { "Supplemental/Malayalam Sangam MN.ttc", 0, { HB_SCRIPT_MALAYALAM } },
   { "Supplemental/Oriya Sangam MN.ttc", 0, { HB_SCRIPT_ORIYA } }, { "Supplemental/Arial Unicode.ttf", C_SYM | C_GEN },
 };
+#ifdef SB_FONT_TABLE
+#include SB_FONT_TABLE   /* the platform's own list (target.h), as PLATFONTS */
+#define EXACTFONTS PLATFONTS
+#else
+#define EXACTFONTS MACFONTS
+#endif
 static void fb_add(const char *dir, const char *name, int cls, const hb_script_t *sc) {
   if (nfb >= MAX_FB) return; FbFile *f = &fbf[nfb++]; snprintf(f->path, sizeof f->path, "%s/%s", dir, name); f->cls = cls; if (sc) memcpy(f->sc, sc, sizeof f->sc);
 }
@@ -138,7 +144,7 @@ static void fb_init(void) {
   if (!dir) { dir = SB_FONT_DIR; exact = SB_FONTS_EXACT; }
 #endif
   if (!dir) dir = "/usr/share/fonts";
-  if (exact) { for (unsigned i = 0; i < sizeof MACFONTS / sizeof *MACFONTS; i++) { char p[400]; snprintf(p, sizeof p, "%s/%s", dir, MACFONTS[i].name); if (!access(p, R_OK)) fb_add(dir, MACFONTS[i].name, MACFONTS[i].cls, MACFONTS[i].sc); } return; }
+  if (exact) { for (unsigned i = 0; i < sizeof EXACTFONTS / sizeof *EXACTFONTS; i++) { char p[400]; snprintf(p, sizeof p, "%s/%s", dir, EXACTFONTS[i].name); if (!access(p, R_OK)) fb_add(dir, EXACTFONTS[i].name, EXACTFONTS[i].cls, EXACTFONTS[i].sc); } return; }
   static char names[96][96]; int nn = 0; DIR *d = opendir(dir); struct dirent *e;
   /* LG's jails mount /usr/share/fonts read-only for every app; should a firmware leave it out, the bundled
      faces still cover Latin, Greek, Cyrillic and Arabic, and other scripts show as boxes */

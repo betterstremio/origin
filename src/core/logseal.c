@@ -188,7 +188,8 @@ char *logscrub_share(const char *text) {
 }
 
 /* ---- the code and the seal ---- */
-static int rnd(unsigned char *b, size_t n) { FILE *f = fopen("/dev/urandom", "rb"); if (!f) return 0; size_t g = fread(b, 1, n, f); fclose(f); return g == n; }
+int plat_random(void *buf, int n); /* (platform/plat.h) */
+static int rnd(unsigned char *b, size_t n) { return plat_random(b, (int)n); }
 static int ecc_rng(uint8_t *dest, unsigned size) { return rnd(dest, size); }
 int logseal_code(char out[5]) {
   static const char A[] = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"; unsigned char b[4];

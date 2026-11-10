@@ -17,6 +17,7 @@
 #include <stdint.h>
 
 static int fails;
+int plat_random(void *buf, int n) { FILE *f = fopen("/dev/urandom", "rb"); if (!f) return 0; size_t g = fread(buf, 1, (size_t)n, f); fclose(f); return g == (size_t)n; } /* (the app's comes from its platform) */
 static size_t unhex(const char *h, unsigned char *out) { size_t n = strlen(h) / 2; for (size_t i = 0; i < n; i++) { unsigned v; sscanf(h + 2 * i, "%2x", &v); out[i] = (unsigned char)v; } return n; }
 static void hex(const unsigned char *b, size_t n, char *out) { for (size_t i = 0; i < n; i++) sprintf(out + 2 * i, "%02x", b[i]); out[2 * n] = 0; }
 static void check(const char *name, const unsigned char *got, size_t n, const char *wantHex) {

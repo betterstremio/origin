@@ -57,3 +57,4 @@ void plat_luna_pump(void) {}
 int plat_luna_send(const char *uri, const char *payload) { (void)uri; (void)payload; return 0; }
 int plat_panel_lines(void) { return 0; }
 int plat_color_keys(void) { return 1; } /* F1-F4 stand in for them */
+int plat_random(void *buf, int n) { FILE *f = fopen("/dev/urandom", "rb"); if (!f) return 0; size_t g = fread(buf, 1, (size_t)n, f); fclose(f); return g == (size_t)n; }

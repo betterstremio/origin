@@ -3,7 +3,7 @@
 # 45 frames a second; the frame numbers leave room for a slow machine.
 BIN="$1"; ROOT="$2"; O="$3"; PORT=18765; H="$O/home"; D="$H/Library/Application Support/StremioOrigin"; LOG="$O/server.log"; FAILS=0
 mkdir -p "$O"; rm -rf "$H" "$O"/*.log "$O"/*.png; mkdir -p "$D"; : > "$LOG"
-seed() { echo '{"guideSeen":"1","whatsNewSeen":"9.9.9"}' > "$D/state.json"; }
+seed() { echo '{"guideSeen":"1","whatsNewSeen":"9.9.9","introSound":"false"}' > "$D/state.json"; }
 seed
 python3 -I "$ROOT/tests/nuvio/fake_nuvio.py" $PORT "$LOG" & SRV=$!; trap 'kill $SRV 2>/dev/null' EXIT; sleep 0.6
 ctl() { python3 -I -c "import urllib.request,sys; urllib.request.urlopen('http://127.0.0.1:$PORT/ctl?'+sys.argv[1]).read()" "$1"; }

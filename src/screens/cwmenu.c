@@ -34,7 +34,7 @@ static struct {
   Tween x, op; /* the panel's slide and fade: an even ease-out (the quick-tween curve put it all in the first two frames) */ Tween out, grow; double openAt; SGlass glass; FPill pill; Nudge nudge; float h, titleLines;
   float from[5]; /* the card that was held, as it sat on screen: Reviews grows out of it */
 } M;
-static void close(void) { if (!M.open) return; M.open = 0; M.closing = 1; app_occluder_drop(); if (app_overlay) app_overlay = NULL; tween_set(&M.out, M.op.v); tween_to(&M.out, 0, 0.18f, EASE_IN_OUT); tween_to(&M.x, 28, 0.2f, EASE_CSS_EASEOUT); }
+static void menu_close(void) { if (!M.open) return; M.open = 0; M.closing = 1; app_occluder_drop(); if (app_overlay) app_overlay = NULL; tween_set(&M.out, M.op.v); tween_to(&M.out, 0, 0.18f, EASE_IN_OUT); tween_to(&M.x, 28, 0.2f, EASE_CSS_EASEOUT); }
 static void add(int a, const char *icon, const char *label) { if (M.n >= 9) return; M.acts[M.n] = a; M.icons[M.n] = icon; snprintf(M.labels[M.n], sizeof M.labels[M.n], "%s", label); M.n++; }
 static void on_meta_toggle(cJSON *m, void *ud) { (void)ud; Item it = M.it; lib_toggle_watched(&it, js_arr(m, "videos")); app_refresh_boards(); if (SCR == SCR_DETAIL) detail_refresh_watched(); }
 /* what an action did, said on the title's own card: a glass chip over it ("Added to Library", "Marked as watched");
@@ -132,15 +132,15 @@ static void fx_draw(void) {
 static void act(int a) {
   Item it = M.it; fpill_press(&M.pill);
   switch (a) {
-    case A_STREAMS: close(); detail_open_streams(it.videoId); break;
-    case A_PLAY: close(); app_open_item(&it); break;
-    case A_RESTART: close(); app_play_from_start(&it); break;
-    case A_DETAILS: { close(); DetailParams p; memset(&p, 0, sizeof p); p.it = it; app_go(SCR_DETAIL, &p, 0); break; }
-    case A_WATCHED: { int was = lib_is_marked_watched(&it); sound_play(SND_TOGGLE); if (was) fx_start(4, "eyeOff", T("Marked as unwatched")); else { fx_start(3, "check", T("Marked as watched")); card_mark_pop(it.id); } } close(); if (!strcmp(it.type, "series")) { cJSON *m = sb_meta_cached(it.type, it.id); if (m) on_meta_toggle(m, NULL); else sb_meta(it.type, it.id, on_meta_toggle, NULL); } else on_meta_toggle(NULL, NULL); break;
-    case A_TRAILER: close(); detail_trailer(it.type, it.id, it.name); break;
-    case A_SIMILAR: { close(); DetailParams p; memset(&p, 0, sizeof p); p.it = it; app_go(SCR_SIM, &p, 0); break; }
-    case A_REVIEWS: close(); revpanel_show(&it, 0, M.from[0], M.from[1], M.from[2], M.from[3], M.from[4]); break;
-    case A_LIB: { int in = lib_has(it.id); sound_play(SND_TOGGLE); fx_start(in ? 2 : 1, in ? "minus" : "plus", T(in ? "Removed from Library" : "Added to Library")); sb_poster_of(&it, FX.poster, sizeof FX.poster); } lib_toggle(&it); close(); app_refresh_boards(); if (SCR == SCR_DETAIL) detail_paint_lib(); break;
+    case A_STREAMS: menu_close(); detail_open_streams(it.videoId); break;
+    case A_PLAY: menu_close(); app_open_item(&it); break;
+    case A_RESTART: menu_close(); app_play_from_start(&it); break;
+    case A_DETAILS: { menu_close(); DetailParams p; memset(&p, 0, sizeof p); p.it = it; app_go(SCR_DETAIL, &p, 0); break; }
+    case A_WATCHED: { int was = lib_is_marked_watched(&it); sound_play(SND_TOGGLE); if (was) fx_start(4, "eyeOff", T("Marked as unwatched")); else { fx_start(3, "check", T("Marked as watched")); card_mark_pop(it.id); } } menu_close(); if (!strcmp(it.type, "series")) { cJSON *m = sb_meta_cached(it.type, it.id); if (m) on_meta_toggle(m, NULL); else sb_meta(it.type, it.id, on_meta_toggle, NULL); } else on_meta_toggle(NULL, NULL); break;
+    case A_TRAILER: menu_close(); detail_trailer(it.type, it.id, it.name); break;
+    case A_SIMILAR: { menu_close(); DetailParams p; memset(&p, 0, sizeof p); p.it = it; app_go(SCR_SIM, &p, 0); break; }
+    case A_REVIEWS: menu_close(); revpanel_show(&it, 0, M.from[0], M.from[1], M.from[2], M.from[3], M.from[4]); break;
+    case A_LIB: { int in = lib_has(it.id); sound_play(SND_TOGGLE); fx_start(in ? 2 : 1, in ? "minus" : "plus", T(in ? "Removed from Library" : "Added to Library")); sb_poster_of(&it, FX.poster, sizeof FX.poster); } lib_toggle(&it); menu_close(); app_refresh_boards(); if (SCR == SCR_DETAIL) detail_paint_lib(); break;
   }
 }
 static int key(int k) {
@@ -148,7 +148,7 @@ static int key(int k) {
   if (k == K_DOWN) M.idx = M.idx + 1 < M.n ? M.idx + 1 : M.idx;
   else if (k == K_UP) M.idx = M.idx > 0 ? M.idx - 1 : 0;
   else if (k == K_OK) { act(M.acts[M.idx]); return 1; }
-  else if (k == K_LEFT || k == K_BACK) { close(); return 1; }
+  else if (k == K_LEFT || k == K_BACK) { menu_close(); return 1; }
   if (M.idx == i0) nudge_start(&M.nudge, k);
   return 1;
 }
@@ -160,7 +160,7 @@ static void tick(float dt) {
 }
 static void item_focus(int i, int b) { (void)b; if (M.idx != i) M.idx = i; }
 static void item_act(int i, int b) { (void)b; M.idx = i; act(M.acts[i]); }
-static void outside_act(int a, int b) { (void)a; (void)b; close(); }
+static void outside_act(int a, int b) { (void)a; (void)b; menu_close(); }
 static float card_x(void) { return app_rtl() ? 32 : SB_W - 32 - CW; }
 static void draw_menu(void);
 static void draw(void) { draw_menu(); fx_draw(); } /* (the action's chip outlives the menu) */

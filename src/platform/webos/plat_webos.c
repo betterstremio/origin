@@ -154,3 +154,4 @@ int plat_panel_lines(void) {
   return h;
 }
 int plat_color_keys(void) { return 1; } /* every LG remote has them */
+int plat_random(void *buf, int n) { FILE *f = fopen("/dev/urandom", "rb"); if (!f) return 0; size_t g = fread(buf, 1, (size_t)n, f); fclose(f); return g == (size_t)n; }

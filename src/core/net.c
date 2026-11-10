@@ -297,9 +297,11 @@ unsigned char *net_fetch_sync_hdr(const char *url, const char *hdr, size_t *len,
   f_easy_setopt(c, CURLOPT_CONNECTTIMEOUT_MS, 8000L); f_easy_setopt(c, CURLOPT_TIMEOUT_MS, (long)timeoutMs);
   f_easy_setopt(c, CURLOPT_USERAGENT, ua()); f_easy_setopt(c, CURLOPT_ACCEPT_ENCODING, "");
   if (caPath[0]) f_easy_setopt(c, CURLOPT_CAINFO, caPath);
-  CURLcode rc = f_easy_perform(c); long code = 0; f_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code); if (kept) net_stats(c); else f_easy_cleanup(c); if (hs) f_slist_free_all(hs);
+  char eb[CURL_ERROR_SIZE]; eb[0] = 0; f_easy_setopt(c, CURLOPT_ERRORBUFFER, eb); /* curl's own words for a failure, for the log */
+  CURLcode rc = f_easy_perform(c); long code = 0; f_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code); f_easy_setopt(c, CURLOPT_ERRORBUFFER, (char *)NULL);
+  if (kept) net_stats(c); else f_easy_cleanup(c); if (hs) f_slist_free_all(hs);
   *status = rc == CURLE_OK ? (int)code : 0; *len = r.len;
-  if (*status != 200 && *status != 206) { { static unsigned nf; if (nf++ < 200 || nf % 50 == 0) fprintf(stderr, "[net] fetch failed: curl %d, http %ld, %zu bytes\n", (int)rc, code, r.len); } free(r.body); return NULL; }
+  if (*status != 200 && *status != 206) { { static unsigned nf; if (nf++ < 200 || nf % 50 == 0) fprintf(stderr, "[net] fetch failed: curl %d, http %ld, %zu bytes%s%s\n", (int)rc, code, r.len, eb[0] ? ": " : "", eb); } free(r.body); return NULL; }
   return r.body;
 }
 

@@ -94,6 +94,22 @@ static void on_crash(int sig, siginfo_t *si, void *uc) {
 #include "core/video.h"
 #include "core/p2p.h"
 static int vsyncOn __attribute__((unused));   /* SB_VSYNC=1: let the driver wait for the screen instead of pacing ourselves */
+#ifndef SB_VSYNC_DEFAULT
+#define SB_VSYNC_DEFAULT 0
+#endif
+#if SB_PLAT_GL /* the platform makes the GL surface (Windows: a composition layer above the video's window) */
+#define GL_MAKE(w) plat_gl_create(w)
+#define GL_SWAP(w) plat_gl_swap(w)
+#define GL_INTERVAL(n) plat_gl_interval(n)
+#define GL_SIZE(w, pw, ph) plat_gl_size(w, pw, ph)
+#define GL_FREE(c) plat_gl_destroy(c)
+#else
+#define GL_MAKE(w) SDL_GL_CreateContext(w)
+#define GL_SWAP(w) SDL_GL_SwapWindow(w)
+#define GL_INTERVAL(n) SDL_GL_SetSwapInterval(n)
+#define GL_SIZE(w, pw, ph) SDL_GL_GetDrawableSize(w, pw, ph)
+#define GL_FREE(c) SDL_GL_DeleteContext(c)
+#endif
 #include "core/net.h"
 #include "core/store.h"
 #include "core/i18n.h"
@@ -226,18 +242,18 @@ int main(int argc, char **argv) {
   if (win && getenv("SB_SHOW")) { SDL_ShowWindow(win); SDL_RaiseWindow(win); } /* (started from a terminal it could stay behind, a Dock icon with no window in view) */
 #endif
   if (!win) { fprintf(stderr, "window: %s\n", SDL_GetError()); return 1; }
-  SDL_GLContext ctx = SDL_GL_CreateContext(win);
+  void *ctx = GL_MAKE(win);
   if (!ctx) { fprintf(stderr, "context: %s\n", SDL_GetError()); return 1; }
 #if !SB_TV_PACER
-  SDL_GL_SetSwapInterval(0); /* the Mac swap blocks for ever on an occluded window with vsync; the loop paces itself */
+  GL_INTERVAL(0); /* the Mac swap blocks for ever on an occluded window with vsync; the loop paces itself */
 #else
-  vsyncOn = getenv("SB_VSYNC") ? atoi(getenv("SB_VSYNC")) : 0;
-  SDL_GL_SetSwapInterval(vsyncOn); /* measured on the TV: with vsync the driver blocks a whole extra frame at the first GL call; the loop paces itself instead */
+  vsyncOn = getenv("SB_VSYNC") ? atoi(getenv("SB_VSYNC")) : SB_VSYNC_DEFAULT;
+  GL_INTERVAL(vsyncOn); /* measured on the TV: with vsync the driver blocks a whole extra frame at the first GL call; the loop paces itself instead */
   pace_init();
 #endif
   plat_post_window(win);
   SDL_StopTextInput();
-  int dw, dh; SDL_GL_GetDrawableSize(win, &dw, &dh);
+  int dw, dh; GL_SIZE(win, &dw, &dh);
   fprintf(stderr, "[start] %s window %dx%d drawable %dx%d\n", plat_device_name(), w, h, dw, dh);
   if (!gfx_init(dw, dh)) return 1;
   video_set_surface(dw, dh); /* the TV reads the video plane's rectangle in the drawable's pixels (720p light: 1280x720) */
@@ -285,7 +301,7 @@ int main(int argc, char **argv) {
       else if (e.type == SDL_MOUSEMOTION) { if (e.motion.x || e.motion.y) app_pointer_move(e.motion.x * SB_W / w, e.motion.y * SB_H / h); }
       else if (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP) { if (e.button.button == SDL_BUTTON_LEFT) app_pointer_button(e.type == SDL_MOUSEBUTTONDOWN, e.button.x * SB_W / w, e.button.y * SB_H / h); }
       else if (e.type == SDL_MOUSEWHEEL) app_pointer_wheel((float)e.wheel.x, (float)e.wheel.y);
-      else if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) { SDL_GL_GetDrawableSize(win, &dw, &dh); gfx_resize(dw, dh); }
+      else if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) { GL_SIZE(win, &dw, &dh); gfx_resize(dw, dh); }
     }
     Uint32 now = SDL_GetTicks(); float dt = (now - last) / 1000.0f; last = now;
     { float pp = (float)pace_period() / 1000.0f; if (pp <= 0) pp = 1 / 60.0f; /* motion on the 60 Hz clock: an on-time frame is one period (no millisecond jitter); a slow one moves it 3 periods at most (no jump) */
@@ -316,7 +332,7 @@ int main(int argc, char **argv) {
       if (bench >= 0) { for (int i = 0; i < btN; i++) { if (getenv("SB_BENCHTEX_ALPHA")) gfx_alpha_tex(bt[i], 40 + (i % 8) * 230, 100 + (i / 8) * 60, 200, 40, WHITE_A(255)); else gfx_image(bt[i], 40 + (i % 8) * 230, 100 + (i / 8) * 60, 200, 40, 0, WHITE_A(255), 0, 0, 1, 1); }
         for (int i = 0; i < bench; i++) gfx_rrect(40 + (i % 40) * 46, 40 + (i / 40) * 46, 40, 40, 8, RGB(60 + i % 100, 80, 160)); /* one call, many small quads */
         for (int i = 0; i < benchCalls; i++) { gfx_rrect(40 + (i % 40) * 46, 600 + (i / 40) * 46, 40, 40, 8, RGB(160, 80, 60)); gfx_flush(); } /* many calls */
-        { extern void bench_uniform(int, int, int); static int nu = -1; if (nu < 0) nu = getenv("SB_BENCHUNI") ? atoi(getenv("SB_BENCHUNI")) : 0; if (nu) { int dw, dh; SDL_GL_GetDrawableSize(win, &dw, &dh); bench_uniform(nu, dw, dh); } }
+        { extern void bench_uniform(int, int, int); static int nu = -1; if (nu < 0) nu = getenv("SB_BENCHUNI") ? atoi(getenv("SB_BENCHUNI")) : 0; if (nu) { int dw, dh; GL_SIZE(win, &dw, &dh); bench_uniform(nu, dw, dh); } }
         if (getenv("SB_BENCHBIG")) for (int i = 0; i < atoi(getenv("SB_BENCHBIG")); i++) { gfx_rect(0, 0, SB_W, SB_H, RGBA(20, 20, 40, 120)); gfx_flush(); } } /* full-screen layers */
       else { app_draw(); splash_draw(); app_clock_top(); castlink_draw(); nerds_draw(); } }
     Uint32 tB = SDL_GetTicks(); static double accTick, accDraw, accEnd, accPump; accTick += tA - tCpu0; accDraw += tB - tA;
@@ -327,7 +343,7 @@ int main(int argc, char **argv) {
     Uint32 tCpu1 = SDL_GetTicks(); accPump += tCpu1 - tC;
     static int glFinishDev = -1; if (glFinishDev < 0) glFinishDev = getenv("SB_GLFINISH") != NULL; /* development: the GPU's own time shows as "gpu" */
     Uint64 tG0 = SDL_GetPerformanceCounter(); if (glFinishDev) glFinish(); Uint64 tG1 = SDL_GetPerformanceCounter();
-    SDL_GL_SwapWindow(win); Uint32 tSwap = SDL_GetTicks();
+    GL_SWAP(win); Uint32 tSwap = SDL_GetTicks();
     { /* the rate the screen really takes frames at: a webOS 4 TV takes 48 a second, not its panel's 60 (paced at 60, a
          fifth of the frames were never shown and all motion ran at four fifths of its speed). Measured once, at the first
          quiet moment (nothing pressed for 3 s, after the start): 60 frames with the driver waiting for the screen, their
@@ -335,10 +351,10 @@ int main(int argc, char **argv) {
 #if SB_TV_PACER
       static int hzState = -1, hzTries, baseHz = 60, curHz = 60, follow; static Uint64 hzLast; static float hzIv[60]; static int hzN; static Uint32 hzNext;
       if (hzState < 0) { hzState = !vsyncOn && !getenv("SB_HZ") && !getenv("SB_PACE") ? 0 : 3; follow = hzState == 0; }
-      if (hzState == 0 && frame > 300 && SDL_GetTicks() >= hzNext && app_idle() > 3 && !player_open() && video_state() == VID_IDLE) { int q, w; img_queue_stats(&q, &w); if (q || w) goto hzDone; /* (pictures still coming: not quiet) */ hzState = 1; hzLast = 0; hzN = 0; SDL_GL_SetSwapInterval(1); }
+      if (hzState == 0 && frame > 300 && SDL_GetTicks() >= hzNext && app_idle() > 3 && !player_open() && video_state() == VID_IDLE) { int q, w; img_queue_stats(&q, &w); if (q || w) goto hzDone; /* (pictures still coming: not quiet) */ hzState = 1; hzLast = 0; hzN = 0; GL_INTERVAL(1); }
       else if (hzState == 1) { Uint64 c = SDL_GetPerformanceCounter(); if (hzLast) hzIv[hzN++] = (float)((double)(c - hzLast) * 1000.0 / (double)SDL_GetPerformanceFrequency()); hzLast = c;
-        if (app_idle() < 0.5f || video_state() != VID_IDLE) { hzState = 0; SDL_GL_SetSwapInterval(0); } /* a key or a video (a clip makes the TV run at 50): measured again at the next quiet moment */
-        else if (hzN == 60) { hzState = 2; SDL_GL_SetSwapInterval(0);
+        if (app_idle() < 0.5f || video_state() != VID_IDLE) { hzState = 0; GL_INTERVAL(0); } /* a key or a video (a clip makes the TV run at 50): measured again at the next quiet moment */
+        else if (hzN == 60) { hzState = 2; GL_INTERVAL(0);
           for (int i = 1; i < hzN; i++) { float x = hzIv[i]; int j = i - 1; while (j >= 0 && hzIv[j] > x) { hzIv[j + 1] = hzIv[j]; j--; } hzIv[j + 1] = x; }
           float med = hzIv[hzN / 4], best = 1e9f; /* (the quicker quarter: a frame that waits on the app is not the screen) */ static const int R[] = { 48, 50, 60 }; int hz = 0;
           for (int i = 0; i < 3; i++) { float d = fabsf(1000.0f / R[i] - med); if (d < best && d < 0.6f) { best = d; hz = R[i]; } }
@@ -390,6 +406,6 @@ int main(int argc, char **argv) {
   fprintf(stderr, "[exit] after %d frames\n", frame);
   p2p_shutdown(); /* the engine's threads end and its buffer files go */
   store_flush();
-  SDL_GL_DeleteContext(ctx); SDL_DestroyWindow(win); SDL_Quit();
+  GL_FREE(ctx); SDL_DestroyWindow(win); SDL_Quit();
   return 0;
 }

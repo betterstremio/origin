@@ -4,6 +4,7 @@
 #include "core/i18n.h"
 #include "core/applog.h"
 #include "core/logseal.h"
+#include "platform/plat.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -51,9 +52,8 @@ static void make_token(void) {
   if (tok[0]) return;
   const char *t = getenv("SB_PHONE_TOKEN"); /* tests only: a known token */
   if (t && strlen(t) == 16 && strspn(t, "0123456789abcdef") == 16) { snprintf(tok, sizeof tok, "%s", t); return; }
-  unsigned char b[8] = { 0 }; int fd = open("/dev/urandom", O_RDONLY), ok = 0;
-  if (fd >= 0) { ok = read(fd, b, 8) == 8; close(fd); }
-  if (!ok) { unsigned long long x = (unsigned long long)time(NULL) ^ ((unsigned long long)getpid() << 32) ^ (unsigned long long)(mono() * 1e9); for (int i = 0; i < 8; i++) { x ^= x << 13; x ^= x >> 7; x ^= x << 17; b[i] = (unsigned char)x; } }
+  unsigned char b[8] = { 0 };
+  if (!plat_random(b, 8)) { unsigned long long x = (unsigned long long)time(NULL) ^ ((unsigned long long)getpid() << 32) ^ (unsigned long long)(mono() * 1e9); for (int i = 0; i < 8; i++) { x ^= x << 13; x ^= x >> 7; x ^= x << 17; b[i] = (unsigned char)x; } }
   for (int i = 0; i < 8; i++) snprintf(tok + i * 2, 3, "%02x", b[i]);
 }
 static void take_strings(void) {
