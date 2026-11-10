@@ -31,7 +31,7 @@ float key_hint(float x, float y, int key, const char *label, uint32_t col, int a
 #define PKG_KIND SB_PKG_KIND
 #define PKG_KIND_LEN (sizeof PKG_KIND - 1)
 
-#define UPD_GH "https://api.github.com/repos/betterstremio/origin/releases?per_page=8"   /* one tag per version, one file per platform: PKG_KIND picks ours */
+#define UPD_GH "https://api.github.com/repos/betterstremio/origin/releases?per_page=5"   /* one tag per version, one file per platform: PKG_KIND picks ours */
 #define UPD_MAN "https://betterstremio.github.io/webos/api/apps/" SB_APP_ID "/manifest.json"
 typedef struct { char ver[24], url[512], sha[72]; char notes[5][256]; int nnotes; } Rel;
 static struct {

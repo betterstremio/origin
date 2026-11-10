@@ -1,68 +1,67 @@
 #!/bin/bash
-# A release in one step:  tools/release.sh VERSION [site-dir]
-# Sets the version (pkg/appinfo.json and the What's new card, which must match), builds the IPK
-# (tools/package.sh) and writes the Homebrew Channel files into the site folder, the GitHub Pages
-# repository users add to the Homebrew Channel:
-#   <id>_<version>_arm.ipk, icon.png, api/apps/<id>/manifest.json (+ releases/latest.json,
-#   full_description.html) and the repository list (apps.json + api/apps.json).
-# The app's own update check reads the same manifest (src/core/update.c). No git, no push: review the
-# site folder, then commit and push it yourself. The version must go up every time.
+# A release in two halves:
+#   tools/release.sh build X.Y.Z               Linux or WSL: every package from empty folders, into dist/X.Y.Z/
+#   tools/release.sh publish X.Y.Z NOTES.md    where git and gh are signed in: the checks, main pushed, one GitHub release
+#                                              with every package as its own file
+# Each platform's updater picks its own file from the release (src/platform/<target>/target.h, SB_PKG_KIND).
+# GH_AS=<account>: gh switches to that account for the push and the release, and back to the one it was on afterwards.
+# Publish only when the maintainer says so.
 set -euo pipefail
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-VER="${1:?usage: tools/release.sh VERSION [site-dir]}"
-SITE="${2:-$ROOT/../stremioorigin-site}"
-ID=tv.stremioorigin.app
-BASE="https://betterstremio.github.io/webos"
-SRC="https://github.com/betterstremio/webos"
-[[ "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "version must look like 1.0.1"; exit 1; }
-mkdir -p "$SITE"
+source "$(dirname "${BASH_SOURCE[0]}")/paths.sh"
+CMD="${1:-}"; V="${2:-}"
+SLUG="${REPO_SLUG:-betterstremio/origin}"
+AUTHOR="${RELEASE_AUTHOR:-Better Stremio <better-stremio@users.noreply.github.com>}"
+D="$ROOT/dist/$V"
+die() { echo "STOPPED: $*"; exit 1; }
+[[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "usage: tools/release.sh build|publish X.Y.Z [NOTES.md]"
+g() {   # git for this checkout, also from WSL when the worktree's link is a Windows path
+  if git -C "$ROOT" rev-parse >/dev/null 2>&1; then git -C "$ROOT" "$@"
+  else git --git-dir="$(sed -n 's/^gitdir: //p' "$ROOT/.git" | sed -E 's#^([A-Za-z]):#/mnt/\L\1#')" --work-tree="$ROOT" "$@"; fi
+}
+FILES=("${APPID}_${V}_arm.ipk" "${APPID}_${V}_arm.ipk.sha256" "${APPID}_${V}_android-arm64.apk" "${APPID}_${V}_android-armv7.apk" "${APPID}_${V}_android.apk")
 
-python3 - "$ROOT" "$VER" <<'EOF'
-import re, sys
-root, ver = sys.argv[1], sys.argv[2]
-for f in ('pkg/appinfo.json', 'assets/whatsnew.json'): # the version alone, the files as they are written
-    p = root + '/' + f; t = open(p, encoding='utf-8').read(); n = re.subn(r'("version"\s*:\s*")[^"]*(")', r'\g<1>' + ver + r'\g<2>', t, count=1)
-    if n[1] != 1: sys.exit('no version in ' + f)
-    open(p, 'w', encoding='utf-8').write(n[0])
-EOF
-
-"$ROOT/tools/build.sh" webos # always built now: the version just set is the one inside, and its debug build is kept below
-rm -f "$ROOT/dist/${ID}_${VER}_arm.ipk"
-"$ROOT/tools/package.sh" >/dev/null
-IPK="$ROOT/dist/${ID}_${VER}_arm.ipk"
-[ -f "$IPK" ] || { echo "no $IPK"; exit 1; }
-SHA=$(shasum -a 256 "$IPK" | cut -d' ' -f1)
-mkdir -p "$ROOT/dist/dbg/$VER" && cp "$ROOT/build/webos/stremioorigin.dbg" "$ROOT/dist/dbg/$VER/" # kept per version: a shared crash report names its code from it (getlogs)
-
-rm -f "$SITE"/${ID}_*_arm.ipk
-cp "$IPK" "$SITE/"
-cp "$ROOT/pkg/largeIcon.png" "$SITE/icon.png"
-python3 - "$SITE" "$ID" "$VER" "$SHA" "$BASE" "$SRC" <<'EOF'
-import json, os, sys
-site, pid, ver, sha, base, src = sys.argv[1:]
-short = 'Native app for Stremio addons on LG webOS TVs. Unofficial.'
-manifest = {
-  'id': pid, 'version': ver, 'type': 'native', 'title': 'Stremio Origin',
-  'appDescription': 'Your own Stremio account and addons on your LG TV: artwork, trailers, the best stream in one press, subtitles, P2P streams, 11 languages. Unofficial.',
-  'iconUri': base + '/icon.png', 'sourceUrl': src, 'rootRequired': False,
-  'ipkUrl': '%s/%s_%s_arm.ipk' % (base, pid, ver), 'ipkHash': {'sha256': sha}}
-d = os.path.join(site, 'api', 'apps', pid)
-os.makedirs(os.path.join(d, 'releases'), exist_ok=True)
-for f in (os.path.join(d, 'manifest.json'), os.path.join(d, 'releases', 'latest.json')):
-    open(f, 'w').write(json.dumps(manifest, indent=2) + '\n')
-listing = {'paging': {'page': 1, 'count': 1, 'maxPage': 1, 'itemsTotal': 1}, 'packages': [{
-  'id': pid, 'title': 'Stremio Origin', 'iconUri': base + '/icon.png', 'pool': 'main',
-  'manifestUrl': '%s/api/apps/%s/manifest.json' % (base, pid), 'shortDescription': short,
-  'fullDescriptionUrl': 'apps/%s/full_description.html' % pid, 'manifest': manifest}]}
-open(os.path.join(site, 'api', 'apps.json'), 'w').write(json.dumps(listing, indent=2) + '\n')
-listing['packages'][0]['fullDescriptionUrl'] = 'api/' + listing['packages'][0]['fullDescriptionUrl'] # the same list at the root: paths from there
-open(os.path.join(site, 'apps.json'), 'w').write(json.dumps(listing, indent=2) + '\n')
-open(os.path.join(d, 'full_description.html'), 'w').write(
-  '<p><b>Stremio Origin</b>: a native app for Stremio addons on LG webOS TVs (ARM).</p>\n'
-  '<p>Bring your own Stremio account and addons: the app ships empty and plays only the links your addons return. '
-  'Artwork and trailers, the best stream for your TV in one press, styled subtitles and subtitle sync, P2P streams, 11 languages.</p>\n'
-  '<p>Tested on webOS 4.4. Unofficial: not affiliated with Stremio.</p>\n'
-  '<p>Source: <a href="%s">%s</a></p>\n' % (src, src))
-print('site updated:', pid, ver, sha)
-EOF
-ls -l "$SITE"/${ID}_*_arm.ipk
+case "$CMD" in
+build)
+  [ -z "$(g status --porcelain)" ] || die "uncommitted changes"
+  [ "$(cat "$ROOT/VERSION")" = "$V" ] || die "VERSION says $(cat "$ROOT/VERSION"): commit the new version first"
+  grep -q '^NUVIO_SUPABASE_URL=.' "$KEYS" && grep -q '^NUVIO_SUPABASE_ANON_KEY=.' "$KEYS" || die "no Nuvio settings in $KEYS: the packages would have no Nuvio sign-in"
+  [ -f "$ORIGIN_BUILD/keys/android-release.jks" ] || die "no Android release key: a new one would break every update"
+  [ -d "$ORIGIN_BUILD/official/data" ] || die "no $ORIGIN_BUILD/official: the IPK takes its P2P and DTS libraries from it"
+  grep -q "\"version\": \"$V\"" "$ROOT/assets/whatsnew.json" || echo "note: assets/whatsnew.json is not $V, so no What's new card shows for this version"
+  rm -rf "$D"; mkdir -p "$D"
+  OUT="$D" bash "$ROOT/packaging/webos/pack.sh" --clean
+  bash "$ROOT/tools/android/build-apk.sh" --clean
+  for k in android-arm64 android-armv7 android; do cp "$BUILD_ROOT/android/apk/${APPID}_${V}_$k.apk" "$D/"; done
+  want="$(tr -d '[:space:]' < "$ROOT/packaging/android/release-cert.sha256")"
+  for f in "$D"/*.apk; do
+    got="$("${ANDROID_HOME:-$HOME/android-sdk}/build-tools/35.0.0/apksigner" verify --print-certs "$f" | grep -m1 'SHA-256' | sed 's/.*: //')"
+    [ "$got" = "$want" ] || die "$(basename "$f") is signed with another certificate: updates would not install over it"
+  done
+  for f in "${FILES[@]}"; do [ -f "$D/$f" ] || die "missing $f"; done
+  g rev-parse HEAD > "$D/COMMIT"
+  ls -l "$D" | awk 'NR>1 {printf "  %-48s %6.1f MB\n", $NF, $5/1048576}'
+  echo "built $V from $(cut -c1-7 "$D/COMMIT"): check them, then tools/release.sh publish $V NOTES.md"
+  ;;
+publish)
+  NOTES="${3:-}"; [ -f "$NOTES" ] || die "no notes file"
+  for f in "${FILES[@]}"; do [ -f "$D/$f" ] || die "missing dist/$V/$f: run build first"; done
+  [ "$(cat "$D/COMMIT" 2>/dev/null)" = "$(g rev-parse HEAD)" ] || die "dist/$V was not built from this commit: run build again"
+  [ -z "$(g status --porcelain)" ] || die "uncommitted changes"
+  [ "$(sha256sum "$D/${FILES[0]}" | cut -c1-64)" = "$(cut -c1-64 "$D/${FILES[1]}")" ] || die "the IPK does not match its .sha256"
+  g fetch -q "https://github.com/$SLUG.git" main
+  g merge-base --is-ancestor FETCH_HEAD HEAD || die "main on GitHub has commits that are not in this branch: merge them first"
+  g log FETCH_HEAD..HEAD --format='%an <%ae>%n%cn <%ce>' | grep -qvxF "$AUTHOR" && die "a commit is not by $AUTHOR"
+  g log FETCH_HEAD..HEAD --format=%B | grep -qiE 'co-authored|claude' && die "a commit message has an attribution line"
+  was="$(gh api user --jq .login)"
+  trap 'gh auth switch -u "$was" >/dev/null 2>&1; echo "gh account: $(gh api user --jq .login)"' EXIT
+  if [ -n "${GH_AS:-}" ]; then gh auth switch -u "$GH_AS" >/dev/null 2>&1; [ "$(gh api user --jq .login)" = "$GH_AS" ] || die "could not switch gh to $GH_AS"; fi
+  g -c credential.helper= -c credential.helper='!gh auth git-credential' push "https://github.com/$SLUG.git" HEAD:refs/heads/main
+  paths=(); for f in "${FILES[@]}"; do paths+=("$D/$f"); done
+  gh release create "v$V" --repo "$SLUG" --target "$(g rev-parse HEAD)" --latest --title "Origin $V" --notes-file "$NOTES" "${paths[@]}"
+  for f in "${FILES[@]}"; do
+    d="$(gh api "repos/$SLUG/releases/tags/v$V" --jq ".assets[] | select(.name == \"$f\") | .digest")"
+    [ "$d" = "sha256:$(sha256sum "$D/$f" | cut -c1-64)" ] && echo "ok $f" || echo "DIFFERS: $f ($d)"
+  done
+  ;;
+*) die "usage: tools/release.sh build|publish X.Y.Z [NOTES.md]";;
+esac
