@@ -31,6 +31,10 @@
 #include "core/trakt.h"
 #include "core/best.h"
 #include "core/hit.h"
+#include "platform/plat.h"
+#ifndef SB_REMOTE_GUIDE
+#define SB_REMOTE_GUIDE 1 /* the tour shows the remote's keys (target.h: 0 where there is no TV remote) */
+#endif
 #include "core/httpd.h"
 #include "core/i18n.h"
 #include "core/keys.h"
@@ -1070,7 +1074,10 @@ static int load(void) {
 /* the tour (tour 1) or the version's page, over whatever is on screen */
 static void open_guide(int tour) {
   W.n = 0; W.tour = tour;
-  if (tour) { for (int i = 0; i < NTOUR; i++) { Page *pg = &W.p[W.n++]; memset(pg, 0, sizeof *pg); snprintf(pg->title, sizeof pg->title, "%s", TOUR[i].t); snprintf(pg->lead, sizeof pg->lead, "%s", TOUR[i].l);
+  if (tour) { for (int i = 0; i < NTOUR; i++) {
+      if (!SB_REMOTE_GUIDE && (TOUR[i].pv == PV_KEYS || TOUR[i].pv == PV_HOLD)) continue; /* (no TV remote: its keys need no tour) */
+      if (TOUR[i].pv == PV_PHONE && plat_text_input()) continue; /* (a keyboard types already) */
+      Page *pg = &W.p[W.n++]; memset(pg, 0, sizeof *pg); snprintf(pg->title, sizeof pg->title, "%s", TOUR[i].t); snprintf(pg->lead, sizeof pg->lead, "%s", TOUR[i].l);
       for (int b = 0; b < MAXB && TOUR[i].b[b]; b++) { snprintf(pg->b[b], sizeof pg->b[b], "%s", TOUR[i].b[b]); pg->ic[b] = TOUR[i].ic[b]; pg->nb++; } pg->pv = TOUR[i].pv; pg->ctl = TOUR[i].ctl;
       if (pg->pv == PV_KEYS && !ckeys()) { /* no colour keys: Settings and Search are reached at the top left */
         snprintf(pg->lead, sizeof pg->lead, "%s", "The arrows, OK and Back take you everywhere.");
