@@ -5,6 +5,7 @@ plugins { id 'com.android.application' }
 def appVersion = new groovy.json.JsonSlurper().parse(file(System.getenv('SB_APPINFO'))).version as String
 def vp = appVersion.tokenize('.').collect { it as int }
 def ks = System.getenv('SB_KEYSTORE')
+def abis = (System.getenv('SB_ABIS') ?: 'arm64-v8a armeabi-v7a').tokenize(' ')
 
 android {
     namespace 'tv.stremioorigin.app'
@@ -17,7 +18,7 @@ android {
         versionCode vp[0] * 10000 + vp[1] * 100 + vp[2]
         // dev builds (-Pdev) take SB_* settings from the launch intent: the automated tests drive the app that way
         buildConfigField 'boolean', 'DEV_HOOKS', (project.hasProperty('dev') ? 'true' : 'false')
-        ndk { abiFilters(*(System.getenv('SB_ABIS') ?: 'arm64-v8a armeabi-v7a').tokenize(' ')) }
+        if (project.hasProperty('dev')) ndk { abiFilters(*abis) }
     }
     signingConfigs {
         release {
@@ -29,9 +30,13 @@ android {
             }
         }
     }
+    // release: one APK per CPU type, plus the universal one, the only file that installed 2.1.2 and older apps recognise
+    splits { abi { enable !project.hasProperty('dev'); reset(); include(*abis); universalApk true } }
     buildTypes {
         release {
-            minifyEnabled false
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             debuggable project.hasProperty('dev')   // dev builds: run-as works (the tests keep and restore the test account's session)
             signingConfig ks ? signingConfigs.release : signingConfigs.debug
         }

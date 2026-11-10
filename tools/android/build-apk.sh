@@ -1,6 +1,7 @@
 #!/bin/bash
 # The Android APK (Linux or WSL), after tools/android/build-deps.sh and tools/build-engine.sh android-<abi>:
-#   tools/android/build-apk.sh            release: arm64-v8a + armeabi-v7a  -> <appid>_<ver>_android.apk
+#   tools/android/build-apk.sh            release: <appid>_<ver>_android-arm64.apk and _android-armv7.apk, one per CPU type,
+#                                         and _android.apk with both, the only file that installed 2.1.2 and older apps recognise
 #   tools/android/build-apk.sh --dev      dev build (SB_* test settings from the launch intent), + x86 for the emulator
 #   --clean                               compile everything again (always for a release)
 # Every build is signed with the release key ($ORIGIN_BUILD/keys/android-release.jks, made on the first run): an
@@ -20,7 +21,7 @@ bash "$ROOT/tools/build.sh" android $ABIS $CLEAN
 G="$BA/gradle"; mkdir -p "$G"
 rm -rf "$G/app/src" "$G/app/build/sdl-java"; mkdir -p "$G/app"
 P="$ROOT/packaging/android"; cp -r "$P/settings.gradle" "$P/build.gradle" "$P/gradle.properties" "$G/"
-cp "$P/app/build.gradle" "$G/app/"; cp -r "$P/app/src" "$G/app/"
+cp "$P/app/build.gradle" "$P/app/proguard-rules.pro" "$G/app/"; cp -r "$P/app/src" "$G/app/"
 mkdir -p "$G/app/build"; cp -r "$AB/deps/sdl-java" "$G/app/build/sdl-java"
 for ABI in $ABIS; do J="$G/app/src/main/jniLibs/$ABI"; mkdir -p "$J"; cp "$BA/out/$ABI"/{libmain.so,libSDL2.so,libcurl.so} "$J/"
   [ -f "$BA/out/$ABI/libsbengine.so" ] && cp "$BA/out/$ABI/libsbengine.so" "$J/"; done
@@ -53,11 +54,19 @@ GV=8.9; GH="$AB/gradle-$GV"
 if [ ! -x "$GH/bin/gradle" ]; then curl -fsSL -o "$AB/gradle.zip" "https://services.gradle.org/distributions/gradle-$GV-bin.zip"
   echo "d725d707bfabd4dfdc958c624003b3c80accc03f7037b5122c4b1d0ef15cecab  $AB/gradle.zip" | sha256sum -c - >/dev/null; (cd "$AB" && unzip -qo gradle.zip); fi
 echo "sdk.dir=$SDK" > "$G/local.properties"
-cd "$G"
+cd "$G"; rm -rf app/build/outputs/apk
 SB_ABIS="$ABIS" SB_APPINFO="$APPINFO" SB_KEYSTORE="$KS" SB_KEYSTORE_PASS="$(cat "$KP")" \
   "$GH/bin/gradle" --no-daemon -q assembleRelease $([ $DEV = 1 ] && echo -Pdev) 2>&1 | grep -v "^$" | grep -vi "warning: \[options\]\|deprecat" || true
-APK="$G/app/build/outputs/apk/release/app-release.apk"; [ -f "$APK" ] || { echo "APK FAILED"; exit 1; }
-mkdir -p "$BA/apk"; SUF=""; [ $DEV = 1 ] && SUF=_dev; NAME="${APPID}_${VER}_android${SUF}.apk"; cp "$APK" "$BA/apk/$NAME"
-"$SDK/build-tools/35.0.0/apksigner" verify "$BA/apk/$NAME" && echo "signed ok"
-ls -l "$BA/apk/$NAME" | awk '{printf "%s  %.1f MB\n", $NF, $5/1048576}'; sha256sum "$BA/apk/$NAME" | cut -c1-64
+OUTS="$G/app/build/outputs/apk/release"; mkdir -p "$BA/apk"
+one() {   # the Gradle output, the suffix in its release name
+  [ -f "$OUTS/$1" ] || { echo "APK FAILED: no $1"; exit 1; }
+  local n="${APPID}_${VER}_$2.apk"; cp "$OUTS/$1" "$BA/apk/$n"
+  "$SDK/build-tools/35.0.0/apksigner" verify "$BA/apk/$n" && echo "signed ok"
+  ls -l "$BA/apk/$n" | awk '{printf "%s  %.1f MB\n", $NF, $5/1048576}'; sha256sum "$BA/apk/$n" | cut -c1-64
+}
+if [ $DEV = 1 ]; then one app-release.apk android_dev
+else
+  for ABI in $ABIS; do case "$ABI" in arm64-v8a) k=arm64;; armeabi-v7a) k=armv7;; *) k=$ABI;; esac; one "app-$ABI-release.apk" "android-$k"; done
+  one app-universal-release.apk android
+fi
 echo APK_OK

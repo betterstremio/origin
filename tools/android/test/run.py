@@ -297,10 +297,11 @@ def t_letterbox():
 def t_update():
     base = open(os.path.join(REPO, 'VERSION')).read().strip()
     p = [int(x) for x in base.split('.')]; newer = '%d.%d.%d' % (p[0], p[1], p[2] + 1)
-    rc, out = wsl('ls /root/abuild/testmedia/rel/%s_%s_android.apk' % (PKG, newer))
+    kind = {'arm64-v8a': 'arm64', 'armeabi-v7a': 'armv7'}.get(A.abis.split()[0], A.abis.split()[0])   # the file this build's updater looks for
+    rc, out = wsl('ls /root/abuild/testmedia/rel/%s_%s_android-%s.apk' % (PKG, newer, kind))
     if rc:
         print('  building %s for the update test' % newer)
-        rc, out = wsl('''SB_VERSION=%s ABIS="%s" ROOT=%s bash %s/tools/android/build-apk.sh --dev 2>&1 | tail -2 && rm -rf /root/abuild/testmedia/rel && mkdir -p /root/abuild/testmedia/rel && cp %s/%s_%s_android_dev.apk /root/abuild/testmedia/rel/%s_%s_android.apk''' % (newer, A.abis, WSL_REPO, WSL_REPO, APKS, PKG, newer, PKG, newer), timeout=1800)
+        rc, out = wsl('''SB_VERSION=%s ABIS="%s" ROOT=%s bash %s/tools/android/build-apk.sh --dev 2>&1 | tail -2 && rm -rf /root/abuild/testmedia/rel && mkdir -p /root/abuild/testmedia/rel && cp %s/%s_%s_android_dev.apk /root/abuild/testmedia/rel/%s_%s_android-%s.apk''' % (newer, A.abis, WSL_REPO, WSL_REPO, APKS, PKG, newer, PKG, newer, kind), timeout=1800)
         if 'APK_OK' not in out: return False, 'could not build %s: %s' % (newer, out[-300:])
     adb('install', '-r', '-d', apk_path(base), timeout=180)
     if ('versionName=' + base) not in sh('dumpsys package ' + PKG): return False, 'could not put %s back' % base

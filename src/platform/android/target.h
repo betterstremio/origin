@@ -2,7 +2,15 @@
    tools/build.sh includes this file in every source file. */
 #ifndef SB_TARGET_H
 #define SB_TARGET_H
-#define SB_PKG_KIND "_android.apk"
+#if defined(__aarch64__)
+#define SB_PKG_KIND "_android-arm64.apk"
+#elif defined(__arm__)
+#define SB_PKG_KIND "_android-armv7.apk"
+#elif defined(__x86_64__)
+#define SB_PKG_KIND "_android-x86_64.apk"
+#else
+#define SB_PKG_KIND "_android-x86.apk"
+#endif
 #define SB_DL_SUFFIX ".so"
 #define SB_HAS_USB 0
 #define SB_HAS_CAST 1
