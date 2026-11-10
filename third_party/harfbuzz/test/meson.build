@@ -1,5 +1,0 @@
-subdir('subset')
-subdir('fuzzing')
-subdir('threads')
-subdir('shape')
-subdir('api')

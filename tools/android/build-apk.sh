@@ -10,16 +10,17 @@ source "$(dirname "${BASH_SOURCE[0]}")/../paths.sh"
 OB="$ORIGIN_BUILD"; SDK="${ANDROID_HOME:-$HOME/android-sdk}"; BA="$BUILD_ROOT/android"
 DEV=0; CLEAN=""; for a in "$@"; do case "$a" in --dev) DEV=1;; --clean) CLEAN=--clean;; esac; done
 if [ $DEV = 1 ]; then ABIS="${ABIS:-arm64-v8a armeabi-v7a x86}"; else ABIS="${ABIS:-arm64-v8a armeabi-v7a}"; fi
-APPINFO="${APPINFO:-$ROOT/pkg/appinfo.json}"   # APPINFO=other.json: another version (the updater test builds a newer one)
-APPID=tv.stremioorigin.app; VER="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['version'])" "$APPINFO")"
+VER="${SB_VERSION:-$(cat "$ROOT/VERSION")}"   # SB_VERSION=x.y.z: another version (the updater test builds a newer one)
+APPID=tv.stremioorigin.app; mkdir -p "$BA"; APPINFO="$BA/appinfo.json"
+sed "s/\"version\": \"0.0.0\"/\"version\": \"$VER\"/" "$ROOT/packaging/webos/appinfo.json" > "$APPINFO"
 
 bash "$ROOT/tools/build.sh" android $ABIS $CLEAN
 
 # ---- the Gradle project, staged outside the repo ----
 G="$BA/gradle"; mkdir -p "$G"
 rm -rf "$G/app/src" "$G/app/build/sdl-java"; mkdir -p "$G/app"
-cp -r "$ROOT/android/settings.gradle" "$ROOT/android/build.gradle" "$ROOT/android/gradle.properties" "$G/"
-cp "$ROOT/android/app/build.gradle" "$G/app/"; cp -r "$ROOT/android/app/src" "$G/app/"
+P="$ROOT/packaging/android"; cp -r "$P/settings.gradle" "$P/build.gradle" "$P/gradle.properties" "$G/"
+cp "$P/app/build.gradle" "$G/app/"; cp -r "$P/app/src" "$G/app/"
 mkdir -p "$G/app/build"; cp -r "$AB/deps/sdl-java" "$G/app/build/sdl-java"
 for ABI in $ABIS; do J="$G/app/src/main/jniLibs/$ABI"; mkdir -p "$J"; cp "$BA/out/$ABI"/{libmain.so,libSDL2.so,libcurl.so} "$J/"
   [ -f "$BA/out/$ABI/libsbengine.so" ] && cp "$BA/out/$ABI/libsbengine.so" "$J/"; done
@@ -29,7 +30,7 @@ python3 - "$ROOT" "$G/app/src/main/res" <<'PY'
 import sys, os
 from PIL import Image
 root, res = sys.argv[1], sys.argv[2]
-icon = Image.open(os.path.join(root, 'pkg/largeIcon.png')).convert('RGBA')
+icon = Image.open(os.path.join(root, 'packaging/webos/largeIcon.png')).convert('RGBA')
 for d, s in (('mdpi', 48), ('hdpi', 72), ('xhdpi', 96), ('xxhdpi', 144), ('xxxhdpi', 192)):
     os.makedirs(f'{res}/mipmap-{d}', exist_ok=True); icon.resize((s, s), Image.LANCZOS).save(f'{res}/mipmap-{d}/ic_launcher.png')
 os.makedirs(f'{res}/drawable-xhdpi', exist_ok=True)

@@ -1,0 +1,15 @@
+{
+  "id": "tv.stremioorigin.app",
+  "version": "0.0.0",
+  "vendor": "Origin",
+  "type": "native",
+  "main": "stremioorigin",
+  "title": "Origin",
+  "icon": "icon.png",
+  "largeIcon": "largeIcon.png",
+  "bgColor": "#0c0b11",
+  "iconColor": "#1a1430",
+  "resolution": "1920x1080",
+  "requiredPermissions": ["all", "settings.query", "systemconfig.query", "application.launcher", "physicaldevice.query"],
+  "nativeLifeCycleInterfaceVersion": 2
+}

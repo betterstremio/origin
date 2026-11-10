@@ -49,17 +49,17 @@ static void changed(void) { U.serial++; }
 static int ver_cmp(const char *a, const char *b);
 static double now_ms(void) { struct timespec t; clock_gettime(CLOCK_REALTIME, &t); return t.tv_sec * 1000.0 + t.tv_nsec / 1e6; }
 
-/* "1.0.0" from appinfo.json beside the binary (the package), or pkg/ for the Mac preview */
+/* "1.0.0" from appinfo.json beside the binary (the package), or VERSION for a development build run from a checkout */
 static void read_current(void) {
   if (U.read) return; U.read = 1;
-  const char *cands[2] = { "%s/../appinfo.json", "%s/../pkg/appinfo.json" };
-  for (int i = 0; i < 2 && !U.cur[0]; i++) {
-    char p[1200]; snprintf(p, sizeof p, cands[i], plat_asset_dir());
-    FILE *f = fopen(p, "rb"); if (!f) continue; char b[4096]; size_t n = fread(b, 1, sizeof b - 1, f); b[n] = 0; fclose(f);
+  {
+    char p[1200]; snprintf(p, sizeof p, "%s/../appinfo.json", plat_asset_dir());
+    FILE *f = fopen(p, "rb"); char b[4096]; size_t n = f ? fread(b, 1, sizeof b - 1, f) : 0; b[n] = 0; if (f) fclose(f);
     cJSON *j = cJSON_Parse(b); cJSON *v = cJSON_GetObjectItemCaseSensitive(j, "version");
     if (cJSON_IsString(v) && v->valuestring) { snprintf(U.cur, sizeof U.cur, "%s", v->valuestring); snprintf(U.appinfo, sizeof U.appinfo, "%s", p); }
     cJSON_Delete(j);
   }
+  if (!U.cur[0]) { char p[1200]; snprintf(p, sizeof p, "%s/../VERSION", plat_asset_dir()); FILE *f = fopen(p, "rb"); if (f) { if (fscanf(f, "%23s", U.cur) != 1) U.cur[0] = 0; fclose(f); } }
   { char w[1200], sh[1200]; snprintf(w, sizeof w, "%s/relaunch.wait", plat_data_dir()); snprintf(sh, sizeof sh, "%s/relaunch.sh", plat_data_dir()); if (access(w, F_OK)) unlink(sh); } /* the script that opened the app again after its update: done once it stops waiting */
   /* a remembered update that is now installed (or older) is forgotten */
   const char *uv = store_get("updVer", "");

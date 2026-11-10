@@ -1,5 +1,5 @@
 /* Android (TV boxes, Google TV, Fire TV, phones): SDL2's activity runs the app. The Java side
-   (android/app/src/main/java/tv/stremioorigin/app/MainActivity.java) copies the assets out of the APK and
+   (packaging/android/app/src/main/java/tv/stremioorigin/app/MainActivity.java) copies the assets out of the APK and
    hands their folder, the data folder, the native library folder and the device's facts over as
    environment variables before SDL starts (SB_ASSETS, SB_DATA, SB_LIBDIR, SB_DEVICE, SB_LOCALE). Remote
    keys SDL has no name for (the colour keys, channel up/down) arrive as F1-F4 and Page Up/Down, swapped

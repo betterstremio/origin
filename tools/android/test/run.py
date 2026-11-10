@@ -87,7 +87,7 @@ def build():
     rc, out = wsl('ABIS="%s" ROOT=%s bash %s/tools/android/build-apk.sh --dev 2>&1 | tail -5' % (A.abis, WSL_REPO, WSL_REPO), timeout=1800)
     if 'APK_OK' not in out: print(out); raise RuntimeError('build failed')
 def apk_path(ver=None):
-    ver = ver or json.load(open(os.path.join(REPO, 'pkg', 'appinfo.json')))['version']
+    ver = ver or open(os.path.join(REPO, 'VERSION')).read().strip()
     out = os.path.join(WORK, 'out'); os.makedirs(out, exist_ok=True)
     name = '%s_%s_android_dev.apk' % (PKG, ver)
     wsl('cp %s/%s %s/' % (APKS, name, '/mnt/' + out[0].lower() + out[2:].replace('\\', '/')))
@@ -295,12 +295,12 @@ def t_letterbox():
 
 @test('update')
 def t_update():
-    base = json.load(open(os.path.join(REPO, 'pkg', 'appinfo.json')))['version']
+    base = open(os.path.join(REPO, 'VERSION')).read().strip()
     p = [int(x) for x in base.split('.')]; newer = '%d.%d.%d' % (p[0], p[1], p[2] + 1)
     rc, out = wsl('ls /root/abuild/testmedia/rel/%s_%s_android.apk' % (PKG, newer))
     if rc:
         print('  building %s for the update test' % newer)
-        rc, out = wsl('''python3 -c 'import json;d=json.load(open("%s/pkg/appinfo.json"));d["version"]="%s";json.dump(d,open("/root/abuild/appinfo-next.json","w"))' && APPINFO=/root/abuild/appinfo-next.json ABIS="%s" ROOT=%s bash %s/tools/android/build-apk.sh --dev 2>&1 | tail -2 && rm -rf /root/abuild/testmedia/rel && mkdir -p /root/abuild/testmedia/rel && cp %s/%s_%s_android_dev.apk /root/abuild/testmedia/rel/%s_%s_android.apk''' % (WSL_REPO, newer, A.abis, WSL_REPO, WSL_REPO, APKS, PKG, newer, PKG, newer), timeout=1800)
+        rc, out = wsl('''SB_VERSION=%s ABIS="%s" ROOT=%s bash %s/tools/android/build-apk.sh --dev 2>&1 | tail -2 && rm -rf /root/abuild/testmedia/rel && mkdir -p /root/abuild/testmedia/rel && cp %s/%s_%s_android_dev.apk /root/abuild/testmedia/rel/%s_%s_android.apk''' % (newer, A.abis, WSL_REPO, WSL_REPO, APKS, PKG, newer, PKG, newer), timeout=1800)
         if 'APK_OK' not in out: return False, 'could not build %s: %s' % (newer, out[-300:])
     adb('install', '-r', '-d', apk_path(base), timeout=180)
     if ('versionName=' + base) not in sh('dumpsys package ' + PKG): return False, 'could not put %s back' % base

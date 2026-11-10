@@ -9,7 +9,7 @@ S = tempfile.mkdtemp(prefix='ipkstage-', dir=os.path.expanduser('~'))
 try:
     shutil.rmtree(S); shutil.copytree(O + '/data', S + '/data', symlinks=True)
     A = f'{S}/data/usr/palm/applications/{ID}'
-    VER = json.load(open(ROOT + '/pkg/appinfo.json'))['version']
+    VER = open(ROOT + '/VERSION').read().strip()
 
     pi = f'{S}/data/usr/palm/packages/{ID}/packageinfo.json'
     pj = json.load(open(pi)); pj['version'] = VER
@@ -23,8 +23,10 @@ try:
             shutil.copy(f'{ROOT}/assets/{f}', f'{A}/assets/{f}')
     shutil.rmtree(A + '/licenses')
     shutil.copytree(ROOT + '/third_party/licenses', A + '/licenses')
-    for f in ('icon.png', 'largeIcon.png', 'appinfo.json'):
-        shutil.copy(f'{ROOT}/pkg/{f}', f'{A}/{f}')
+    for f in ('icon.png', 'largeIcon.png'):
+        shutil.copy(f'{ROOT}/packaging/webos/{f}', f'{A}/{f}')
+    info = open(ROOT + '/packaging/webos/appinfo.json', encoding='utf-8').read()
+    open(A + '/appinfo.json', 'w', encoding='utf-8', newline='\n').write(info.replace('"version": "0.0.0"', '"version": "%s"' % VER))
     shutil.copy(BIN, A + '/stremioorigin')
 
     for dp, _, fs in os.walk(S + '/data'):
