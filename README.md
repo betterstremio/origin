@@ -93,15 +93,19 @@ Reports are welcome, with your device and system version: [Issues](https://githu
 - Logs stay on the device. Sharing them is your choice: the app seals them and shows a short code.
 
 ## Building
-One codebase serves both platforms. Everything builds in Linux or WSL.
+One codebase serves every platform, and each package carries only its own platform's code. `src/platform/<target>/target.h` says what a package has, and `tools/targets/<target>.sh` how it is compiled. Everything builds in Linux or WSL; `tools/paths.sh` says where the toolchains, keys and build folders are.
 
 ```
+tools/build.sh desktop                         # a development build for Linux, WSL or a Mac
 tools/build.sh webos                           # the webOS app (needs the webOS toolchain)
+packaging/webos/pack.sh                        # the webOS IPK
 
 tools/android/build-deps.sh                    # Android: SDL2, Mbed TLS, curl for each ABI
 tools/build-engine.sh android-arm64-v8a        # the P2P engine (also android-armeabi-v7a, android-x86)
-tools/android/build-apk.sh                     # the release APK (arm64-v8a + armeabi-v7a)
+tools/android/build-apk.sh                     # the release APKs: one per CPU type, and one with both
 tools/android/build-apk.sh --dev               # a test build with x86 for the emulator
+
+tools/release.sh build X.Y.Z                   # every package from empty folders, into dist/X.Y.Z
 ```
 
 Android tests on the emulator: `python tools/android/test/run.py --build` (after `tools/android/test/media.sh`). The script's header says what it needs.
