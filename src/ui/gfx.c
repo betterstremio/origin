@@ -271,6 +271,14 @@ static int clipped_out(float x, float y, float w, float h) {
   return x1 < curClip.x || y1 < curClip.y || x0 > curClip.x + curClip.w || y0 > curClip.y + curClip.h;
 }
 
+/* four free corners with their own colours, in order round the shape: curved bands built of strips (the cheapest program, no texture) */
+void gfx_quad_pts(const float *px, const float *py, const uint32_t *c) {
+  if (P_PLAIN != curProg || nvtx + 6 > MAX_VTX) { gfx_flush(); curProg = P_PLAIN; curTex = 0; batchOpaque = 1; }
+  batchOpaque = 0;
+  Vtx v[4]; for (int i = 0; i < 4; i++) { float x = px[i], y = py[i]; xform(&x, &y); Vtx t = { x, y, 0, 0, to_abgr(c[i]), 0, 0, 0, 0, 0, 0, 0, 0 }; v[i] = t; }
+  Vtx *q = &vtx[nvtx]; nvtx += 6; q[0] = v[0]; q[1] = v[1]; q[2] = v[2]; q[3] = v[0]; q[4] = v[2]; q[5] = v[3];
+}
+
 /* ---- rounded shapes from corner pieces -------------------------------------------------------
    A shape is nine pieces in the shared alpha pages: four corners rasterised once per size (the
    same signed distance and edge as the shader version), four edges that stretch the corners'

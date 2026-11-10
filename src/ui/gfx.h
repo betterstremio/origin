@@ -49,6 +49,7 @@ void gfx_glare(float x, float y, float w, float h, float radius, float pos, uint
 void gfx_shadow_under(float x, float y, float w, float h, float r, float blur, uint32_t c, float bx, float by, float bw, float bh, float br); /* the shadow of an opaque box drawn over it */
 float gfx_opacity_now(void);
 void gfx_circle(float cx, float cy, float r, uint32_t color);
+void gfx_quad_pts(const float *px, const float *py, const uint32_t *c); /* four free corners, each its own colour: curved bands in strips */
 
 /* textures */
 void gfx_tex_recycle(GLuint t, int w, int h, int ch, int linear); /* a picture's texture let go: kept a moment for the next one of its size */

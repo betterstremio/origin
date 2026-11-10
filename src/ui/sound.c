@@ -20,6 +20,9 @@ static struct { Sint16 *pcm, *soft; Uint32 bytes; } SN[SND_N];
 static SDL_AudioSpec spec; static int haveSpec;
 static SDL_sem *wake; static SDL_atomic_t want, quiet, softNext, level; static int started;
 static SDL_AudioDeviceID dev; static double lastAsk;
+static SDL_atomic_t introWant, introGo; static Uint32 introAt; static int introOn; static Uint8 *introBuf; static Uint32 introLen; static SDL_AudioSpec introSpec;
+#define INTRO_LEVEL 0.6f /* the start-up sound's level, of the TV's volume */
+#define INTRO_LATE 650   /* ms: opening the sound device took longer than this, the moment has gone: no sound */
 
 /* each sound, read once: 16-bit, at its own loudness and a quieter copy (a held key) */
 static void load(void) {
@@ -56,11 +59,38 @@ static int dev_open(void) {
   if (!dev) return 0;
   SDL_PauseAudioDevice(dev, 0); return 1;
 }
+/* the start-up music: read and the device opened as soon as the app is on its way (it takes a moment on a TV), then started by the
+   animation's first frame. The device is opened in the music's own format and let go when it ends; the taps wait for that. */
+static void intro_prepare(void) {
+  char p[1200]; snprintf(p, sizeof p, "%s/sounds/intro.wav", plat_asset_dir());
+  Uint8 *buf; Uint32 len; SDL_AudioSpec w; Uint32 t = SDL_GetTicks();
+  if (!SDL_LoadWAV(p, &w, &buf, &len)) { fprintf(stderr, "[sound] %s: %s\n", p, SDL_GetError()); return; }
+  if (w.format != AUDIO_S16SYS) { SDL_FreeWAV(buf); return; }
+  { SDL_AudioSpec keep = spec; int had = haveSpec, ok; spec = w; haveSpec = 1; ok = dev_open(); spec = keep; haveSpec = had; if (!ok) { SDL_FreeWAV(buf); return; } }
+  fprintf(stderr, "[sound] intro: read and device open in %u ms\n", (unsigned)(SDL_GetTicks() - t));
+  introBuf = buf; introLen = len; introSpec = w;
+}
+static void intro_start(void) {
+  Uint32 late = SDL_GetTicks() - introAt, skip = (Uint32)((Uint64)late * introSpec.freq / 1000) * introSpec.channels * 2; /* the device was not ready in time: come in where the animation has got to */
+  fprintf(stderr, "[sound] intro: started %u ms after the first frame\n", (unsigned)late);
+  if (late < INTRO_LATE && skip + 4096 < introLen) {
+    Sint16 *s = (Sint16 *)(introBuf + skip); int n = (int)((introLen - skip) / 2), fade = introSpec.freq / 100 * introSpec.channels; /* (10 ms in: joining part way through must not click) */
+    for (int i = 0; i < n; i++) s[i] = (Sint16)(s[i] * INTRO_LEVEL * (i < fade ? (float)i / fade : 1));
+    qClear(dev); qAudio(dev, s, (Uint32)n * 2); introOn = 1;
+  }
+  SDL_FreeWAV(introBuf); introBuf = NULL; if (!introOn) dev_close();
+}
 static int run(void *u) {
-  (void)u; double last = 0; load();
+  (void)u; double last = 0; int loaded = 0;
   for (;;) {
-    SDL_SemWaitTimeout(wake, SDL_AtomicGet(&quiet) && dev ? 30 : 1000);
-    double now = SDL_GetTicks() / 1000.0; int w = SDL_AtomicSet(&want, 0) - 1;
+    SDL_SemWaitTimeout(wake, SDL_AtomicGet(&quiet) && dev ? 30 : introOn ? 100 : 1000);
+    double now = SDL_GetTicks() / 1000.0;
+    if (SDL_AtomicSet(&introWant, 0)) { intro_prepare(); last = now; }
+    if (introBuf && SDL_AtomicGet(&introGo)) { intro_start(); last = now; }
+    if (introOn && SDL_AtomicGet(&quiet) && dev) { qClear(dev); dev_close(); introOn = 0; } /* a film started: the music stops */
+    if (introOn && dev && qSize(dev) == 0) { dev_close(); introOn = 0; } /* finished: previews and films have the audio to themselves at once */
+    int w = SDL_AtomicSet(&want, 0) - 1; if (introOn || introBuf) w = -1; /* (the device is in the music's format) */
+    if (w >= 0 && !loaded) { load(); loaded = 1; } /* the taps only when one is first asked for: with them off, nothing is read */
     if (w >= 0 && w < SND_N && SN[w].bytes && haveSpec && dev_open()) {
       const Sint16 *src = SDL_AtomicGet(&softNext) ? SN[w].soft : SN[w].pcm; int n = (int)(SN[w].bytes / 2); float lv = SDL_AtomicGet(&level) / 100.0f;
       Sint16 *out = malloc(SN[w].bytes); if (out) { for (int i = 0; i < n; i++) out[i] = (Sint16)(src[i] * lv); qClear(dev); qAudio(dev, out, SN[w].bytes); free(out); } last = now; }
@@ -69,6 +99,13 @@ static int run(void *u) {
   }
   return 0;
 }
+static void thread_up(void) { if (!started) { started = 1; wake = SDL_CreateSemaphore(0); SDL_Thread *t = SDL_CreateThread(run, "sound", NULL); if (t) SDL_DetachThread(t); else started = -1; } }
+void sound_intro(void) {
+  if (!strcmp(store_get("introSound", "true"), "false")) return;
+  thread_up(); if (started < 0) return;
+  SDL_AtomicSet(&introWant, 1); SDL_SemPost(wake);
+}
+void sound_intro_go(void) { if (started <= 0) return; introAt = SDL_GetTicks(); SDL_AtomicSet(&introGo, 1); SDL_SemPost(wake); }
 void sound_play(int which) {
   if (which == SND_PLAY || which == SND_START || which == SND_HOLD) return; /* two sounds only: the tabs' and one for everything else */
   if (which != SND_TAB) which = SND_FOCUS;
@@ -78,8 +115,7 @@ void sound_play(int which) {
   SDL_AtomicSet(&softNext, which != SND_HOLD && which != SND_PLAY && which != SND_START && now - prevAny < 0.16); /* a held key: quieter */
   SDL_AtomicSet(&level, atoi(store_get("uiSoundVol", "30"))); /* the level chosen in Settings, in % of the full sound */
   prev[which] = prevAny = lastAsk = now;
-  if (!started) { started = 1; wake = SDL_CreateSemaphore(0); SDL_Thread *t = SDL_CreateThread(run, "sound", NULL); if (t) SDL_DetachThread(t); else { started = -1; return; } }
-  if (started < 0) return;
+  thread_up(); if (started < 0) return;
   SDL_AtomicSet(&want, which + 1); SDL_SemPost(wake);
 }
 void sound_focus(void) { sound_play(SND_FOCUS); }

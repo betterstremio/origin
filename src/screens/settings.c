@@ -64,7 +64,7 @@ static const Opt ACCENT_OPTS[] = { { "logo", "From the logo" }, { "adaptive", "F
 #define NCAT 11
 #define MAXROWS 48
 static Setting recsS[10];
-static Setting playBase[8], playS[8], subsS[6], audS[5], lookS[2], langS[2], keyS[5], addonS[40], acctS[1], supS[7], profS[4];
+static Setting playBase[8], playS[8], subsS[6], audS[6], lookS[2], langS[2], keyS[5], addonS[40], acctS[1], supS[7], profS[4];
 static Cat cats[NCAT]; static int ncat; /* (Keys leaves when this build carries every key) */
 
 /* the layout, in the web's pixels: the grid is centred, 1600 wide, 150 from the top */
@@ -217,6 +217,7 @@ static void build(void) {
   set_s(&audS[2], "dtsMode", "DTS sound", "Auto finds out what this TV plays. Convert if you are not sure. Off leaves it to the TV", DTSM, 3, "auto");
   set_s(&audS[3], "uiSound", "Interface sounds", "A soft click as you move between titles", OO, 2, "false");
   set_s(&audS[4], "uiSoundVol", "Interface sound level", "Of the TV\xe2\x80\x99s volume", SVOL, 10, "30");
+  set_s(&audS[5], "introSound", "Startup sound", "A short sound with the logo when the app opens", OO, 2, "true");
   set_s(&lookS[0], "accent", "Accent colour", "Dynamic: the colours of the title you open", ACCENT_OPTS, 20, "logo"); /* first, right under its picture */
   set_s(&lookS[1], "ssDelay", "Screensaver", "After a while without a key, the titles of the moment fill the screen", SS_OPTS, 5, "5");
   /* language names are shown in their own language, never translated */
@@ -237,7 +238,7 @@ static void build(void) {
   Cat c[NCAT] = {
     { "Watch", "Playback", "set_play", "Seek step, next episode, picture size", NULL, playS, 6, 0 }, /* (the count: play_layout) */
     { "Watch", "Subtitles", "set_subs", "Language, size, colour, background", "subs", subsS, 6, 0 },
-    { "Watch", "Audio", "set_aud", "Default audio language, DTS, interface sounds", NULL, audS, 5, 0 },
+    { "Watch", "Audio", "set_aud", "Default audio language, DTS, interface sounds", NULL, audS, 6, 0 },
     { "Watch", "For You", "g_spark", "Recommendations on Home, region, languages", NULL, recsS, nr, 0 },
     { "Screens", "Appearance", "set_look", "Accent colour", "look", lookS, 2, 0 },
     { "Screens", "Language", "set_lang", "The language of the app", NULL, langS, nl, 0 },
