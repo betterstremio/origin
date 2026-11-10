@@ -59,6 +59,7 @@ app() {
   : > "$c"
   for f in "$TP"/crypto/*.c "$ROOT"/src/core/*.c "$ROOT"/src/ui/*.c "$ROOT"/src/screens/*.c "$ROOT"/src/platform/$PLAT/*.c "$ROOT"/src/main.c; do
     [ -f "$f" ] || continue
+    case " $MODULES_OFF " in *" ${f#$ROOT/src/} "*) continue;; esac   # code this package leaves out (tools/targets/<target>.sh)
     case "$f" in
       "$TP"/*) o="$B/obj/tp_$(basename "${f%.c}").o"; fl="-w $OPT -I$TP/crypto";;
       *) o="$B/obj/$(echo "${f#$ROOT/src/}" | tr / _).o"; fl="$CFLAGS";;
@@ -77,7 +78,7 @@ build_one() {   # one target, or one CPU type of Android
   OPT="-O2 -fno-strict-aliasing -ffunction-sections -fdata-sections"
   [ -n "${SB_FP:-}" ] && OPT="$OPT -fno-omit-frame-pointer -marm"   # SB_FP=1: frame pointers for the profiler
   [ -n "${SB_ASAN:-}" ] && OPT="-O1 -g -fsanitize=address -fno-omit-frame-pointer"
-  DEP_INC=""; BSUF=""; [ -n "${SB_ASAN:-}" ] && BSUF=-asan
+  DEP_INC=""; BSUF=""; [ -n "${SB_ASAN:-}" ] && BSUF=-asan; MODULES_OFF=""
   unset -f prepare_target 2>/dev/null || true
   source "$ROOT/tools/targets/$1.sh"
   [ $CLEAN = 1 ] && rm -rf "$B"
@@ -85,7 +86,7 @@ build_one() {   # one target, or one CPU type of Android
   mkdir -p "$B/tp/ass" "$B/obj"
   if declare -F prepare_target >/dev/null; then prepare_target; fi
   python3 "$ROOT/tools/sbkeys.py" "$KEYS" "$B/sbkeys.h"
-  CFLAGS="$OPT -std=c11 -D_GNU_SOURCE '-DSB_APP_ID=\"$APPID\"' -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers $TFLAGS -I$ROOT/src $DEP_INC -I$TP/freetype/include -I$TP/harfbuzz/src -I$TP/fribidi/lib -I$TP/config/fribidi -I$TP/cjson -I$TP/stb -I$TP/qrcodegen -I$TP/webp -I$TP/crypto -I$TP/libass -I$B"
+  CFLAGS="$OPT -std=c11 -D_GNU_SOURCE '-DSB_APP_ID=\"$APPID\"' -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers $TFLAGS -I$ROOT/src/platform/$PLAT -include target.h -I$ROOT/src $DEP_INC -I$TP/freetype/include -I$TP/harfbuzz/src -I$TP/fribidi/lib -I$TP/config/fribidi -I$TP/cjson -I$TP/stb -I$TP/qrcodegen -I$TP/webp -I$TP/crypto -I$TP/libass -I$B"
   third_party
   app
 }

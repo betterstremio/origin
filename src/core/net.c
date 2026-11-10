@@ -9,7 +9,7 @@
 #include <pthread.h>
 #include <curl/curl.h>
 #include <SDL2/SDL.h>
-#ifndef SB_MAC
+#if !SB_STATIC_CURL
 #include <dlfcn.h>
 #endif
 
@@ -28,7 +28,7 @@ static char caPath[1024];
 static const char *ua(void) { static char u[96]; if (!u[0]) { const char *d = plat_device_name(); snprintf(u, sizeof u, "StremioOrigin/%s (%s; native)", update_current(), strstr(d, "webOS") ? "webOS" : strstr(d, "Android") ? "Android TV" : "Mac"); } return u; }
 
 static int resolve(void) {
-#ifdef SB_MAC
+#if SB_STATIC_CURL
   f_easy_init = curl_easy_init; f_easy_setopt = curl_easy_setopt; f_easy_perform = curl_easy_perform; f_easy_getinfo = curl_easy_getinfo;
   f_easy_cleanup = curl_easy_cleanup; f_slist_append = curl_slist_append; f_slist_free_all = curl_slist_free_all; f_global_init = curl_global_init; f_easy_reset = curl_easy_reset;
   return 1;
@@ -163,7 +163,7 @@ static void *worker(void *arg) { plat_thread_background(5);
   }
   return NULL;
 }
-#ifndef SB_MAC
+#if !SB_STATIC_CURL
 /* OpenSSL 1.0 (the TV's, under its libcurl) is safe across threads only with locks the app hands it: without them
    its shared tables were changed by two requests at once, and a long session ended in a crash inside it (a bad
    pointer in memcmp, called from libcrypto). 1.1 and later lock by themselves (no CRYPTO_num_locks to find): left as
@@ -192,7 +192,7 @@ static void ssl_locks(void) {
 int net_init(const char *ca) {
   (void)ua(); /* made once here, before any worker thread reads it */
   if (!resolve()) return 0;
-#ifndef SB_MAC
+#if !SB_STATIC_CURL
   ssl_locks(); /* before the first request and the worker threads */
 #endif
   f_global_init(CURL_GLOBAL_ALL);

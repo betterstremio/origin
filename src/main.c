@@ -10,11 +10,11 @@
 #include <locale.h>
 #include <unistd.h>
 #include <signal.h>
-#ifdef SB_MAC
+#if SB_PREVIEW
 #include <execinfo.h>
 static void on_alarm(int sig) { (void)sig; void *fr[48]; int n = backtrace(fr, 48); backtrace_symbols_fd(fr, n, 2); _exit(3); }
 static volatile int profN; /* the profiler is the TV's */
-#elif defined(__ANDROID__)
+#elif SB_CRASH_TO_SYSTEM
 /* Android: the crash is logged, then handed back to the system, which writes its own report (a tombstone, in logcat) */
 static volatile int profN;
 static void prof_start(void) {}
@@ -156,7 +156,7 @@ static void run_script(const char *script, int frame) {
    the engine between cycles), then quits: start/stop cycles for leak checks (leaks --atExit on the Mac) */
 static struct { int cycle, cycles; double next; volatile int readDone; char url[600]; uint64_t size; } PT;
 static void *p2p_test_read(void *a) { (void)a;
-#ifdef SB_MAC
+#if SB_PREVIEW
   uint64_t mb = getenv("SB_P2PREADMB") ? (uint64_t)atoi(getenv("SB_P2PREADMB")) : 8, n = mb << 20, s = PT.size, mid = s / 5 * 2;
   uint64_t r[3][2] = { { 0, n - 1 }, { s > (2u << 20) ? s - (2u << 20) : 0, s - 1 }, { mid, mid + n - 1 } };
   for (int i = 0; i < 3; i++) { char cmd[1000]; Uint32 t0 = SDL_GetTicks();
@@ -185,7 +185,7 @@ static void p2p_test_tick(int frame) {
 int main(int argc, char **argv) {
   (void)argc; (void)argv;
   setlocale(LC_NUMERIC, "C");
-#ifdef SB_MAC
+#if SB_PREVIEW
   signal(SIGABRT, on_alarm); signal(SIGSEGV, on_alarm); signal(SIGBUS, on_alarm); /* a crash leaves a backtrace in the log */
   if (getenv("SB_ALARM")) { signal(SIGALRM, on_alarm); alarm(atoi(getenv("SB_ALARM"))); }
 #else
@@ -193,11 +193,11 @@ int main(int argc, char **argv) {
   { struct sigaction sa; memset(&sa, 0, sizeof sa); sa.sa_sigaction = on_crash; sa.sa_flags = SA_SIGINFO; sigaction(SIGSEGV, &sa, NULL); sigaction(SIGBUS, &sa, NULL); sigaction(SIGILL, &sa, NULL); sigaction(SIGABRT, &sa, NULL); sigaction(SIGFPE, &sa, NULL); }
 #endif /* development: a stuck run stops itself (under a debugger: with a backtrace) */
   plat_pre_init(APP_ID);
-#ifdef SB_MAC
+#if SB_PREVIEW
   if (!getenv("SB_SHOW")) SDL_SetHint(SDL_HINT_MAC_BACKGROUND_APP, "1"); /* the preview takes no Dock icon and no focus */
 #endif
   if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) { fprintf(stderr, "SDL_Init: %s\n", SDL_GetError()); return 1; }
-#ifdef SB_MAC
+#if !SB_GL_ES
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2); SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
 #else
@@ -215,20 +215,20 @@ int main(int argc, char **argv) {
        and lets the TV scale it up, for development only */
     const char *res = getenv("SB_RES") ? getenv("SB_RES") : "full";
     int light = !strcmp(res, "720");
-#ifdef SB_WEBOS
+#if SB_720_FULLSCREEN
     if (light && !getenv("SB_WIN")) { w = 1280; h = 720; flags |= SDL_WINDOW_FULLSCREEN; } /* measured on a 43LK5900: a fullscreen window gets a 1280x720 surface the TV scales to the panel */
 #else
     if (light) { w = 1280; h = 720; flags &= ~SDL_WINDOW_ALLOW_HIGHDPI; } /* the preview shows the real 1280x720 drawing */
 #endif
     fprintf(stderr, "[start] %d MB of RAM, drawing size %s%s\n", memMb, light ? "720p light" : "full", ""); }
   SDL_Window *win = SDL_CreateWindow("Origin", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w, h, flags);
-#ifdef SB_MAC
+#if SB_PREVIEW
   if (win && getenv("SB_SHOW")) { SDL_ShowWindow(win); SDL_RaiseWindow(win); } /* (started from a terminal it could stay behind, a Dock icon with no window in view) */
 #endif
   if (!win) { fprintf(stderr, "window: %s\n", SDL_GetError()); return 1; }
   SDL_GLContext ctx = SDL_GL_CreateContext(win);
   if (!ctx) { fprintf(stderr, "context: %s\n", SDL_GetError()); return 1; }
-#ifdef SB_MAC
+#if !SB_TV_PACER
   SDL_GL_SetSwapInterval(0); /* the Mac swap blocks for ever on an occluded window with vsync; the loop paces itself */
 #else
   vsyncOn = getenv("SB_VSYNC") ? atoi(getenv("SB_VSYNC")) : 0;
@@ -241,18 +241,14 @@ int main(int argc, char **argv) {
   fprintf(stderr, "[start] %s window %dx%d drawable %dx%d\n", plat_device_name(), w, h, dw, dh);
   if (!gfx_init(dw, dh)) return 1;
   video_set_surface(dw, dh); /* the TV reads the video plane's rectangle in the drawable's pixels (720p light: 1280x720) */
-#ifdef SB_MAC
+#if SB_PREVIEW
   if (SDL_GetWindowFlags(win) & SDL_WINDOW_HIDDEN) { /* a hidden window has no screen to draw to: draw into a picture the size the window would have */
     if (getenv("SB_SHOW") == NULL) { float k = (flags & SDL_WINDOW_ALLOW_HIGHDPI) ? 2.0f : 1.0f; dw = (int)(w * k); dh = (int)(h * k); gfx_resize(dw, dh); }
     static GfxTarget screen; if (gfx_target_create(&screen, dw, dh)) gfx_set_screen_fbo(screen.fbo); else fprintf(stderr, "[start] no offscreen picture: the window stays hidden and blank\n"); }
 #endif
   /* data + the services */
   char p[1100]; snprintf(p, sizeof p, "%s/cacert.pem", plat_asset_dir()); net_init(p);
-#ifdef SB_WEBOS
-  cache_prune_start(40); /* the app partition is small and shared with every app's install */
-#else
-  cache_prune_start(400);
-#endif
+  cache_prune_start(SB_CACHE_MB);
   snprintf(p, sizeof p, "%s/cache", store_data_dir()); img_init(p); img_set_draw_scale(gfx_scale());
   if (memMb > 0) img_set_budget_mb(memMb < 1200 ? 40 : memMb < 3000 ? 128 : 192); /* pictures under the RAM the TV has (the shared atlas, backdrop and text add ~20 MB) */
   i18n_init(plat_asset_dir(), getenv("SB_LANG") ? getenv("SB_LANG") : store_get("uiLang", "auto")); /* SB_LANG=ar: development */
@@ -273,7 +269,7 @@ int main(int argc, char **argv) {
   Uint32 last = SDL_GetTicks(), fpsT = last; int frames = 0, fps = 0, frame = 0;
   fprintf(stderr, "[loop] start, signed in: %d\n", sb_signed_in());
   stress_init();
-#ifdef SB_MAC
+#if !SB_TV_PACER
   if (stress_on()) pace_init();
 #endif
   while (!app_quitting()) {
@@ -336,7 +332,7 @@ int main(int argc, char **argv) {
          fifth of the frames were never shown and all motion ran at four fifths of its speed). Measured once, at the first
          quiet moment (nothing pressed for 3 s, after the start): 60 frames with the driver waiting for the screen, their
          median; then the loop paces itself again, at that rate */
-#ifndef SB_MAC
+#if SB_TV_PACER
       static int hzState = -1, hzTries, baseHz = 60, curHz = 60, follow; static Uint64 hzLast; static float hzIv[60]; static int hzN; static Uint32 hzNext;
       if (hzState < 0) { hzState = !vsyncOn && !getenv("SB_HZ") && !getenv("SB_PACE") ? 0 : 3; follow = hzState == 0; }
       if (hzState == 0 && frame > 300 && SDL_GetTicks() >= hzNext && app_idle() > 3 && !player_open() && video_state() == VID_IDLE) { int q, w; img_queue_stats(&q, &w); if (q || w) goto hzDone; /* (pictures still coming: not quiet) */ hzState = 1; hzLast = 0; hzN = 0; SDL_GL_SetSwapInterval(1); }
@@ -363,13 +359,13 @@ int main(int argc, char **argv) {
         if (tot > (nerdLog ? 26.0 : 15.0) && logN++ < 20) fprintf(stderr, "[slow] f%d %s %.0f ms: pumps %.0f (events %u net %u pictures %u) tick %u draw %u end %u evict %u gpu %.1f swap %u | %d calls %d quads\n", frame, stress_screen(), tot, accPreFrame, tEv, tNet, tImg, tA - tCpu0, tB - tA, tC - tB, tCpu1 - tC, gpu, tSwap - tCpu1, gfx_draw_calls(), gfx_quads()); } }
     nerds_frame((float)(tCpu1 - tCpu0), gfx_draw_calls(), gfx_quads());
     static double accCpu, accSwap; static int accN; accCpu += tCpu1 - tCpu0; accSwap += tSwap - tCpu1; accN++;
-#ifdef SB_MAC
+#if !SB_TV_PACER
     if (stress_on()) pace_wait((double)(tSwap - tCpu0) + accPreFrame); else SDL_Delay(16); /* a stress run on the Mac checks the run itself (its numbers are not the TV's) */
 #else
     { int pm = profN; if (!vsyncOn) pace_wait((double)(tSwap - tCpu0) + accPreFrame); else pace_observe(); if (profSlow) profN = pm; } /* the wait is not the frame's */
 #endif
     frames++; frame++; if (frame == 1 || frame == 10 || frame % 300 == 0) { { int q, w; img_queue_stats(&q, &w); fprintf(stderr, "[frame] pictures: %d queued, %d to upload\n", q, w); } fprintf(stderr, "[frame] %d drawn, %d fps, %d MB of pictures, cpu %.1f ms (pumps %.1f tick %.1f draw %.1f flush %.1f evict %.1f), swap %.1f ms, %d calls %d quads\n", frame, fps, img_used_mb(), accN ? accCpu / accN : 0, accN ? accPre / accN : 0, accN ? accTick / accN : 0, accN ? accDraw / accN : 0, accN ? accEnd / accN : 0, accN ? accPump / accN : 0, accN ? accSwap / accN : 0, gfx_draw_calls(), gfx_quads()); { char pr[256]; pace_report(pr, sizeof pr); fprintf(stderr, "[frame] %s\n", pr); } if (getenv("SB_MIDLOG")) { extern int gfx_mid_switches(void); fprintf(stderr, "[mid] %d mid-frame target switches since the last line\n", gfx_mid_switches()); } if (getenv("SB_FILL")) { char fr[300]; gfx_fill_report(fr, sizeof fr); fprintf(stderr, "[fill] %s %s\n", stress_screen(), fr); } { double lm, wm; int r, sh, lk; text_stats(&lm, &wm, &r, &sh, &lk); fprintf(stderr, "[frame] gl flushes %.1f ms per frame; text: lines %.1f ms, widths %.1f ms, %d rasterised, %d shaped, %d lookups (per frame over %d)\n", accN ? gfx_flush_ms(1) / accN : 0, accN ? lm / accN : 0, accN ? wm / accN : 0, r, sh, lk, accN); } accCpu = accSwap = accPre = accTick = accDraw = accEnd = accPump = 0; accN = 0;
-#ifndef SB_MAC
+#if !SB_PREVIEW
       if (getenv("SB_PROF")) prof_report();
 #endif
     }

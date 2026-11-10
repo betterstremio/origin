@@ -233,7 +233,7 @@ static int listen_on(void) {
   int fd = socket(AF_INET, SOCK_STREAM, 0); if (fd < 0) return -1;
   int one = 1; setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one); fcntl(fd, F_SETFD, FD_CLOEXEC);
   struct sockaddr_in a; memset(&a, 0, sizeof a); a.sin_family = AF_INET; a.sin_port = htons(HTTPD_PORT); a.sin_addr.s_addr = htonl(INADDR_ANY);
-#ifdef SB_MAC
+#if SB_PREVIEW
   a.sin_addr.s_addr = htonl(INADDR_LOOPBACK); /* the preview: this machine only (an open port made macOS ask for network access at every new build) */
 #endif
   if (bind(fd, (struct sockaddr *)&a, sizeof a) || listen(fd, 8)) { close(fd); return -1; }

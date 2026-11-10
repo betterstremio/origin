@@ -78,11 +78,7 @@ static void done_push(Img *im) { if (im->inDone) return; im->inDone = 1; im->dne
 static Img *done_pop(void) { /* an urgent one first (a backdrop is never kept behind posters), else the newest */
   Img **pp = &doneHead; for (Img **q = &doneHead; *q; q = &(*q)->dnext) if ((*q)->urgent) { pp = q; break; }
   Img *im = *pp; if (im) { *pp = im->dnext; im->dnext = NULL; im->inDone = 0; dn--; } return im; }
-#ifdef SB_WEBOS
-static unsigned frameNo; static long usedBytes, budgetBytes = 40L * 1024 * 1024; /* the TVs have little memory to spare */
-#else
-static unsigned frameNo; static long usedBytes, budgetBytes = 96L * 1024 * 1024;
-#endif
+static unsigned frameNo; static long usedBytes, budgetBytes = SB_IMG_BUDGET_MB * 1024L * 1024;
 static char cacheDir[1024];
 #define WORKERS_MAX 8   /* mostly waiting on the network; the decoding itself is limited (dec_enter). 6 under 1200 MB, each one in flight holds a picture */
 

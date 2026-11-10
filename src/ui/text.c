@@ -134,11 +134,8 @@ static int cmp_name(const void *a, const void *b) { return strcmp((const char *)
 static void fb_init(void) {
   const char *dir = getenv("SB_FONTDIR"); /* development: another folder laid out like the TV's */
   int exact = 0;
-#ifdef SB_MAC
-  if (!dir) { dir = "/System/Library/Fonts"; exact = 1; }
-#endif
-#ifdef __ANDROID__
-  if (!dir) dir = "/system/fonts"; /* about 250 files: the weights and styles are left out below, one face per script stays */
+#ifdef SB_FONT_DIR
+  if (!dir) { dir = SB_FONT_DIR; exact = SB_FONTS_EXACT; }
 #endif
   if (!dir) dir = "/usr/share/fonts";
   if (exact) { for (unsigned i = 0; i < sizeof MACFONTS / sizeof *MACFONTS; i++) { char p[400]; snprintf(p, sizeof p, "%s/%s", dir, MACFONTS[i].name); if (!access(p, R_OK)) fb_add(dir, MACFONTS[i].name, MACFONTS[i].cls, MACFONTS[i].sc); } return; }
@@ -148,7 +145,7 @@ static void fb_init(void) {
   if (!d) { fprintf(stderr, "[text] system fonts %s not readable (%s): bundled fonts only\n", dir, strerror(errno)); return; }
   while ((e = readdir(d)) && nn < 96) { const char *x = strrchr(e->d_name, '.');
     if (!x || (strcasecmp(x, ".ttf") && strcasecmp(x, ".otf") && strcasecmp(x, ".ttc")) || strstr(e->d_name, "LastResort") || strlen(e->d_name) >= 96) continue;
-#ifdef __ANDROID__
+#if SB_FONT_SKIP_STYLES
     { static const char *skip[] = { "Bold", "Italic", "Light", "Thin", "Medium", "Black", "Semi", "Condensed", "Roboto", "Mono", "Display", "Serif", "Cutive", "Coming", "Dancing", "Carrois", "Clock", NULL };
       int sk = 0; for (int q = 0; skip[q] && !sk; q++) if (strstr(e->d_name, skip[q])) sk = 1; if (sk) continue; }
 #endif

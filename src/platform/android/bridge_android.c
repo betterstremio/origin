@@ -1,4 +1,4 @@
-#include "platform/android/bridge.h"
+#include "platform/plat.h"
 #include <SDL2/SDL.h>
 #include <jni.h>
 #include <stdio.h>
@@ -15,7 +15,7 @@ static int ready(JNIEnv *e) {
   if (!mStart || !mPoll) { (*e)->ExceptionClear(e); upd = NULL; return 0; }
   return 1;
 }
-int andr_install_start(const char *url, const char *sha256, const char *version) {
+int plat_install_start(const char *url, const char *sha256, const char *version) {
   JNIEnv *e = env(); if (!ready(e)) return 0;
   jstring a = (*e)->NewStringUTF(e, url), b = (*e)->NewStringUTF(e, sha256), c = (*e)->NewStringUTF(e, version);
   jboolean ok = (*e)->CallStaticBooleanMethod(e, upd, mStart, a, b, c);
@@ -24,7 +24,7 @@ int andr_install_start(const char *url, const char *sha256, const char *version)
   return ok != 0;
 }
 /* the Java side answers "<state>|<message>" */
-int andr_install_poll(char *msg, int cap) {
+int plat_install_poll(char *msg, int cap) {
   msg[0] = 0; JNIEnv *e = env(); if (!ready(e)) return -1;
   jstring js = (jstring)(*e)->CallStaticObjectMethod(e, upd, mPoll);
   if ((*e)->ExceptionCheck(e)) { (*e)->ExceptionClear(e); snprintf(msg, (size_t)cap, "internal error"); return -1; }

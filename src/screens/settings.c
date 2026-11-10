@@ -186,7 +186,9 @@ static void play_layout(void) {
   for (int i = 0; i < 4; i++) playS[n++] = playBase[i];
   if (on) playS[n++] = playBase[6];
   const TvCaps *tc = best_caps(); if (tc && tc->dv) playS[n++] = playBase[7];
+#if SB_HAS_USB
   iUsb = n; playS[n++] = playBase[5];
+#endif
   for (int i = 0; i < ncat; i++) if (cats[i].opts == playS) { cats[i].n = n; if (S.cat == i && S.idx >= n) S.idx = n - 1; }
 }
 static void usb_row(void) {

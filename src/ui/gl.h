@@ -2,7 +2,7 @@
    (it still takes GLSL 1.20 with the GLES2 subset the shaders use). */
 #ifndef SB_GL_H
 #define SB_GL_H
-#if defined(SB_MAC)
+#if !SB_GL_ES
 #  define GL_SILENCE_DEPRECATION 1
 #  include <OpenGL/gl.h>
 #  define SB_GLSL_PRECISION ""

@@ -270,7 +270,7 @@ const Stream *best_pick(const Stream *const *list, int n, double durMin, const T
 int best_dts_mode(void) { return 0; } /* the scoring test: Auto, as the web app scores */
 #endif
 #ifndef SB_BEST_PURE
-#ifdef __ANDROID__
+#if SB_BEST_ON_BY_DEFAULT
 /* Android: on until switched off. The first time, the line is measured quietly in the background (as switching it on
    in Settings does); until then the choice assumes a fast line */
 static void on_default_speed(int ok, double mbps, void *ud) { (void)mbps; (void)ud; if (ok && !*store_get("autoBest", "")) store_set("autoBest", "true"); }
@@ -295,7 +295,7 @@ static TvCaps caps; static int capsKnown = -1, capsAsking;
 typedef struct { void (*cb)(const TvCaps *, void *); void *ud; } CapsWait;
 static CapsWait capsWaits[8]; static int nCapsWaits;
 const TvCaps *best_caps(void) {
-#ifdef __ANDROID__
+#if SB_CAPS_FROM_ENV
   /* Android: the display's and decoders' answer is ready at start (MainActivity hands it over as SB_TVCAPS), so the caps
      are known before any choice or resume, as the kept caps are on a TV */
   if (capsKnown <= 0 && getenv("SB_TVCAPS")) { const char *ov = getenv("SB_TVCAPS"), *p; int x; TvCaps c = { 1080, 0, 0, 0, 0, 0 };

@@ -28,12 +28,7 @@ float key_hint(float x, float y, int key, const char *label, uint32_t col, int a
 #define SB_APP_ID "tv.stremioorigin.app"
 #endif
 /* this build's own package kind among the release's files: <appid>_<x.y.z><PKG_KIND> */
-#ifdef __ANDROID__
-#include "platform/android/bridge.h"
-#define PKG_KIND "_android.apk"
-#else
-#define PKG_KIND "_arm.ipk"
-#endif
+#define PKG_KIND SB_PKG_KIND
 #define PKG_KIND_LEN (sizeof PKG_KIND - 1)
 
 #define UPD_GH "https://api.github.com/repos/betterstremio/origin/releases?per_page=8"   /* one tag per version, one file per platform: PKG_KIND picks ours */
@@ -216,10 +211,8 @@ void update_install(void) {
   if (U.state == UPD_INSTALLING) return;
   U.state = UPD_INSTALLING; snprintf(U.msg, sizeof U.msg, "%s", T("Downloading…")); changed();
   fprintf(stderr, "[update] installing %s\n", U.avail.ver);
-#ifdef __ANDROID__
-  /* the APK is downloaded and its SHA-256 checked on the Java side, then handed to the system's installer, which asks
-     the user once (and, the first time, sends them to allow installs from this app) */
-  if (!andr_install_start(U.avail.url, U.avail.sha, U.avail.ver)) { U.state = UPD_AVAIL; snprintf(U.msg, sizeof U.msg, "%s", T("The update failed")); changed(); }
+#if SB_PLAT_INSTALLER
+  if (!plat_install_start(U.avail.url, U.avail.sha, U.avail.ver)) { U.state = UPD_AVAIL; snprintf(U.msg, sizeof U.msg, "%s", T("The update failed")); changed(); }
   return;
 #endif
   relaunch_arm();
@@ -311,8 +304,8 @@ void update_pill_draw(float setX) {
 void update_tick(float dt) {
   tween_tick(&U.pa, dt); tween_tick(&U.slide, dt); tween_tick(&U.dot, dt); sglass_tick(&U.glass, dt);
   plat_luna_pump();
-#ifdef __ANDROID__
-  if (U.state == UPD_INSTALLING) { char m[240]; int st = andr_install_poll(m, sizeof m);
+#if SB_PLAT_INSTALLER
+  if (U.state == UPD_INSTALLING) { char m[240]; int st = plat_install_poll(m, sizeof m);
     if (st < 0) { U.state = UPD_AVAIL; snprintf(U.msg, sizeof U.msg, "%s", T1("The update failed: {e}", "e", m)); fprintf(stderr, "[update] install failed: %s\n", m); toast(T("The update failed"), 2500, NULL); changed(); }
     else if (m[0] && strcmp(m, U.msg)) { snprintf(U.msg, sizeof U.msg, "%s", m); fprintf(stderr, "[update] %s\n", m); changed(); } }
 #endif

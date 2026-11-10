@@ -9,7 +9,7 @@ WEBPCC="$ZIG cc $ZT -mcpu=cortex_a9-neon -mfloat-abi=softfp"   # libwebp's NEON 
 CXX="$ZIG c++ $ZT -mcpu=cortex_a9 -mfloat-abi=softfp"
 AR="$ZIG ar"
 PLAT=webos
-TFLAGS="-DSB_WEBOS=1 -D_FILE_OFFSET_BITS=64 -idirafter $SDK/usr/include"   # after the compiler's own libc headers: the SDK's old glibc headers must not mix with them
+TFLAGS="-D_FILE_OFFSET_BITS=64 -idirafter $SDK/usr/include"   # after the compiler's own libc headers: the SDK's old glibc headers must not mix with them
 LIBS="$SDK/usr/lib/libSDL2.so $SDK/usr/lib/libGLESv2.so $SDK/usr/lib/libz.so -ldl -lpthread -lm"
 B="$BUILD_ROOT/webos$BSUF"
 webp_skip() { case "$1" in *_sse*) return 0;; esac; return 1; }

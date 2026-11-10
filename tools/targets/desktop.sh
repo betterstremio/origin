@@ -1,7 +1,7 @@
 # The development build, for screenshots and tests: Linux (or WSL) or a Mac, SDL2 + OpenGL 2.1. Sourced by tools/build.sh.
-# It uses the Mac platform layer on both. On Linux a few headers stand in for the Mac's.
+# On Linux a few headers stand in for the Mac's.
 CC="${HOSTCC:-cc}"; WEBPCC="$CC"; CXX="${HOSTCXX:-c++}"; AR=ar
-PLAT=mac
+PLAT=desktop
 B="$BUILD_ROOT/desktop$BSUF"
 case "$(uname -m)" in
   x86_64|i?86) webp_skip() { case "$1" in *_neon*) return 0;; esac; return 1; };;
@@ -9,7 +9,7 @@ case "$(uname -m)" in
 esac
 if [ "$(uname -s)" = Darwin ]; then
   SDLP="${MACSDL:-$ORIGIN_BUILD/mac/sdl2}"
-  TFLAGS="-DSB_MAC=1 -I$SDLP/include -I$SDLP/include/SDL2"
+  TFLAGS="-I$SDLP/include -I$SDLP/include/SDL2"
   LIBS="$("$SDLP/bin/sdl2-config" --static-libs) -Wl,-framework,OpenGL -lcurl -liconv -lz"
 else
   prepare_target() {
@@ -24,7 +24,7 @@ static inline int mach_task_self(void) { return 0; }
 static inline int task_info(int a, int b, task_info_t c, mach_msg_type_number_t *d) { return 1; }
 H
   }
-  TFLAGS="-DSB_MAC=1 -w -I$B/shim -I/usr/include/SDL2"
+  TFLAGS="-w -I$B/shim -I/usr/include/SDL2"
   LIBS="$(sdl2-config --libs) -lGL -lcurl -lz -ldl -lpthread -lm"
 fi
 

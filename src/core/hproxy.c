@@ -48,6 +48,7 @@ static void on_hdr(const char *line, void *ud) {
   for (int i = 0; PASS[i]; i++) if (!strncasecmp(line, PASS[i], strlen(PASS[i])) && !overridden(c->e, line)) { size_t l = strlen(line); if (c->hl + l < sizeof c->hdr) { memcpy(c->hdr + c->hl, line, l); c->hl += l; } }
 }
 static int on_body(const unsigned char *p, size_t n, void *ud) { Conn *c = ud; if (c->failed) return 0; if (!p) return 1; if (!c->sent) return 1; if (!send_all(c->fd, p, n)) { c->failed = 1; return 0; } return 1; }
+#if SB_HAS_DTS
 /* ---- a file's sound converted for the TV: a local HLS stream ----
    One conversion at a time (the film playing). Its reading goes through one kept-alive range connection with a ring of
    the last 4 MiB read (the demuxer steps back a little now and then); the library itself is loaded on the first
@@ -89,11 +90,7 @@ static const sbd_api *D; static int dTried;
 static int dts_load(void) { /* the converter library, beside the app */
   if (D) return 1; if (dTried) return 0; dTried = 1;
   char *base = SDL_GetBasePath(), p[1200];
-#ifdef __APPLE__
-  snprintf(p, sizeof p, "%slibsbdts.dylib", base ? base : "");
-#else
-  snprintf(p, sizeof p, "%slibsbdts.so", base ? base : "");
-#endif
+  snprintf(p, sizeof p, "%slibsbdts" SB_DL_SUFFIX, base ? base : "");
   SDL_free(base);
   void *h = dlopen(p, RTLD_NOW | RTLD_LOCAL); if (!h) { fprintf(stderr, "[dts] no converter library: %s\n", dlerror()); return 0; }
   const sbd_api *(*get)(void) = (const sbd_api *(*)(void))dlsym(h, "sbd_get");
@@ -102,11 +99,7 @@ static int dts_load(void) { /* the converter library, beside the app */
 }
 int hls_conv_available(void) {
   if (D) return 1; char *base = SDL_GetBasePath(), p[1200];
-#ifdef __APPLE__
-  snprintf(p, sizeof p, "%slibsbdts.dylib", base ? base : "");
-#else
-  snprintf(p, sizeof p, "%slibsbdts.so", base ? base : "");
-#endif
+  snprintf(p, sizeof p, "%slibsbdts" SB_DL_SUFFIX, base ? base : "");
   SDL_free(base); return access(p, R_OK) == 0;
 }
 static double mono_s(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec + t.tv_nsec / 1e9; }
@@ -202,13 +195,18 @@ static void conv_serve(int fd, unsigned id, const char *path, int head) {
   pthread_mutex_lock(&mu); c->running = -100; pthread_mutex_unlock(&mu);
   pthread_mutex_unlock(&c->runMu); conv_unref(c);
 }
+#endif
 
 static void *serve(void *a) {
   plat_thread_background(5);
   int fd = (int)(intptr_t)a; char req[8192]; size_t got = 0;
   while (got < sizeof req - 1) { ssize_t k = recv(fd, req + got, sizeof req - 1 - got, 0); if (k <= 0) break; got += (size_t)k; req[got] = 0; if (strstr(req, "\r\n\r\n")) break; }
   req[got] = 0; char method[8] = "", path[256] = ""; unsigned id = 0;
+#if SB_HAS_DTS
   if (sscanf(req, "%7s %255s", method, path) == 2 && sscanf(path, "/h/%u/", &id) == 1) { conv_serve(fd, id, path, !strcmp(method, "HEAD")); close(fd); return NULL; }
+#else
+  (void)sscanf(req, "%7s %255s", method, path);
+#endif
   if (sscanf(path, "/s/%u", &id) == 1) {
     Ent e; int found = 0; pthread_mutex_lock(&mu); for (int i = 0; i < NENT; i++) if (ents[i].id == id) { e = ents[i]; found = 1; } pthread_mutex_unlock(&mu);
     if (found) {

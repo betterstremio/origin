@@ -1076,8 +1076,8 @@ static void open_guide(int tour) {
         snprintf(pg->lead, sizeof pg->lead, "%s", "The arrows, OK and Back take you everywhere.");
         snprintf(pg->b[0], sizeof pg->b[0], "%s", "Up, then Left: Settings and Search"); pg->ic[0] = "k_up";
         for (int b = 1; b < 3; b++) { snprintf(pg->b[b], sizeof pg->b[b], "%s", TOUR[i].b[b + 1]); pg->ic[b] = TOUR[i].ic[b + 1]; } pg->nb = 3; }
-#ifdef __ANDROID__
-      if (pg->pv == PV_P2P) pg->nb = 1; /* no USB drive in the Android build */
+#if !SB_HAS_USB
+      if (pg->pv == PV_P2P) pg->nb = 1;
 #endif
       if (pg->pv == PV_YOURKEYS) { int tm = !tmdb_builtin(), tk = !trakt_builtin(); ykOff = 0; /* (a key this build carries is not asked for: its step goes, and the page with both) */
         if (!tm && !tk) W.n--;

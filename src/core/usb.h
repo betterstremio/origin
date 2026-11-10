@@ -14,10 +14,19 @@ typedef struct {
   long freeMb, totalMb;
   int punch;          /* it can free bytes inside a file; 0 (FAT32, exFAT): the window is kept as segment files */
 } UsbDrive;
+#if SB_HAS_USB
 void        usb_pump(void);                 /* main thread, every frame: what the watcher found, the notice */
 int         usb_drive(UsbDrive *out);       /* 1 and the drive when one is there (any thread) */
 int         usb_cache_on(UsbDrive *out);    /* 1 when P2P streams should use it now: there and switched on (any thread) */
 int         usb_unreachable(char *name, size_t n); /* 1 when the TV has a drive mounted that this app cannot reach (a jail made before it came); its label */
 unsigned    usb_serial(void);               /* changes when a drive comes or goes, or its switch changes */
 void        usb_shutdown(void);             /* the watcher ends (at exit) */
+#else
+static inline void usb_pump(void) {}
+static inline int usb_drive(UsbDrive *out) { (void)out; return 0; }
+static inline int usb_cache_on(UsbDrive *out) { (void)out; return 0; }
+static inline int usb_unreachable(char *name, size_t n) { (void)name; (void)n; return 0; }
+static inline unsigned usb_serial(void) { return 0; }
+static inline void usb_shutdown(void) {}
+#endif
 #endif

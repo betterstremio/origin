@@ -77,15 +77,11 @@ static struct { char ih[41]; uint64_t size, lastBytes; double lastT, rate, dur, 
 static double now_s(void) { return SDL_GetTicks() / 1000.0; }
 static double idle_limit(void) { const char *e = getenv("SB_P2PIDLE"); return e ? atof(e) : 300; } /* SB_P2PIDLE=5: development, stop cycles */
 static void lib_path(char *p, size_t cap) {
-#ifdef __ANDROID__
+#if SB_P2P_LIB_ENV
   { const char *ld = getenv("SB_LIBDIR"); snprintf(p, cap, "%s/libsbengine.so", ld ? ld : "."); return; } /* the APK's native library folder (MainActivity) */
 #endif
   char *base = SDL_GetBasePath();
-#ifdef __APPLE__
-  snprintf(p, cap, "%slibsbengine.dylib", base ? base : "");
-#else
-  snprintf(p, cap, "%slibsbengine.so", base ? base : "");
-#endif
+  snprintf(p, cap, "%slibsbengine" SB_DL_SUFFIX, base ? base : "");
   SDL_free(base); }
 static int load(void) {
   if (E) return 1; if (loadTried) return 0; loadTried = 1;

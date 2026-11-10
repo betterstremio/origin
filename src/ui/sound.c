@@ -40,7 +40,7 @@ static void load(void) {
 #include <dlfcn.h>
 static int (*qAudio)(SDL_AudioDeviceID, const void *, Uint32); static Uint32 (*qSize)(SDL_AudioDeviceID); static void (*qClear)(SDL_AudioDeviceID);
 static int q_ok(void) { static int ok = -1; if (ok < 0) {
-#ifdef SB_WEBOS
+#if SB_SDL_QUEUE_BY_NAME
   *(void **)(&qAudio) = dlsym(RTLD_DEFAULT, "SDL_QueueAudio"); *(void **)(&qSize) = dlsym(RTLD_DEFAULT, "SDL_GetQueuedAudioSize"); *(void **)(&qClear) = dlsym(RTLD_DEFAULT, "SDL_ClearQueuedAudio");
 #else
   qAudio = SDL_QueueAudio; qSize = SDL_GetQueuedAudioSize; qClear = SDL_ClearQueuedAudio; /* (the preview links its own SDL) */

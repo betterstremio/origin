@@ -45,4 +45,9 @@ int plat_panel_lines(void);
 /* 1 when the remote has the red and green keys (every LG remote; some Android TV remotes, no Google TV or Fire TV one):
    the guide and the notices name them only then */
 int plat_color_keys(void);
+/* where the platform has its own package installer (SB_PLAT_INSTALLER in target.h): downloads the package, checks its SHA-256
+   (lower-case hex) and hands it to the installer, which may ask the user once; 0 = could not start */
+int plat_install_start(const char *url, const char *sha256, const char *version);
+/* where it is: 0 = on its way (msg: progress, may be ""), 1 = with the installer (msg says so), -1 = failed (msg: why) */
+int plat_install_poll(char *msg, int cap);
 #endif

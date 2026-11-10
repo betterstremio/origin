@@ -16,7 +16,8 @@ D="$AB/deps/$ABI"
 B="$BUILD_ROOT/android/$ABI$BSUF"; O="$BUILD_ROOT/android/out/$ABI"; mkdir -p "$O"
 OPT="$OPT -fPIC"
 case "$ABI" in armeabi-v7a|x86) OPT="$OPT -D_FILE_OFFSET_BITS=64";; esac
-TFLAGS="-DSB_ANDROID=1 -Wno-sign-compare -Wno-unused-function -Wno-unused-variable -Wno-unused-but-set-variable"
+MODULES_OFF="core/usb.c"
+TFLAGS="-Wno-sign-compare -Wno-unused-function -Wno-unused-variable -Wno-unused-but-set-variable"
 DEP_INC="-I$D/include"
 webp_skip() { case "$ABI:$1" in x86*:*_neon*|arm*:*_sse*) return 0;; esac; return 1; }
 
