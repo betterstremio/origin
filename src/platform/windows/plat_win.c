@@ -5,6 +5,7 @@
 #include "platform/plat.h"
 #include "core/keys.h"
 #include "core/applog.h"
+#include "core/store.h"
 #include <SDL2/SDL_syswm.h>
 #define WIN32_LEAN_AND_MEAN
 #define NOGDI
@@ -22,6 +23,7 @@
 
 static char assetDir[1024], dataDir[1024], devName[96], locale[32];
 static HWND top;
+static SDL_Window *sw; static struct { int x, y, w, h, max, full, have; } G; static int testSize; /* the window, and its saved place */
 
 static void utf8(const wchar_t *w, char *out, int cap) { if (!WideCharToMultiByte(CP_UTF8, 0, w, -1, out, cap, NULL, NULL)) out[0] = 0; }
 static void slashes(char *p) { for (; *p; p++) if (*p == '\\') *p = '/'; }
@@ -94,24 +96,55 @@ void plat_pre_init(const char *appId) {
 void *plat_win_hwnd(void) { return top; }
 static void find_hwnd(SDL_Window *w) { SDL_SysWMinfo wi; SDL_VERSION(&wi.version); if (!top && SDL_GetWindowWMInfo(w, &wi)) top = wi.info.win.window; }
 void plat_post_window(SDL_Window *w) {
-  find_hwnd(w);
+  find_hwnd(w); sw = w;
+  SDL_SetWindowMinimumSize(w, 640, 360);
+  if (G.have) { SDL_SetWindowPosition(w, G.x, G.y); if (G.max) SDL_MaximizeWindow(w); fprintf(stderr, "[window] as left: %d,%d %dx%d%s%s\n", G.x, G.y, G.w, G.h, G.max ? ", maximised" : "", G.full ? ", fullscreen" : ""); }
+  SDL_ShowWindow(w);
+  if (G.have && G.full) SDL_SetWindowFullscreen(w, SDL_WINDOW_FULLSCREEN_DESKTOP);
   if (top && getenv("SB_TOPMOST")) SetWindowPos(top, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW); /* tests: in view, so a screen capture holds only this window */
 }
-void plat_cursor_visible(int on) { (void)on; }
+void plat_cursor_visible(int on) { SDL_ShowCursor(on ? SDL_ENABLE : SDL_DISABLE); } /* (the app hides it while the arrows are used, shows it when the mouse moves) */
 const char *plat_asset_dir(void) { return assetDir; }
 const char *plat_data_dir(void) { return dataDir; }
-/* 16:9, as big as 80 % of the screen's free area allows; SB_WINDOW=1280x720 for tests */
-void plat_window_size(int *w, int *h, Uint32 *flags) {
-  int ww = 1280, hh = 720; const char *s = getenv("SB_WINDOW");
-  if (!(s && sscanf(s, "%dx%d", &ww, &hh) == 2 && ww > 100 && hh > 100)) {
-    SDL_Rect ub; if (SDL_GetDisplayUsableBounds(0, &ub) == 0) { ww = ub.w * 8 / 10; hh = ww * 9 / 16; if (hh > ub.h * 8 / 10) { hh = ub.h * 8 / 10; ww = hh * 16 / 9; } } }
-  *w = ww; *h = hh; *flags = SDL_WINDOW_ALLOW_HIGHDPI; /* (no SDL_WINDOW_OPENGL: the surface is ANGLE's, made in plat_gl_create) */
+/* ---- the window: where it was left (store key winGeom: "x y w h maximised fullscreen"), else 16:9 at 80 % of the screen's
+   free area; SB_WINDOW=1280x720 for tests (centred, never the saved place) ---- */
+static int on_a_screen(int x, int y, int w, int h) { /* most of it on some monitor (one unplugged since must not strand it) */
+  for (int i = 0; i < SDL_GetNumVideoDisplays(); i++) { SDL_Rect b; if (SDL_GetDisplayUsableBounds(i, &b)) continue;
+    int ix = (x > b.x ? x : b.x), iy = (y > b.y ? y : b.y), ax = (x + w < b.x + b.w ? x + w : b.x + b.w), ay = (y + h < b.y + b.h ? y + h : b.y + b.h);
+    if (ax - ix >= w / 2 && ay - iy >= h / 2) return 1; }
+  return 0;
 }
+void plat_window_size(int *w, int *h, Uint32 *flags) {
+  int ww = 1280, hh = 720; const char *s = getenv("SB_WINDOW"); int test = testSize = s && sscanf(s, "%dx%d", &ww, &hh) == 2 && ww > 100 && hh > 100;
+  if (!test) {
+    SDL_Rect ub; if (SDL_GetDisplayUsableBounds(0, &ub) == 0) { ww = ub.w * 8 / 10; hh = ww * 9 / 16; if (hh > ub.h * 8 / 10) { hh = ub.h * 8 / 10; ww = hh * 16 / 9; } }
+    const char *g = store_get("winGeom", NULL);
+    if (g && sscanf(g, "%d %d %d %d %d %d", &G.x, &G.y, &G.w, &G.h, &G.max, &G.full) == 6 && G.w >= 640 && G.h >= 360 && on_a_screen(G.x, G.y, G.w, G.h)) { G.have = 1; ww = G.w; hh = G.h; } }
+  *w = ww; *h = hh; *flags = SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN; /* (shown in plat_post_window, in its place; no SDL_WINDOW_OPENGL: the surface is ANGLE's) */
+}
+static void save_geom(void) {
+  if (!sw || testSize) return; Uint32 f = SDL_GetWindowFlags(sw); /* (a test's fixed size is never kept) */
+  if (!(f & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_MINIMIZED))) { SDL_GetWindowPosition(sw, &G.x, &G.y); SDL_GetWindowSize(sw, &G.w, &G.h); } /* (the normal place, kept under a maximised one) */
+  G.max = (f & SDL_WINDOW_MAXIMIZED) != 0; G.full = (f & SDL_WINDOW_FULLSCREEN_DESKTOP) == SDL_WINDOW_FULLSCREEN_DESKTOP;
+  if (G.w < 640 || G.h < 360) return;
+  char b[96]; snprintf(b, sizeof b, "%d %d %d %d %d %d", G.x, G.y, G.w, G.h, G.max, G.full); const char *o = store_get("winGeom", ""); if (strcmp(o, b)) store_set("winGeom", b);
+}
+void plat_fullscreen_toggle(void) {
+  if (!sw) return; int full = (SDL_GetWindowFlags(sw) & SDL_WINDOW_FULLSCREEN_DESKTOP) == SDL_WINDOW_FULLSCREEN_DESKTOP;
+  SDL_SetWindowFullscreen(sw, full ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP); fprintf(stderr, "[window] %s\n", full ? "windowed" : "fullscreen"); save_geom();
+}
+/* the keyboard: arrows, Enter and Escape are the remote's arrows, OK and Back; Backspace deletes where text is typed;
+   F11 or Alt+Enter: fullscreen; Ctrl+F: Search; F1-F4: the colour keys; Space and the media keys: play and pause */
 int plat_map_key(const SDL_KeyboardEvent *e) {
-  switch (e->keysym.sym) {
+  SDL_Keycode k = e->keysym.sym; int alt = (e->keysym.mod & KMOD_ALT) != 0, ctrl = (e->keysym.mod & KMOD_CTRL) != 0;
+  if (k == SDLK_F11 || ((k == SDLK_RETURN || k == SDLK_KP_ENTER) && alt)) { if (e->type == SDL_KEYDOWN && !e->repeat) plat_fullscreen_toggle(); return K_NONE; }
+  if (ctrl && k == SDLK_f) return K_GREEN;
+  if (alt || ctrl) return K_NONE; /* (Alt+Tab, Ctrl+C...: not the app's keys) */
+  switch (k) {
     case SDLK_LEFT: return K_LEFT; case SDLK_RIGHT: return K_RIGHT; case SDLK_UP: return K_UP; case SDLK_DOWN: return K_DOWN;
     case SDLK_RETURN: case SDLK_KP_ENTER: return K_OK;
-    case SDLK_ESCAPE: case SDLK_BACKSPACE: case SDLK_AC_BACK: return K_BACK;
+    case SDLK_BACKSPACE: return K_ERASE;
+    case SDLK_ESCAPE: case SDLK_AC_BACK: return K_BACK;
     case SDLK_SPACE: case SDLK_AUDIOPLAY: return K_PLAYPAUSE;
     case SDLK_AUDIOSTOP: return K_STOP;
     case SDLK_F1: return K_RED; case SDLK_F2: return K_GREEN; case SDLK_F3: return K_YELLOW; case SDLK_F4: return K_BLUE;
@@ -131,6 +164,7 @@ int plat_mem_total_mb(void) {
 }
 /* minimised and back stands in for the TV sending the app away and back; focus moving to another window is not that */
 int plat_lifecycle(const SDL_Event *e) {
+  if (e->type == SDL_WINDOWEVENT && (e->window.event == SDL_WINDOWEVENT_MOVED || e->window.event == SDL_WINDOWEVENT_SIZE_CHANGED || e->window.event == SDL_WINDOWEVENT_MAXIMIZED || e->window.event == SDL_WINDOWEVENT_RESTORED)) save_geom();
   if (e->type == SDL_WINDOWEVENT) { if (e->window.event == SDL_WINDOWEVENT_RESTORED) return 1; if (e->window.event == SDL_WINDOWEVENT_MINIMIZED) return -1; }
   return 0;
 }
@@ -198,7 +232,8 @@ int win_screen_shot(void *hwnd, const char *path); /* (dev_win.c) */
 void plat_gl_swap(SDL_Window *w) {
   (void)w; E.SwapBuffers(dpy, surf);
   static int n, at = -2; if (at == -2) at = getenv("SB_SCREEN_SHOT") && getenv("SB_SCREEN_FRAME") ? atoi(getenv("SB_SCREEN_FRAME")) : -1; /* development: the composed screen at that frame */
-  if (at >= 0 && ++n == at) win_screen_shot(top, getenv("SB_SCREEN_SHOT"));
+  ++n; if (at >= 0 && n == at) win_screen_shot(top, getenv("SB_SCREEN_SHOT"));
+  { void win_dev_input(void *hwnd, int frame); win_dev_input(top, n); } /* development: SB_POST */
 }
 void plat_gl_interval(int n) { if (dpy) E.SwapInterval(dpy, n); }
 void plat_gl_size(SDL_Window *w, int *pw, int *ph) { RECT r; (void)w; if (top && GetClientRect(top, &r)) { *pw = r.right - r.left; *ph = r.bottom - r.top; } else { *pw = *ph = 0; } }

@@ -28,6 +28,7 @@ static inline SbRect rect(float x, float y, float w, float h) { SbRect r = { x, 
 
 int  gfx_init(int surfaceW, int surfaceH);
 void gfx_resize(int surfaceW, int surfaceH);
+void gfx_viewport(int *x, int *y, int *w, int *h);  /* where the 16:9 screen sits in the surface, in its pixels from the top left */
 void gfx_begin(uint32_t clear);   /* clears to the colour (alpha included: the video shows through alpha 0) */
 void gfx_end(void);               /* flushes what is left */
 void gfx_flush(void);

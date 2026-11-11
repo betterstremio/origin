@@ -167,7 +167,8 @@ void video_seek_now(double sec) { video_seek(sec); }
 double video_time(void) { if (seekTarget >= 0) return seekTarget; return S.t + (timed.on ? timed.off : 0); }
 double video_duration(void) { return timed.on && timed.dur > 0 ? timed.dur : S.dur; }
 double video_buffered_end(void) { return S.buf + (timed.on ? timed.off : 0); }
-VidState video_state(void) { return S.st; }
+static VidState state_now(void) { return !S.active ? VID_IDLE : S.error ? VID_ERROR : !S.live ? VID_LOADING : S.eof ? VID_ENDED : S.cache ? VID_BUFFERING : S.paused ? VID_PAUSED : VID_PLAYING; }
+VidState video_state(void) { return state_now(); } /* (a pause asked for a moment ago counts already) */
 const char *video_error(void) { return S.err; }
 int video_live(void) { return S.live; }
 int video_has_media(void) { return S.active && (S.started || S.pendingStarts > 0); }
@@ -204,8 +205,8 @@ void video_set_volume(int pct, int easeMs) {
 /* layout units (SB_W x SB_H) to the window's pixels */
 static void place(void) {
   if (!plane || !R.set) return;
-  int W = 0, Hh = 0; plat_gl_size(NULL, &W, &Hh); if (W <= 0 || Hh <= 0) return;
-  int px[4] = { (int)(R.x * W / SB_W + 0.5f), (int)(R.y * Hh / SB_H + 0.5f), (int)(R.w * W / SB_W + 0.5f), (int)(R.h * Hh / SB_H + 0.5f) };
+  int vx, vy, W, Hh; gfx_viewport(&vx, &vy, &W, &Hh); if (W <= 0 || Hh <= 0) return; /* (the 16:9 screen inside the window) */
+  int px[4] = { vx + (int)(R.x * W / SB_W + 0.5f), vy + (int)(R.y * Hh / SB_H + 0.5f), (int)(R.w * W / SB_W + 0.5f), (int)(R.h * Hh / SB_H + 0.5f) };
   if (memcmp(px, lastPx, sizeof px) || W != lastCW || Hh != lastCH) { memcpy(lastPx, px, sizeof px); lastCW = W; lastCH = Hh;
     SetWindowPos(plane, NULL, px[0], px[1], px[2] > 1 ? px[2] : 1, px[3] > 1 ? px[3] : 1, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER); }
   char c[64] = ""; if (R.crop) snprintf(c, sizeof c, "%dx%d+%d+%d", R.sw, R.sh, R.sx, R.sy);
@@ -311,7 +312,7 @@ void video_pump(void) {
   if (seekSent && !S.seeking) { seekTarget = -1; seekSent = 0; }
   if (V.on) { Uint32 el = SDL_GetTicks() - V.t0; double k = el >= V.ms ? 1 : (double)el / V.ms, v = V.from + (V.to - V.from) * k;
     if (k >= 1) V.on = 0; if (v - V.cur > 0.5 || V.cur - v > 0.5 || !V.on) { V.cur = v; set_dbl("volume", v); } }
-  VidState st = !S.active ? VID_IDLE : S.error ? VID_ERROR : !S.live ? VID_LOADING : S.eof ? VID_ENDED : S.cache ? VID_BUFFERING : S.paused ? VID_PAUSED : VID_PLAYING;
+  VidState st = state_now();
   if (st != S.st) { static const char *nm[] = { "idle", "loading", "playing", "paused", "buffering", "ended", "error" };
     fprintf(stderr, "[video] state %s at %.1f s of %.1f (%dx%d)\n", nm[st], S.t, S.dur, S.w, S.h); S.st = st; }
   if (R.set) place(); /* (the window may have changed size) */

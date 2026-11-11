@@ -134,7 +134,15 @@ int gfx_init(int w, int h) {
   fprintf(stderr, "[gfx] %s | %s | %s\n", glGetString(GL_VENDOR), glGetString(GL_RENDERER), glGetString(GL_VERSION));
   return 1;
 }
-void gfx_resize(int w, int h) { surfW = w; surfH = h; scl = (float)w / SB_W; glViewport(0, 0, w, h); }
+/* the layout fits the screen whole and centred: a surface that is not 16:9 (a resized desktop window, a 16:10 or ultrawide
+   monitor) gets bars, never a cut-off page; on a 16:9 surface this is the whole surface, as before */
+static int vpX, vpY, vpW, vpH, winH; /* the screen's 16:9 area inside the surface, GL's origin (bottom left) */
+void gfx_resize(int w, int h) {
+  winH = h; int vw = w, vh = h;
+  if (h > 0 && (long)w * 9 > (long)h * 16) vw = (int)((long)h * 16 / 9); else if (w > 0 && (long)w * 9 < (long)h * 16) vh = (int)((long)w * 9 / 16);
+  vpX = (w - vw) / 2; vpY = (h - vh) / 2; vpW = vw; vpH = vh; surfW = vw; surfH = vh; scl = (float)vw / SB_W; glViewport(vpX, vpY, vw, vh);
+}
+void gfx_viewport(int *x, int *y, int *w, int *h) { *x = vpX; *y = winH - vpY - vpH; *w = vpW; *h = vpH; } /* (window pixels, top left) */
 float gfx_scale(void) { return scl; }
 int gfx_draw_calls(void) { return drawCalls; }
 static long poolBytes, texBytes; static int npool, texCount;
@@ -198,7 +206,7 @@ static void apply_clip(void) {
   gfx_flush();
   if (nclip) { int x = (int)floorf(curClip.x * scl), y = (int)floorf(curClip.y * scl), w = (int)ceilf((curClip.x + curClip.w) * scl) - x, h = (int)ceilf((curClip.y + curClip.h) * scl) - y;
     if (w < 0) w = 0; if (h < 0) h = 0;
-    glEnable(GL_SCISSOR_TEST); glScissor(x, surfH - y - h, w, h); }
+    glEnable(GL_SCISSOR_TEST); glScissor(x + (tgtOn ? 0 : vpX), (tgtOn ? 0 : vpY) + surfH - y - h, w, h); } /* (the screen sits at its offset in the surface) */
   else glDisable(GL_SCISSOR_TEST);
 }
 void gfx_invalidate_state(void) { curProg = -1; curTex = 0; } /* someone else drew with raw GL: the next batch sets everything again */
@@ -530,7 +538,7 @@ int gfx_in_target(void) { return saved.on; }
 void gfx_target_end(void) {
   if (!saved.on) return;
   gfx_flush(); saved.on = 0; tgtOn = 0; fadeOff = 0;
-  glBindFramebuffer(GL_FRAMEBUFFER, screenFbo); surfW = saved.surfW; surfH = saved.surfH; scl = saved.scl; glViewport(0, 0, surfW, surfH);
+  glBindFramebuffer(GL_FRAMEBUFFER, screenFbo); surfW = saved.surfW; surfH = saved.surfH; scl = saved.scl; glViewport(vpX, vpY, surfW, surfH);
   nclip = saved.nclip; nopac = saved.nopac; noff = saved.noff; nsc = saved.nsc; curOpac = saved.curOpac; curOx = saved.curOx; curOy = saved.curOy;
   curSx = saved.curSx; curSy = saved.curSy; curSox = saved.curSox; curSoy = saved.curSoy; curClip = saved.curClip;
   memcpy(clips, saved.clips, sizeof clips); memcpy(opac, saved.opac, sizeof opac); memcpy(offx, saved.offx, sizeof offx); memcpy(offy, saved.offy, sizeof offy); memcpy(scx, saved.scx, sizeof scx); memcpy(scy, saved.scy, sizeof scy); memcpy(sox, saved.sox, sizeof sox); memcpy(soy, saved.soy, sizeof soy); memcpy(scOx, saved.scOx, sizeof scOx); memcpy(scOy, saved.scOy, sizeof scOy);

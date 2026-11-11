@@ -52,6 +52,16 @@ static void type_key(int ki) {
   else if (ki == NK + 2) q[0] = 0;                                                  /* clear */
   set_q(q);
 }
+/* a keyboard: typed text goes straight into the query, Backspace ("\b") takes off a character; Enter after typing goes to
+   the results instead of pressing the on-screen key under the highlight */
+static int kbTyped;
+static void text_in(const char *s) {
+  if (s[0] == '\b') { type_key(NK + 1); kbTyped = 1; return; }
+  char q[64]; size_t n = strlen(S.q), m = 0; while (s[m] && (unsigned char)s[m] >= ' ') m++;
+  if (!m || n + m > 40) return;
+  snprintf(q, sizeof q, "%s%.*s", S.q, (int)m, s); set_q(q); S.zone = 0; kbTyped = 1;
+}
+void search_start_typing(const char *s) { S.q[0] = 0; text_in(s); } /* (typing on a tab opened Search) */
 static void results_draw_state(void) {
   if (S.ri >= S.items.n) S.ri = S.items.n ? S.items.n - 1 : 0; if (S.si >= S.nsug) S.si = S.nsug ? S.nsug - 1 : 0;
   if (S.zone == 2 && !S.items.n) S.zone = 0; if (S.zone == 1 && !S.nsug) S.zone = 0;
@@ -127,6 +137,8 @@ static void leave(void) {} /* Search keeps its query and results for when you co
 static const Item *focused(void) { return S.zone == 2 && S.ri < S.items.n ? &S.items.items[S.ri] : NULL; }
 static int key(int k) {
   int rows = rows_of(), C = SGC; int z0 = S.zone, kr0 = S.kr, kc0 = S.kc, si0 = S.si, ri0 = S.ri;
+  if (kbTyped && k == K_OK && S.zone == 0) { kbTyped = 0; if (S.livePending) { S.livePending = 0; live(); } if (S.items.n) { S.zone = 2; S.ri = 0; } return 1; }
+  if (k != K_OK) kbTyped = 0;
   if (S.zone == 0) {
     if (k == K_LEFT) { if (S.kr == rows) S.kc = S.kc >= 2 ? S.kc - 2 : 0; else S.kc = S.kc > 0 ? S.kc - 1 : 0; }
     else if (k == K_RIGHT) { int edge = S.kr == rows ? S.kc >= 4 : S.kc >= SCOLS - 1; if (edge) { if (S.nsug) { S.zone = 1; S.si = 0; } else if (S.items.n) { S.zone = 2; S.ri = 0; } } else S.kc = S.kc + (S.kr == rows ? 2 : 1) < SCOLS ? S.kc + (S.kr == rows ? 2 : 1) : SCOLS - 1; }
@@ -251,4 +263,4 @@ static void draw(void) {
   gfx_offset_pop(); gfx_opacity_pop(); gfx_clip_pop();
   gfx_offset_pop(); gfx_opacity_pop();
 }
-Screen searchScreen = { enter, leave, key, tick, draw, focused, NULL, NULL };
+Screen searchScreen = { enter, leave, key, tick, draw, focused, NULL, text_in };

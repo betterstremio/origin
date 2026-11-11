@@ -198,6 +198,22 @@ static void p2p_test_tick(int frame) {
     if (PT.cycle < PT.cycles) p2p_resolve(getenv("SB_P2PTEST"), p2p_test_done, NULL);
     else { fprintf(stderr, "[p2ptest] %d cycles done, quitting\n", PT.cycles); app_quit(); } }
 }
+/* the mouse's place in layout units: through the window's pixels (a high-DPI drawable is larger than the window) and the
+   16:9 screen inside them (gfx_viewport: bars on a window of another shape) */
+static void to_layout(SDL_Window *win, int mx, int my, float *x, float *y) {
+  int ww, wh, pw, ph, vx, vy, vw, vh; SDL_GetWindowSize(win, &ww, &wh); GL_SIZE(win, &pw, &ph); gfx_viewport(&vx, &vy, &vw, &vh);
+  float k = ww > 0 ? (float)pw / ww : 1; *x = vw > 0 ? (mx * k - vx) * SB_W / vw : 0; *y = vh > 0 ? (my * k - vy) * SB_H / vh : 0;
+}
+#if SB_WINDOWED
+/* a desktop: the swap waits for the monitor, at most 120 frames a second (a 240 Hz one draws every second refresh), and the
+   pacer is told that rate, so motion steps evenly; again when the window moves to another monitor */
+static void desktop_rate(SDL_Window *win) {
+  SDL_DisplayMode m; int hz = 0; if (!SDL_GetCurrentDisplayMode(SDL_GetWindowDisplayIndex(win), &m)) hz = m.refresh_rate;
+  if (hz < 24) hz = 60; int k = (hz + 119) / 120; GL_INTERVAL(k); pace_set_hz(hz / k);
+  fprintf(stderr, "[pace] monitor %d Hz: the app at %d frames a second\n", hz, hz / k);
+}
+static Uint32 ptrMovedAt; static int curHid; /* the cursor hidden over a film that has the mouse still */
+#endif
 int main(int argc, char **argv) {
   (void)argc; (void)argv;
   setlocale(LC_NUMERIC, "C");
@@ -250,9 +266,16 @@ int main(int argc, char **argv) {
   vsyncOn = getenv("SB_VSYNC") ? atoi(getenv("SB_VSYNC")) : SB_VSYNC_DEFAULT;
   GL_INTERVAL(vsyncOn); /* measured on the TV: with vsync the driver blocks a whole extra frame at the first GL call; the loop paces itself instead */
   pace_init();
+#if SB_WINDOWED
+  if (vsyncOn) desktop_rate(win);
+#endif
 #endif
   plat_post_window(win);
+#if SB_WINDOWED
+  if (plat_text_input()) SDL_StartTextInput(); else SDL_StopTextInput(); /* a keyboard types anywhere: the screens decide what text means */
+#else
   SDL_StopTextInput();
+#endif
   int dw, dh; GL_SIZE(win, &dw, &dh);
   fprintf(stderr, "[start] %s window %dx%d drawable %dx%d\n", plat_device_name(), w, h, dw, dh);
   if (!gfx_init(dw, dh)) return 1;
@@ -294,15 +317,40 @@ int main(int argc, char **argv) {
       if (getenv("SB_EVLOG") || frame < 120) if (e.type == SDL_QUIT || e.type == SDL_KEYDOWN || e.type == SDL_KEYUP || e.type == SDL_WINDOWEVENT) fprintf(stderr, "[ev] type=%d%s sc=%d sym=%d win=%d\n", e.type, e.type == SDL_QUIT ? " QUIT" : "", e.type == SDL_KEYDOWN || e.type == SDL_KEYUP ? e.key.keysym.scancode : 0, e.type == SDL_KEYDOWN || e.type == SDL_KEYUP ? e.key.keysym.sym : 0, e.type == SDL_WINDOWEVENT ? e.window.event : 0);
       if (e.type == SDL_QUIT) { fprintf(stderr, "[exit] SDL_QUIT\n"); app_quit(); }
       else if (e.type == SDL_KEYDOWN || e.type == SDL_KEYUP) { int k = plat_map_key(&e.key);
-        if (k == K_BACK && e.key.keysym.sym == SDLK_ESCAPE && e.type == SDL_KEYDOWN && SCR == SCR_LOGIN) app_quit();
+#if !SB_WINDOWED
+        if (k == K_BACK && e.key.keysym.sym == SDLK_ESCAPE && e.type == SDL_KEYDOWN && SCR == SCR_LOGIN) app_quit(); /* (a desktop window has its own close button) */
+#endif
         if (k) app_key(k, e.type == SDL_KEYDOWN, e.key.repeat); }
       else if (e.type == SDL_TEXTINPUT) app_text(e.text.text);
       else if (script && (e.type == SDL_MOUSEMOTION || e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP || e.type == SDL_MOUSEWHEEL)) {} /* a scripted run: the real mouse stays out */
-      else if (e.type == SDL_MOUSEMOTION) { if (e.motion.x || e.motion.y) app_pointer_move(e.motion.x * SB_W / w, e.motion.y * SB_H / h); }
-      else if (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP) { if (e.button.button == SDL_BUTTON_LEFT) app_pointer_button(e.type == SDL_MOUSEBUTTONDOWN, e.button.x * SB_W / w, e.button.y * SB_H / h); }
+      else if (e.type == SDL_MOUSEMOTION) { if (e.motion.x || e.motion.y) { float x, y; to_layout(win, e.motion.x, e.motion.y, &x, &y); app_pointer_move(x, y); }
+#if SB_WINDOWED
+        ptrMovedAt = SDL_GetTicks(); if (curHid) { curHid = 0; SDL_ShowCursor(SDL_ENABLE); }
+#endif
+      }
+      else if (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP) { float x, y; to_layout(win, e.button.x, e.button.y, &x, &y);
+#if SB_WINDOWED
+        static int eatUp, pausedBefore; /* a double click on a film: fullscreen and back; its second click is not a click, and what the first did to play/pause is undone */
+        if (e.button.button == SDL_BUTTON_LEFT && e.type == SDL_MOUSEBUTTONDOWN && e.button.clicks == 1) pausedBefore = video_state() == VID_PAUSED;
+        if (e.button.button == SDL_BUTTON_LEFT && e.type == SDL_MOUSEBUTTONDOWN && e.button.clicks == 2 && player_open()) {
+          if ((video_state() == VID_PAUSED) != pausedBefore) { app_key(K_PLAYPAUSE, 1, 0); app_key(K_PLAYPAUSE, 0, 0); }
+          plat_fullscreen_toggle(); eatUp = 1; continue; }
+        if (e.button.button == SDL_BUTTON_LEFT && e.type == SDL_MOUSEBUTTONUP && eatUp) { eatUp = 0; continue; }
+        if ((e.button.button == SDL_BUTTON_RIGHT || e.button.button == SDL_BUTTON_X1) && e.type == SDL_MOUSEBUTTONDOWN) { app_key(K_BACK, 1, 0); app_key(K_BACK, 0, 0); } /* right button and the mouse's back button: Back */
+#endif
+        if (e.button.button == SDL_BUTTON_LEFT) app_pointer_button(e.type == SDL_MOUSEBUTTONDOWN, x, y);
+      }
       else if (e.type == SDL_MOUSEWHEEL) app_pointer_wheel((float)e.wheel.x, (float)e.wheel.y);
       else if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) { GL_SIZE(win, &dw, &dh); gfx_resize(dw, dh); }
+#if SB_WINDOWED
+      else if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_DISPLAY_CHANGED && vsyncOn) desktop_rate(win);
+#endif
     }
+#if SB_WINDOWED
+    if (plat_text_input() && !SDL_IsTextInputActive()) SDL_StartTextInput(); /* (the sign-in page stops it when a field closes) */
+    if (!curHid && player_open() && SDL_GetTicks() - ptrMovedAt > 2500) { curHid = 1; SDL_ShowCursor(SDL_DISABLE); app_pointer_system(0); fprintf(stderr, "[window] cursor hidden over the film\n"); } /* a film: the cursor goes after 2.5 s still */
+    else if (curHid && !player_open()) { curHid = 0; SDL_ShowCursor(SDL_ENABLE); }
+#endif
     Uint32 now = SDL_GetTicks(); float dt = (now - last) / 1000.0f; last = now;
     { float pp = (float)pace_period() / 1000.0f; if (pp <= 0) pp = 1 / 60.0f; /* motion on the 60 Hz clock: an on-time frame is one period (no millisecond jitter); a slow one moves it 3 periods at most (no jump) */
       if (dt > pp * 0.5f && dt < pp * 1.5f) dt = pp; else if (dt > pp * 3) dt = pp * 3; }
@@ -324,6 +372,9 @@ int main(int argc, char **argv) {
     Uint32 tCpu0 = SDL_GetTicks();
     text_frame_begin();
     app_tick(dt); splash_tick(dt);
+#if SB_WINDOWED
+    if (SDL_GetWindowFlags(win) & SDL_WINDOW_MINIMIZED) { SDL_WaitEventTimeout(NULL, 50); continue; } /* minimised: nothing drawn; the loop wakes for events, or every 50 ms for the network and timers */
+#endif
     Uint32 tA = SDL_GetTicks();
     gfx_begin(player_live() ? RGBA(0, 0, 0, 0) : PAGE); /* the video plane shows through the transparent window */
     { static int bench = -2, benchCalls = 0; if (bench == -2) { bench = getenv("SB_BENCH") ? atoi(getenv("SB_BENCH")) : -1; benchCalls = getenv("SB_BENCHCALLS") ? atoi(getenv("SB_BENCHCALLS")) : 0; }

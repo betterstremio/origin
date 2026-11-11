@@ -61,4 +61,7 @@ void plat_gl_interval(int n);
 void plat_gl_size(SDL_Window *w, int *pw, int *ph);
 void plat_gl_destroy(void *ctx);
 #endif
+#if SB_WINDOWED
+void plat_fullscreen_toggle(void);   /* a desktop window: fullscreen (borderless, the monitor's own mode) and back */
+#endif
 #endif

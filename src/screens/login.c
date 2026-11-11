@@ -129,7 +129,9 @@ static int key(int k) {
   else if (k == K_OK) { if (L.zone < 2) { L.editing = 1; if (plat_text_input()) SDL_StartTextInput(); else osk_open(&L.osk); } else do_email(); }
   return 1;
 }
-static void text(const char *s) { if (!L.editing || L.done) return; char *f = L.zone ? L.pass : L.email; if (strlen(f) + strlen(s) < 127) strcat(f, s); }
+static void text(const char *s) { if (!L.editing || L.done) return; char *f = L.zone ? L.pass : L.email;
+  if (s[0] == '\b') { size_t n = strlen(f); if (n) { n--; while (n && (f[n] & 0xc0) == 0x80) n--; f[n] = 0; } return; } /* a keyboard's Backspace */
+  if (strlen(f) + strlen(s) < 127) strcat(f, s); }
 static void tick(float dt) {
   timer_tick(&L.in, dt); nudge_tick(&L.nudge, dt); osk_tick(&L.osk, dt);
   if (!L.revealed && app_now() >= L.revealAt) reveal();

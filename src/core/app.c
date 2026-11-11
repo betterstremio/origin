@@ -827,7 +827,9 @@ void app_pointer_button(int down, float x, float y) {
 /* the wheel = the Up/Down arrows (Left/Right for a sideways wheel), one per notch; it leaves the pointer out */
 void app_pointer_wheel(float dx, float dy) { double now = NOW; if (saver_on()) return; if (now - PTR.wheelAt < PTR_WHEEL || (!dx && !dy)) return; PTR.wheelAt = now; idle_touch(); int k = dy > 0 ? K_UP : dy < 0 ? K_DOWN : dx > 0 ? K_RIGHT : K_LEFT; key_core(app_mirror_key(k), 1, 0); key_core(k, 0, 0); }
 void app_pointer_system(int show) { if (!show) { ptr_hide(); return; } if (PTR.arrowHid) { if (NOW - PTR.arrowAt < PTR_ARROW_WIN) plat_cursor_visible(0); return; } ptr_show(); } /* (the TV showing it again right after an arrow: only the remote stirring) */
+static int text_taker(void) { return (app_overlay && app_overlay->text) || (!app_overlay && screens[SCR] && screens[SCR]->text); }
 void app_key(int k, int down, int repeat) {
+  if (k == K_ERASE) { if (text_taker() && !player_open()) { if (down) app_text("\b"); return; } k = K_BACK; } /* Backspace: deletes where text is typed */
   if (k == K_CURSOR_SHOW || k == K_CURSOR_HIDE) { if (down) app_pointer_system(k == K_CURSOR_SHOW); return; } /* a notice from the TV, not a key */
   if (down && k == K_OK && !repeat) { if (PTR.eatOk || PTR.down || (PTR.clickAt && NOW - PTR.clickAt < PTR_DEDUPE)) { PTR.eatOk = 1; return; } PTR.okKeyAt = NOW; } /* the click of this same press came first */
   if (!down && k == K_OK && PTR.eatOk) { PTR.eatOk = 0; return; }
@@ -886,7 +888,10 @@ static void key_dispatch(int k, int repeat) {
     if (fi) { if (!okHold.down) { okHold.down = 1; okHold.menu = 0; okHold.item = *fi; okHold.has = 1; okHold.at = NOW; } return; } }
   if (screens[SCR] && screens[SCR]->key) screens[SCR]->key(k);
 }
-void app_text(const char *utf8) { idle_touch(); if (app_overlay && app_overlay->text) app_overlay->text(utf8); else if (screens[SCR] && screens[SCR]->text) screens[SCR]->text(utf8); }
+void app_text(const char *utf8) { idle_touch(); if (app_overlay && app_overlay->text) app_overlay->text(utf8); else if (screens[SCR] && screens[SCR]->text) screens[SCR]->text(utf8);
+  /* a keyboard typing on one of the tabs: Search opens with it (a letter or digit; Space stays play/pause) */
+  else if (!app_overlay && app_is_board(SCR) && !player_open() && app_splash_done && (unsigned char)utf8[0] > ' ') {
+    extern void search_start_typing(const char *utf8); app_key(K_GREEN, 1, 0); app_key(K_GREEN, 0, 0); search_start_typing(utf8); } }
 void app_refresh_boards(void) { extern void board_invalidate(void); extern void board_refresh_quiet(void); board_invalidate(); if (app_is_board(SCR)) board_refresh_quiet(); } /* in place: no row replays its entrance */
 void app_init(void) {
   vig_tex(0); vig_tex(1); /* both shadings made at start: the first title page would make its own mid-zoom */

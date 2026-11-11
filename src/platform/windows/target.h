@@ -11,6 +11,7 @@
 #define SB_PLAT_GL 1             /* the platform makes the GL surface (plat_gl_*): a composition layer above the video window */
 #define SB_TV_PACER 1            /* the frame loop's own pacing, with the driver waiting for the screen (SB_VSYNC_DEFAULT) */
 #define SB_VSYNC_DEFAULT 1       /* a desktop has no reason to keep the swap from waiting for the screen */
+#define SB_WINDOWED 1            /* a desktop window: resized, fullscreen, minimised; a mouse and a keyboard */
 #define SB_STATIC_CURL 1
 #define SB_CACHE_MB 400
 #define SB_IMG_BUDGET_MB 96
