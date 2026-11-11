@@ -56,34 +56,49 @@ static int on_body(const unsigned char *p, size_t n, void *ud) { Conn *c = ud; i
    for it, on that request's own thread, and written through as it is made. A request arriving while another runs
    stops it (the TV moved on), then takes its place. */
 #define RING (4 << 20)
+#define RING_BIG (16 << 20)
+#define NPAR 4
 static int start(void);
-typedef struct { char url[4096]; NetRange *net; long long size; unsigned char *ring; long long start; int len; volatile int *stop; int contig; } Reader;
+/* Reading on, a remux (50+ Mb/s) outruns one connection: NPAR ranges of 2 MiB go out at once, each on its own kept-alive
+   connection, into a 16 MiB ring. TVs under 1.5 GB keep one connection and the 4 MiB ring (Firestick rule) */
+typedef struct { char url[4096]; NetRange *net, *more[NPAR - 1]; long long size; unsigned char *ring; long long start; int len, ringSz, par; volatile int *stop; int contig; } Reader;
 static int ring_put(Reader *r, long long at, const unsigned char *b, int n) { /* appends at = start + len */
-  for (int i = 0; i < n; ) { int o = (int)((at + i) % RING), k = n - i < RING - o ? n - i : RING - o; memcpy(r->ring + o, b + i, k); i += k; }
-  r->len += n; if (r->len > RING) { r->start += r->len - RING; r->len = RING; } return n;
+  int R = r->ringSz;
+  for (int i = 0; i < n; ) { int o = (int)((at + i) % R), k = n - i < R - o ? n - i : R - o; memcpy(r->ring + o, b + i, k); i += k; }
+  r->len += n; if (r->len > R) { r->start += r->len - R; r->len = R; } return n;
 }
+typedef struct { NetRange *net; const char *url; long long at; long want; unsigned char *b; long g; } Part;
+static void *part_get(void *a) { Part *p = a; long long total = -1; int st = 0; if (net_range_get(p->net, p->url, p->at, p->want, &p->b, &p->g, &total, &st, 15000) != NR_OK && p->g <= 0) p->g = 0; return NULL; }
 static int rd_read(void *ud, long long pos, unsigned char *buf, int n) {
   Reader *r = ud; if (r->size > 0 && pos >= r->size) return 0;
   if (!(pos >= r->start && pos < r->start + r->len)) {
     long long end = r->start + r->len, at = pos;
     if (r->len && pos >= end && pos - end < (1 << 20)) at = end; else { r->start = pos; r->len = 0; } /* a short hop forward reads through */
     int want = r->contig > 2 ? (2 << 20) : (512 << 10); /* reading on: larger requests; a seek's first look: a small one */
+    int np = r->contig > 2 ? r->par - 1 : 0, started = 0, rv = 1; pthread_t th[NPAR]; Part pt[NPAR]; /* reading on: the next parts alongside */
+    if (r->size > 0) while (np > 0 && at + (long long)want * np >= r->size) np--; /* (none past the end) */
+    for (int k = 0; k < np; k++) { pt[k] = (Part){ r->more[k], r->url, at + (long long)want * (k + 1), want, NULL, 0 }; if (pthread_create(&th[k], NULL, part_get, &pt[k])) break; started++; }
     for (int tries = 0;; tries++) {
-      if (r->stop && *r->stop) return -1;
+      if (r->stop && *r->stop) { rv = -1; break; }
       unsigned char *b = NULL; long g = 0; long long total = -1; int st = 0;
       int e = net_range_get(r->net, r->url, at, want, &b, &g, &total, &st, 15000);
       if (total > 0) r->size = total;
       if (g > 0) { ring_put(r, at, b, (int)g); free(b); break; }
       free(b);
-      if (e == NR_OK || (r->size > 0 && at >= r->size)) return 0;
-      if ((e != NR_NET && e != NR_TIMEOUT && e != NR_BUSY) || tries >= 3) { fprintf(stderr, "[dts] read at %lld failed (%d, HTTP %d)\n", at, e, st); return -1; }
+      if (e == NR_OK || (r->size > 0 && at >= r->size)) { rv = 0; break; }
+      if ((e != NR_NET && e != NR_TIMEOUT && e != NR_BUSY) || tries >= 3) { fprintf(stderr, "[dts] read at %lld failed (%d, HTTP %d)\n", at, e, st); rv = -1; break; }
       SDL_Delay(500u << tries);
     }
+    for (int k = 0; k < started; k++) pthread_join(th[k], NULL); /* (always: the parts live on this stack) */
+    for (int k = 0, gap = rv != 1; k < started; k++) { /* kept in order, up to the first part that came back short */
+      if (!gap && pt[k].g > 0 && pt[k].at == r->start + r->len) { ring_put(r, pt[k].at, pt[k].b, (int)pt[k].g); if (pt[k].g < want) gap = 1; } else gap = 1;
+      free(pt[k].b); }
+    if (rv != 1) return rv;
     r->contig = at == end ? r->contig + 1 : 0;
     if (!(pos >= r->start && pos < r->start + r->len)) return -1;
   }
   int k = (int)(r->start + r->len - pos); if (k > n) k = n;
-  for (int i = 0; i < k; ) { int o = (int)((pos + i) % RING), m = k - i < RING - o ? k - i : RING - o; memcpy(buf + i, r->ring + o, m); i += m; }
+  for (int i = 0; i < k; ) { int o = (int)((pos + i) % r->ringSz), m = k - i < r->ringSz - o ? k - i : r->ringSz - o; memcpy(buf + i, r->ring + o, m); i += m; }
   return k;
 }
 static const sbd_api *D; static int dTried;
@@ -114,12 +129,14 @@ typedef struct Conv { unsigned id; int ord, flags, state, refs, running; volatil
 static Conv *conv; static unsigned convN; /* the current one, under mu */
 static void conv_unref(Conv *c) { /* the last holder frees it (the run in progress, the opening thread, the current slot) */
   pthread_mutex_lock(&mu); int last = --c->refs == 0; pthread_mutex_unlock(&mu); if (!last) return;
-  if (c->src) D->close(c->src); net_range_free(c->rd.net); free(c->rd.ring); pthread_mutex_destroy(&c->runMu); free(c);
+  if (c->src) D->close(c->src); net_range_free(c->rd.net); for (int k = 0; k < NPAR - 1; k++) if (c->rd.more[k]) net_range_free(c->rd.more[k]); free(c->rd.ring); pthread_mutex_destroy(&c->runMu); free(c);
 }
 static Conv *conv_get(unsigned id) { pthread_mutex_lock(&mu); Conv *c = conv && conv->id == id ? conv : NULL; if (c) c->refs++; pthread_mutex_unlock(&mu); return c; }
 static void *conv_open(void *a) {
   plat_thread_background(5); Conv *c = a; char err[160] = ""; SbdSrc *s = NULL;
-  c->rd.net = net_range_new(); c->rd.ring = malloc(RING); c->rd.stop = &c->dead;
+  int big = plat_mem_total_mb() >= 1500; c->rd.ringSz = big ? RING_BIG : RING; c->rd.par = 1;
+  c->rd.net = net_range_new(); c->rd.ring = malloc(c->rd.ringSz); c->rd.stop = &c->dead;
+  if (big) { c->rd.par = NPAR; for (int k = 0; k < NPAR - 1; k++) if (!(c->rd.more[k] = net_range_new())) c->rd.par = 1; }
   if (!c->rd.net || !c->rd.ring) snprintf(err, sizeof err, "out of memory");
   else if (!dts_load()) snprintf(err, sizeof err, "no converter library");
   else { unsigned char b1; if (rd_read(&c->rd, 0, &b1, 1) < 1) snprintf(err, sizeof err, "the file can't be read"); /* (its first bytes, and its size with them) */

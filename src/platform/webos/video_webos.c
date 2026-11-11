@@ -364,7 +364,7 @@ int video_audio_unsupported(void) { return S.audioUnsup; }
 int video_audio_tracks(VidTrack *out, int max) { pthread_mutex_lock(&mu); int n = S.naud < max ? S.naud : max; memcpy(out, S.aud, n * sizeof *out); pthread_mutex_unlock(&mu); return n; }
 int video_audio_current(void) { return S.curAud; }
 void video_select_audio(int idx) {
-  char mid[64]; pthread_mutex_lock(&mu); snprintf(mid, sizeof mid, "%s", S.mediaId); if (idx != S.curAud) S.audioUnsup = 0; S.curAud = idx; pthread_mutex_unlock(&mu); if (!mid[0]) return;
+  char mid[64]; pthread_mutex_lock(&mu); snprintf(mid, sizeof mid, "%s", S.mediaId); S.audioUnsup = 0; S.curAud = idx; /* a pick clears the refusal, even of the same index: the TV reports a track it hides (TrueHD) as the first listed one */ pthread_mutex_unlock(&mu); if (!mid[0]) return;
   char b[192]; snprintf(b, sizeof b, "{\"mediaId\":\"%s\",\"type\":\"audio\",\"index\":%d}", mid, idx); call("selectTrack", b, NULL, NULL);
 }
 int video_text_tracks(VidTrack *out, int max) { pthread_mutex_lock(&mu); int n = S.ntxt < max ? S.ntxt : max; memcpy(out, S.txt, n * sizeof *out); pthread_mutex_unlock(&mu); return n; }
