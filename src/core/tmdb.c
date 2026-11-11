@@ -63,6 +63,8 @@ static Loc *loc_from_json(const cJSON *v) {
 static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
 static char key[420], builtin[420], keyPath[1200], locDir[1200], apiBase[256];
 static char phoneKey[420]; static unsigned phoneKeyGen, seenKeyGen;  /* a key saved from the phone (server thread) */
+static char srcPath[1200], keySrc[8], newSrc[8]; /* where the key came from: "" the user (phone or paste), "nuvio" the Nuvio account */
+static volatile int checkSt;                       /* the last pasted or offered key: TK_* (tmdb.h) */
 static int key_ok(const char *k) { size_t n = strlen(k); if (n < 20 || n > 400) return 0; for (const char *p = k; *p; p++) if (!isalnum((unsigned char)*p) && *p != '.' && *p != '_' && *p != '-') return 0; return 1; }
 static void strip_ws(const char *in, char *out, size_t cap) { size_t o = 0; for (; *in && o + 1 < cap; in++) if (!isspace((unsigned char)*in)) out[o++] = *in; out[o] = 0; }
 static int write_file(const char *p, const char *data, size_t len) {
@@ -89,15 +91,22 @@ static cJSON *tmdb_get(const char *path, const char *k, int *st) {
   size_t len = 0; unsigned char *b = net_fetch_sync_hdr(url, hdr[0] ? hdr : NULL, &len, st, 12000);
   cJSON *j = b ? cJSON_Parse((const char *)b) : NULL; free(b); return j; /* a worker thread: parsed here */
 }
-/* the key page's Save (server thread): checked against TMDB before it is kept */
-static int key_from_phone(const char *raw) {
-  char k[420]; strip_ws(raw, k, sizeof k); if (!key_ok(k)) return 0;
+/* a key checked against TMDB before it is kept (a worker or the server thread: it waits on the network); src "" the
+   user's own, "nuvio" from the account. TK_KEPT, TK_BAD (TMDB refused it, or not a key at all) or TK_NET */
+static int key_try(const char *raw, const char *src) {
+  char k[420]; strip_ws(raw, k, sizeof k); if (!key_ok(k)) return TK_BAD;
   int st = 0; cJSON *j = tmdb_get("/configuration", k, &st); cJSON_Delete(j);
-  if (st != 200) return 0;
-  if (!write_file(keyPath, k, strlen(k))) return 0;
-  pthread_mutex_lock(&mu); snprintf(phoneKey, sizeof phoneKey, "%s", k); phoneKeyGen++; pthread_mutex_unlock(&mu);
-  return 1;
+  if (st == 401 || st == 404) return TK_BAD;
+  if (st != 200) return TK_NET;
+  if (!write_file(keyPath, k, strlen(k))) return TK_NET;
+  if (src[0]) write_file(srcPath, src, strlen(src)); else remove(srcPath);
+  pthread_mutex_lock(&mu); snprintf(phoneKey, sizeof phoneKey, "%s", k); snprintf(newSrc, sizeof newSrc, "%s", src); phoneKeyGen++; pthread_mutex_unlock(&mu);
+  return TK_KEPT;
 }
+/* the key page's Save (server thread) */
+static int key_from_phone(const char *raw) { return key_try(raw, "") == TK_KEPT; }
+typedef struct { char k[420], src[8]; } Offer;
+static void *offer_thread(void *a) { Offer *o = a; plat_thread_background(5); checkSt = key_try(o->k, o->src); fprintf(stderr, "[tmdb] %s key: %s\n", o->src[0] ? o->src : "pasted", checkSt == TK_KEPT ? "kept" : checkSt == TK_BAD ? "refused by TMDB" : "TMDB did not answer"); free(o); return NULL; }
 
 /* ---- the work queue ------------------------------------------------------------------------------ */
 enum { E_OK = 0, E_BADKEY, E_NET };
@@ -246,7 +255,7 @@ static int inited;
 static void drain(void) {
   if (!inited) tmdb_init(); /* on first use: nothing to start at launch */
   unsigned f = app_frame(); if (f == lastFrame) return; lastFrame = f;
-  pthread_mutex_lock(&mu); int kg = phoneKeyGen != seenKeyGen; if (kg) { seenKeyGen = phoneKeyGen; snprintf(key, sizeof key, "%s", phoneKey); } pthread_mutex_unlock(&mu);
+  pthread_mutex_lock(&mu); int kg = phoneKeyGen != seenKeyGen; if (kg) { seenKeyGen = phoneKeyGen; snprintf(key, sizeof key, "%s", phoneKey); snprintf(keySrc, sizeof keySrc, "%s", newSrc); } pthread_mutex_unlock(&mu);
   if (kg || resetReq || strcmp(tabLang, i18n_lang())) { resetReq = 0; snprintf(tabLang, sizeof tabLang, "%s", i18n_lang()); reset(); }
   if (nent > MAX_ENT) evict();
   if (!haveDone) return;
@@ -273,17 +282,31 @@ static int is_imdb(const char *id) { if (!id || strncmp(id, "tt", 2)) return 0; 
 
 void tmdb_init(void) {
   if (inited) return; inited = 1;
-  snprintf(keyPath, sizeof keyPath, "%s/tmdb.key", store_data_dir()); snprintf(locDir, sizeof locDir, "%s/cache/loc", store_data_dir());
+  snprintf(keyPath, sizeof keyPath, "%s/tmdb.key", store_data_dir()); snprintf(srcPath, sizeof srcPath, "%s/tmdb.key.src", store_data_dir()); snprintf(locDir, sizeof locDir, "%s/cache/loc", store_data_dir());
   const char *b = getenv("SB_TMDB"); snprintf(apiBase, sizeof apiBase, "%s", b && *b ? b : "https://api.themoviedb.org/3"); /* SB_TMDB: tests only */
   for (int i = 0; i < SBK_TMDB_API_KEY_LEN && i + 1 < (int)sizeof builtin; i++) builtin[i] = (char)(SBK_TMDB_API_KEY[i] ^ SBK_TMDB_API_KEY_PAD[i % 32]);
   if (!key_ok(builtin)) builtin[0] = 0;
   char *t = read_file(keyPath, NULL); if (t) { strip_ws(t, key, sizeof key); free(t); }
+  if (key[0]) { char *sr = read_file(srcPath, NULL); if (sr) { strip_ws(sr, keySrc, sizeof keySrc); free(sr); } }
   if (!key[0]) snprintf(key, sizeof key, "%s", builtin); /* a user's own key first, else the app's */
   snprintf(tabLang, sizeof tabLang, "%s", i18n_lang());
   httpd_set_key_handler(key_from_phone);
 }
 int tmdb_has_key(void) { drain(); return key[0] != 0; }
-void tmdb_key_clear(void) { remove(keyPath); snprintf(key, sizeof key, "%s", builtin); resetReq = 1; }
+void tmdb_key_clear(void) { if (!inited) tmdb_init(); if (!strcmp(keySrc, "nuvio")) store_set("tmdbNoNuvio", "1"); /* (removed on purpose: the account's key does not come back by itself) */
+  remove(keyPath); remove(srcPath); keySrc[0] = 0; snprintf(key, sizeof key, "%s", builtin); resetReq = 1; }
+int tmdb_key_offer(const char *k, int fromNuvio) {
+  if (!inited) tmdb_init(); drain(); char c[420]; strip_ws(k ? k : "", c, sizeof c);
+  if (!key_ok(c)) return TKO_NOT_A_KEY; /* (a clipboard holding something else: nothing changes, nothing is asked) */
+  if (!strcmp(c, key)) return TKO_SAME;
+  if (fromNuvio) { /* the account's key: only where the user has not added one of their own, and not after removing it */
+    if (store_get("tmdbNoNuvio", NULL) || (key[0] && strcmp(key, builtin) && strcmp(keySrc, "nuvio"))) return TKO_NOT_A_KEY; }
+  else store_remove("tmdbNoNuvio");
+  Offer *o = calloc(1, sizeof *o); if (!o) return 0; snprintf(o->k, sizeof o->k, "%s", c); snprintf(o->src, sizeof o->src, "%s", fromNuvio ? "nuvio" : "");
+  checkSt = TK_CHECKING; pthread_t t; if (pthread_create(&t, NULL, offer_thread, o)) { free(o); checkSt = TK_NET; return TKO_NOT_A_KEY; } pthread_detach(t); return TKO_CHECKING;
+}
+int tmdb_key_check_state(void) { drain(); return checkSt; }
+int tmdb_key_from_nuvio(void) { drain(); return key[0] && !strcmp(keySrc, "nuvio"); }
 int tmdb_builtin(void) { if (!inited) tmdb_init(); return builtin[0] != 0; }
 unsigned tmdb_generation(void) { drain(); return gen; }
 int tmdb_wanted(const char *id) { drain(); return key[0] && strcmp(i18n_lang(), "en") && is_imdb(id); }

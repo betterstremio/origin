@@ -63,7 +63,7 @@ static const Opt SS_OPTS[] = { { "0", "Off" }, { "1", "1 min" }, { "2", "2 min" 
 static const Opt ACCENT_OPTS[] = { { "logo", "From the logo" }, { "adaptive", "From the artwork" }, { "purple", "Purple" }, { "violet", "Violet" }, { "fuchsia", "Fuchsia" }, { "pink", "Pink" }, { "rose", "Rose" }, { "red", "Red" }, { "orange", "Orange" }, { "amber", "Amber" }, { "gold", "Gold" }, { "lime", "Lime" }, { "green", "Green" }, { "emerald", "Emerald" }, { "teal", "Teal" }, { "cyan", "Cyan" }, { "sky", "Sky" }, { "blue", "Blue" }, { "indigo", "Indigo" }, { "graphite", "Graphite" } };
 #define NCAT 11
 #define MAXROWS 48
-static Setting recsS[10];
+static Setting recsS[12];
 static Setting playBase[8], playS[8], subsS[6], audS[6], lookS[2], langS[2], keyS[5], addonS[40], acctS[1], supS[7], profS[4];
 static Cat cats[NCAT]; static int ncat; /* (Keys leaves when this build carries every key) */
 
@@ -128,6 +128,16 @@ static const Opt RLANG[] = { { "", "Automatic" }, { "hi,en", "Hindi and English"
 static int recs_opts(void) {
   int n = 0; char st[200]; recs_status(st, sizeof st);
   set_s(&recsS[n++], "recsOn", "Recommendations", st, OO, 2, "true"); recsS[0].raw = 1;
+  if (!tmdb_builtin()) { /* the key the picks need: pasted on a computer, from the phone on a TV, or from the Nuvio account by itself */
+    int ck = tmdb_key_check_state() == TK_CHECKING, has = tmdb_has_key(), nv = tmdb_key_from_nuvio();
+#if SB_WINDOWED
+    const char *d = ck ? "Checking the key with TMDB\xe2\x80\xa6" : nv ? "In use, from your Nuvio account. Nothing to do. To use a different key, copy it, then press OK here"
+                  : has ? "In use. To use a different key, copy it, then press OK here" : "Needed for picks. Copy your key from themoviedb.org (Settings, API), then press OK here to paste it";
+#else
+    const char *d = ck ? "Checking the key with TMDB\xe2\x80\xa6" : nv ? "In use, from your Nuvio account. Nothing to do. OK to use a different key from your phone"
+                  : has ? "In use. OK to use a different key from your phone" : "Needed for picks. OK to add it from your phone";
+#endif
+    set_act(&recsS[n++], "__tmdbKey", "TMDB key", d); }
   set_s(&recsS[n++], "homeLayout", "Home layout", "Cinematic: a billboard and cards that open, as on Netflix", HLAY, 2, "cinematic");
   { Setting *s = &recsS[n++]; set_s(s, "recsRegion", "Region", "Top 10 rows and where titles stream", NULL, 0, ""); int k = 0;
     snprintf(s->dynS[k], 64, "%s", ""); s->dyn[k].v = s->dynS[k]; s->dyn[k].lb = "Automatic"; k++;
@@ -141,6 +151,7 @@ static int recs_opts(void) {
   set_act(&recsS[n++], "__recsNow", "Refresh picks now", "Ask TMDB again with your latest watching");
   return n;
 }
+static void recs_rows_again(void);
 static int keys_opts(void) {
   int n = 0; tmdbOn = tmdb_has_key(); traktOn = trakt_has_key();
   set_act(&keyS[n++], "__coll", "Collections", "Rows of tiles on Home. OK to import or remove them from your phone");
@@ -150,6 +161,7 @@ static int keys_opts(void) {
   if (traktOn && !trakt_builtin()) set_act(&keyS[n++], "__traktOff", "Remove the Trakt id", "Ratings and comments from the other sources alone");
   return n;
 }
+static void recs_rows_again(void) { for (int i = 0; i < ncat; i++) if (cats[i].opts == recsS) { cats[i].n = recs_opts(); if (S.cat == i && S.idx >= cats[i].n) S.idx = cats[i].n - 1; } S.dirty = 1; }
 static void relang(void) { cats[4].n = lang_opts(); if (S.cat == 4 && S.idx >= cats[4].n) S.idx = cats[4].n - 1; for (int i = 0; i < ncat; i++) if (cats[i].opts == keyS) { cats[i].n = keys_opts(); if (S.cat == i && S.idx >= cats[i].n) S.idx = cats[i].n - 1; } S.dirty = 1; }
 static unsigned collGen0; static int coll_done(void *ud) { (void)ud; return board_col_gen() != collGen0; }
 static void coll_card(void) { char url[600]; httpd_url("/collections", url, sizeof url); collGen0 = board_col_gen(); QrCardOpts o; memset(&o, 0, sizeof o); o.title = T("Collections"); o.sub = T("Scan with your phone, then pick or paste your export"); o.url = url; o.check = coll_done; o.doneTitle = T("Collections updated"); o.doneSub = T("They are on Discover now"); o.doneHold = 1.6f; qrcard_show(&o); }
@@ -339,7 +351,7 @@ static float right_w(const Setting *o, int focused) { /* what sits right of the 
 #define DS_PX 26     /* a setting's description: 26 px on 34 px lines, at most 3 lines */
 #define DS_LH 34.0f
 /* the words under a row: only About's rows and the best stream's (its connection measured) keep them */
-static int keep_ds(const Setting *o) { return (o >= supS && o < supS + sizeof supS / sizeof *supS) || !strcmp(o->k, "autoBest") || !strcmp(o->k, "bgPreview"); } /* (bgPreview: its warning about rate limits has to be read) */
+static int keep_ds(const Setting *o) { return (o >= supS && o < supS + sizeof supS / sizeof *supS) || !strcmp(o->k, "autoBest") || !strcmp(o->k, "bgPreview") || !strcmp(o->k, "__tmdbKey"); } /* (bgPreview: its warning about rate limits has to be read; the TMDB key: how to add it) */
 static int ds_lines(const Setting *o) { if (!o->ds[0] || !keep_ds(o)) return 0; int n = text_wrap_count(o->raw ? o->ds : T(o->ds), CLW - 48 - right_w(o, 0), 3, DS_PX, 400, 0); return n < 1 ? 1 : n; }
 static unsigned hash_s(const char *s, unsigned h) { while (*s) h = h * 31 + (unsigned char)*s++; return h; }
 /* what a row draws beside its words, measured once: again when the layout is redone, its value or the language
@@ -449,6 +461,18 @@ static int key(int k) {
     if (op->action) { if (!strcmp(op->k, "__coll")) { coll_card(); return 1; }
       if (!strcmp(op->k, "__tmdb")) { qrcard_show_tmdb(on_tmdb_card, NULL); return 1; }
       if (!strcmp(op->k, "__recsNow")) { recs_refresh(); toast(T("Getting new picks"), 2000, NULL); return 1; }
+      if (!strcmp(op->k, "__tmdbKey")) {
+#if SB_WINDOWED
+        char *c = getenv("SB_CLIPBOARD") ? SDL_strdup(getenv("SB_CLIPBOARD")) : SDL_GetClipboardText(); int r = tmdb_key_offer(c ? c : "", 0); SDL_free(c); /* (what was copied is never logged; SB_CLIPBOARD stands in for it in tests) */
+        if (r == TKO_CHECKING) { toast(T("Checking the key with TMDB\xe2\x80\xa6"), 2000, NULL); recs_rows_again(); }
+        else if (r == TKO_SAME) toast(T("That key is already in use"), 2500, NULL);
+        else if (tmdb_key_from_nuvio()) toast(T("Using the TMDB key from your Nuvio account. To change it, copy another key first"), 3000, NULL); /* (the clipboard held no key: nothing changed) */
+        else if (tmdb_has_key()) toast(T("Your TMDB key is in use. To change it, copy another key first"), 3000, NULL);
+        else toast(T("No TMDB key on the clipboard. Copy your key first, then press OK here"), 3000, NULL);
+#else
+        qrcard_show_tmdb(on_tmdb_card, NULL);
+#endif
+        return 1; }
       if (!strcmp(op->k, "__tmdbOff")) { tmdb_key_clear(); relang(); toast(T("Titles and descriptions in English"), 2000, NULL); return 1; }
       if (!strcmp(op->k, "__trakt")) { qrcard_show_trakt(on_trakt_card, NULL); return 1; }
       if (!strcmp(op->k, "__traktOff")) { trakt_key_clear(); relang(); toast(T("The Trakt id is gone"), 2000, NULL); return 1; }
@@ -461,6 +485,9 @@ static int key(int k) {
 }
 static void tick(float dt) {
   ab_tick();
+  { static int ck; int c = tmdb_key_check_state(); if (c != ck) { int was = ck; ck = c; /* a pasted or Nuvio key checked: say how it went, the row follows */
+      if (was == TK_CHECKING) toast(c == TK_KEPT ? T("TMDB key added: getting your picks") : c == TK_BAD ? T("TMDB did not accept that key") : T("TMDB did not answer: try again in a moment"), 2500, NULL);
+      recs_rows_again(); } }
   if (usb_serial() != usbSeen) { usb_row(); play_layout(); S.dirty = 1; } /* a drive came or went, or its switch moved */
   if (update_serial() != aboutSeen) { for (int i = 0; i < ncat; i++) if (cats[i].opts == supS) { cats[i].n = about_opts(); if (S.cat == i && S.idx >= cats[i].n) S.idx = cats[i].n - 1; } S.dirty = 1; } /* the update moved on: its rows follow */
   if (S.dirty) layout();

@@ -291,6 +291,11 @@ static void clock_tick(void) {
 }
 /* a new minute: only the digits that changed crossfade, drifting a few px (the rest of the time stays still); the
    time sits from a fixed left edge so nothing beside the changing digits moves */
+#if SB_WINDOWED
+#define FS_ROOM (76.0f + 16) /* the fullscreen button right of the clock (app_fs_button) */
+#else
+#define FS_ROOM 0.0f
+#endif
 static int clockLiquid; /* the bar's own clock: its glass bends the backdrop (the player's and the guide's: the glass alone) */
 static void lg_glass(float x, float y, float w, float h, float r, uint32_t tint, float k);
 static int lgSeed; /* the next piece's own timing (0 capsule, 1-2 the circles, 3 the clock), then 0 again */
@@ -316,20 +321,21 @@ static void prof_act(int i, int b) { (void)i; (void)b; profFoc = 0; profiles_ope
 /* which service is in use, in words, left of the profile disc (or of the clock) */
 static void acct_tag_draw(void) {
   static int conf = -1; if (conf < 0) conf = nv_configured(); if (!conf || app_rtl()) return;
-  float W = text_width("00:00", 38, 600, -0.6f), x = SB_W - 48 - W - 26 - 18 - (acct_is_nuvio() ? 64 + 16 : 0);
+  float W = text_width("00:00", 38, 600, -0.6f), x = SB_W - 48 - FS_ROOM - W - 26 - 18 - (acct_is_nuvio() ? 64 + 16 : 0);
   text_draw(acct_is_nuvio() ? "Nuvio" : "Stremio", x, 50 - text_line_height(26) / 2, 26, 600, WHITE_A(190), 0, 0, ALIGN_RIGHT);
 }
 static void prof_draw(void) {
   if (!acct_is_nuvio() || !nv_profile_current() || app_rtl()) return;
   NvProfile p; int got = 0; for (int i = 0; i < nv_profile_count() && !got; i++) if (nv_profile_get(i, &p) && p.index == nv_profile_current()) got = 1; if (!got) return;
-  float W = text_width("00:00", 38, 600, -0.6f), D = 64, x = SB_W - 48 - W - 26 - 18 - D, y = 50 - D / 2; int foc = profFoc && topNav.active;
+  float W = text_width("00:00", 38, 600, -0.6f), D = 64, x = SB_W - 48 - FS_ROOM - W - 26 - 18 - D, y = 50 - D / 2; int foc = profFoc && topNav.active;
   hit_add_nav(x, y, D, D, NULL, prof_act, 0, 0);
   if (foc) gfx_ring(x - 6, y - 6, D + 12, D + 12, (D + 12) / 2, 3, WHITE_A(235));
   gfx_rrect(x, y, D, D, D / 2, RGB((p.color >> 16) & 255, (p.color >> 8) & 255, p.color & 255)); gfx_rrect_v(x, y, D, D, D / 2, WHITE_A(50), WHITE_A(0));
   char ini[8] = { 0 }; { const unsigned char *u = (const unsigned char *)p.name; int len = !*u ? 0 : (*u & 0x80) ? ((*u & 0xe0) == 0xc0 ? 2 : (*u & 0xf0) == 0xe0 ? 3 : 4) : 1; memcpy(ini, p.name, (size_t)len); } if (ini[0] >= 'a' && ini[0] <= 'z') ini[0] -= 32;
   text_draw(ini, x + D / 2, y + D / 2 - text_line_height(30) / 2, 30, 800, WHITE_A(255), 0, 0, ALIGN_CENTER);
 }
-static void clock_draw(void) { float W = text_width("00:00", 38, 600, -0.6f); clockLiquid = 1; app_clock_draw(app_rtl() ? 48 + W : SB_W - 48, 50 - 22, 1); clockLiquid = 0; }
+static void clock_draw(void) { float W = text_width("00:00", 38, 600, -0.6f); clockLiquid = 1; app_clock_draw(app_rtl() ? 48 + FS_ROOM + W : SB_W - 48 - FS_ROOM, 50 - 22, 1); clockLiquid = 0;
+  if (FS_ROOM > 0) app_fs_button(app_rtl() ? 22 + 76 : SB_W - 22, 50); } /* (the clock's glass reaches 26 past its text: the button keeps the same margin to the edge) */
 
 /* ---- the top bar: centred tabs, the corner icons, one pill that glides to the focused tab ---- */
 TopNav topNav = { .idx = NAV_HOME };
@@ -805,6 +811,27 @@ static void ptr_frame(void) { if (!PTR.on || !PTR.dirty) return; PTR.dirty = 0; 
   if (!d || !d->focus || (PTR.hasHv && hit_same(d, &PTR.hv))) return;
   if (PTR.movedAt && now - PTR.movedAt < PTR_SETTLE) { PTR.dirty = 1; return; } /* the page is still moving under the pointer */
   d->focus(d->a, d->b); ptr_keep(d); }
+/* a desktop window: the fullscreen button in the top-right corner, the bar's glass circle (hover lights it, a click
+   switches, F11 / Alt+Enter / a double click on a film do the same). Its right edge at right, centred on cy; the room
+   it takes is returned, for what sits left of it (0 where there is no window) */
+#if SB_WINDOWED
+static void fs_act(int a, int b) { (void)a; (void)b; plat_fullscreen_toggle(); }
+static void fs_none(int a, int b) { (void)a; (void)b; }
+#endif
+float app_fs_button(float right, float cy) {
+#if SB_WINDOWED
+  const float D = 76; float x = right - D, y = cy - D / 2;
+  int over = PTR.on && PTR.x >= x && PTR.x < x + D && PTR.y >= y && PTR.y < y + D;
+  static Tween lit; tween_to(&lit, over ? 1 : 0, 0.18f, EASE_CSS_EASE); tween_tick(&lit, DT);
+  hit_add(x, y, D, D, fs_none, fs_act, 0, 0);
+  lglass_light(0); lglass_shell(x, y, D, D, D / 2, RGBA(14, 14, 22, 120), 0.85f + 0.3f * lit.v);
+  if (lit.v > 0.001f) { gfx_opacity_push(lit.v); gfx_rrect_v(x, y, D, D, D / 2, col_alpha(ACC2 | 0xff000000u, 0.42f), col_alpha(ACC | 0xff000000u, 0.30f)); gfx_opacity_pop(); }
+  icon_draw(plat_fullscreen_on() ? "nav_unfull" : "nav_full", x + 20, y + 20, 36, col_mix(WHITE_A(184), WHITE_A(255), lit.v));
+  return D + 16;
+#else
+  (void)right; (void)cy; return 0;
+#endif
+}
 void app_pointer_move(float x, float y) { if (x == PTR.x && y == PTR.y) return; PTR.x = x; PTR.y = y; if (ptr_tremor(NOW)) return; ptr_show(); idle_touch_by("pointer moved"); PTR.dirty = 1; }
 void app_pointer_button(int down, float x, float y) {
   double now = NOW; PTR.x = x; PTR.y = y;

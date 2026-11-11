@@ -49,6 +49,23 @@ static int awake;
 enum { P_TIME = 1, P_DUR, P_PAUSE, P_CACHE, P_EOF, P_SEEKING, P_BUF, P_W, P_H, P_FPS, P_GAMMA, P_DV, P_TRACKS, P_HWDEC, P_DROP, P_AO };
 enum { R_LOAD = 1, R_OTHER };
 
+/* ---- the sound on a stereo device ----
+   A 5.1 or 7.1 film on headphones or two speakers is folded down to stereo, and mpv's plain fold-down adds the
+   channels up: loud scenes go past full scale and clip, heard as crackle (Inside Out 2's 7.1 TrueHD: +2.4 dBFS,
+   about 2,000 clipped samples in 90 s). Where the device mixes in stereo the app folds it down itself, in the filter
+   chain, and a limiter catches only the peaks past -0.5 dBFS: normal passages stay as loud as before. The device is
+   asked once at mpv's start and again on a thread at each video start (headset unplugged, speakers chosen). */
+int win_audio_channels(void); /* (audiodev_win.c) */
+static volatile LONG mixCh; /* the channels the default output device mixes in; 0 unknown */
+static int afOn = -1;       /* the fold-down chain as last set: -1 never */
+#define FOLD_DOWN "lavfi=[aformat=channel_layouts=stereo,alimiter=limit=0.944:attack=5:release=50:level=0:latency=1]"
+static void *ask_device(void *a) { (void)a; plat_thread_background(5); int n = win_audio_channels(); if (n > 0) InterlockedExchange(&mixCh, n); return NULL; }
+static void set_str(const char *k, const char *v);
+static void apply_fold_down(void) { /* (drawing thread) */
+  int want = mixCh == 2 && !getenv("SB_NO_FOLD"); if (want == afOn || !mixCh) return; afOn = want;
+  set_str("af", want ? FOLD_DOWN : ""); fprintf(stderr, "[video] sound device mixes %ld channels: %s\n", (long)mixCh, want ? "surround folded to stereo here, peaks limited" : "mpv's own mapping");
+}
+
 /* ---- starting mpv ---- */
 static void opt(mpv_handle *h, const char *k, const char *v) { int r = M.set_option_string(h, k, v); if (r < 0) fprintf(stderr, "[video] mpv option %s=%s: %s\n", k, v, M.error_string(r)); }
 static void *loader(void *a) {
@@ -91,6 +108,7 @@ static void *loader(void *a) {
   int r = M.initialize(h);
   if (r < 0) { fprintf(stderr, "[video] mpv did not start: %s\n", M.error_string(r)); InterlockedExchange(&loaderState, -1); return NULL; }
   fprintf(stderr, "[video] libmpv ready: library %u ms, start %u ms\n", t1 - t0, SDL_GetTicks() - t1);
+  { int n = win_audio_channels(); if (n > 0) InterlockedExchange(&mixCh, n); }
   H = h; MemoryBarrier(); InterlockedExchange(&loaderState, 2);
   return NULL;
 }
@@ -137,6 +155,7 @@ static void start_load(const char *u, double at) {
   fprintf(stderr, "[video] load %.200s%s\n", u, at > 0 ? " (from a position)" : "");
   if (!ready()) { snprintf(pendingUrl, sizeof pendingUrl, "%s", u); pendingAt = at; pending = 1; if (wake) SetEvent(wake); return; }
   pending = 0; char o[120]; snprintf(o, sizeof o, "start=%.3f", at > 0 ? at : 0.0);
+  apply_fold_down(); { pthread_t th; if (!pthread_create(&th, NULL, ask_device, NULL)) pthread_detach(th); } /* (a changed device: the next video, or this one in video_pump) */
   set_str("pause", "no"); V.on = 0; V.cur = V.to = 100; set_dbl("volume", 100);
   R.crop = 0; set_str("video-crop", "0x0+0+0"); lastCrop[0] = 0; /* (mpv keeps a crop across files: the last video's would not fit this one) */
   const char *a[] = { "loadfile", u, "replace", "-1", o, NULL }; S.pendingStarts++; cmd(R_LOAD, a);
@@ -259,7 +278,9 @@ static void on_prop(mpv_event_property *p, int id) {
   double d = !none && p->format == MPV_FORMAT_DOUBLE ? *(double *)p->data : 0; int f = !none && p->format == MPV_FORMAT_FLAG ? *(int *)p->data : 0;
   int64_t i = !none && p->format == MPV_FORMAT_INT64 ? *(int64_t *)p->data : 0; const char *s = !none && p->format == MPV_FORMAT_STRING ? *(char **)p->data : "";
   switch (id) {
-    case P_TIME: if (!none) { S.t = d; S.reported = d; } break;
+    case P_TIME: if (!none) { S.t = d; S.reported = d;
+        static double pauseAt = -2; if (pauseAt == -2) pauseAt = getenv("SB_PAUSE_AT") ? atof(getenv("SB_PAUSE_AT")) : -1; /* development: hold the picture there, for comparisons */
+        if (pauseAt >= 0 && d >= pauseAt) { pauseAt = -1; video_pause(); fprintf(stderr, "[video] paused at %.3f s (SB_PAUSE_AT)\n", d); } } break;
     case P_DUR: S.dur = d; break;
     case P_PAUSE: S.paused = f; break;
     case P_CACHE: S.cache = f; break;
@@ -283,6 +304,7 @@ static void keep_awake(int on) { /* a film playing keeps the screen on; a previe
 }
 void video_pump(void) {
   if (pending && ready()) { char u[4200]; snprintf(u, sizeof u, "%s", pendingUrl); Uint32 la = loadAt; start_load(u, pendingAt); loadAt = la; } /* (timed from the app's ask) */
+  if (H && S.active) apply_fold_down(); /* (only acts when the device changed) */
   if (loaderState < 0 && S.active && !S.error) { S.error = 1; S.st = VID_ERROR; snprintf(S.err, sizeof S.err, "the video player could not start"); }
   if (!ready()) return;
   for (;;) {

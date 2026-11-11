@@ -140,11 +140,12 @@ static void screenshot(const char *path, int w, int h) {
   stbi_write_png(path, w, h, 4, flip, w * 4); free(px); free(flip);
   fprintf(stderr, "[shot] %s\n", path);
 }
-/* SB_PLAY_FROM="Mock Addon" or "*p2p" (with SB_PLAY_TYPE / SB_PLAY_ID / SB_PLAY_VID): plays that addon's first stream */
+/* SB_PLAY_FROM="Mock Addon", "*p2p" or "*" (any addon) (with SB_PLAY_TYPE / SB_PLAY_ID / SB_PLAY_VID): plays that addon's first stream */
 static int playFromDone;
 static void pf_part(StreamGroup *g, int gi, void *ud) { (void)gi; (void)ud;
   int nth = getenv("SB_PLAY_NTH") ? atoi(getenv("SB_PLAY_NTH")) : 0; /* the nth of its streams (an externalUrl one too) */
-  for (int i = 0; i < g->n && !playFromDone; i++) if ((!strcmp(getenv("SB_PLAY_FROM"), "*p2p") ? g->items[i].p2p : !strcmp(g->items[i].addon, getenv("SB_PLAY_FROM"))) && (nth ? i == nth : g->items[i].url[0] != 0)) { /* "*p2p": the first P2P stream of any addon */ playFromDone = 1; Stream s = g->items[i];
+  for (int i = 0; i < g->n && !playFromDone; i++) if ((!strcmp(getenv("SB_PLAY_FROM"), "*p2p") ? g->items[i].p2p : !strcmp(getenv("SB_PLAY_FROM"), "*") ? !g->items[i].p2p : !strcmp(g->items[i].addon, getenv("SB_PLAY_FROM"))) && (nth ? i == nth : g->items[i].url[0] != 0)) { /* "*p2p": the first P2P stream of any addon; "*": the first other one */ playFromDone = 1; Stream s = g->items[i];
+    fprintf(stderr, "[dev] playing %s's stream %d: %.120s\n", s.addon, i, s.name);
     const char *ty = getenv("SB_PLAY_TYPE") ? getenv("SB_PLAY_TYPE") : "movie", *id = getenv("SB_PLAY_ID") ? getenv("SB_PLAY_ID") : "tt0111161"; app_play(&s, ty, id, getenv("SB_PLAY_VID") ? getenv("SB_PLAY_VID") : id, 0); }
   free(g->items); }
 static void pf_done(int total, void *ud) { (void)ud; if (!playFromDone) fprintf(stderr, "[dev] no stream from %s (%d in all)\n", getenv("SB_PLAY_FROM"), total); }

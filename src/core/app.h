@@ -77,6 +77,7 @@ float app_hold_progress(void);
 int  app_key_held(void);               /* the key being handled repeats a held one (screens glide instead of popping) */
 int  app_ok_down(void);                /* OK is held down now (a sheet's own hold reads it) */
 void  app_clock_draw(float right, float y, float alpha); /* the pages' clock, its right edge at x (the player's too) */
+float app_fs_button(float right, float cy);         /* Windows: the fullscreen button, right edge at right; the room it takes (0 elsewhere) */
 void  app_clock_top(void); /* the bar's clock over the start screen and the guide (main, last) */
 float app_hold_k(double since);        /* 0..1 of a hold begun then, on the same clock as the card menu's line */
 

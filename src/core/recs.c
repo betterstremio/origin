@@ -598,7 +598,7 @@ void recs_refresh(void) { force = 1; startAt = app_now(); if (phase == 2) cancel
 int recs_region_count(void) { return NREG; }
 const char *recs_region_code(int i) { return i >= 0 && i < NREG ? REGIONS[i].cc : ""; }
 void recs_status(char *out, size_t cap) {
-  if (!tmdb_has_key()) { snprintf(out, cap, "%s", T("Needs a TMDB key: add one under Keys")); return; }
+  if (!tmdb_has_key()) { snprintf(out, cap, "%s", T("Needs a TMDB key: add it below")); return; }
   if (!recs_on()) { snprintf(out, cap, "%s", T("Off: Home shows your addons' rows only")); return; }
   if (phase == 1 || (phase == 2 && !__atomic_load_n(&wquiet, __ATOMIC_ACQUIRE))) { snprintf(out, cap, "%s", T("On. Getting your picks from TMDB...")); return; }
   int picks = 0; long at = 0; pthread_mutex_lock(&mu);

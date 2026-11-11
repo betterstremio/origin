@@ -31,6 +31,7 @@
 #define APPLOG_MAX (400 * 1024)
 #define RING 300
 static int teeFd = -1, fileFd = -1, pipeR = -1;
+static int errFd = 2; /* stderr's own fd: 2, except in a Windows app started without a console, where it is whatever freopen gave */
 static volatile int exiting, drained;
 /* this build's id: tools/elfstrip.py writes a hash of the linked binary over the dots, so a crash report names the
    exact build its addresses belong to (getlogs.js names them only from that build's symbols) */
@@ -86,7 +87,7 @@ static void *reader(void *arg) {
 }
 /* the normal end: what is still in the pipe reaches the terminal before the process goes */
 static void at_exit(void) {
-  if (teeFd < 0) return; fflush(stderr); dup2(teeFd, 2); exiting = 1;
+  if (teeFd < 0) return; fflush(stderr); dup2(teeFd, errFd); exiting = 1;
   for (int i = 0; i < 100 && !drained; i++) usleep(5000);
 }
 /* ---- crashes: stderr straight to its old place, the pipe's rest after it, then the app's own handler ---- */
@@ -94,7 +95,7 @@ static const int SIGS[] = { SIGSEGV, SIGBUS, SIGILL, SIGABRT, SIGFPE, SIGALRM };
 static struct sigaction oldAct[sizeof SIGS / sizeof SIGS[0]];
 static void drain_now(void) {
   char b[4096]; ssize_t n;
-  dup2(teeFd, 2);
+  dup2(teeFd, errFd);
   while ((n = read(pipeR, b, sizeof b)) > 0) write_all(teeFd, b, (size_t)n);
 }
 static void on_signal(int sig, siginfo_t *si, void *uc) {
@@ -147,15 +148,16 @@ void applog_start(const char *dataDir) {
       if (g > 0) { t[g] = 0; char *st = NULL; for (char *q = t; (q = strstr(q, "[start] ")); q++) st = q; if (st && !strstr(st, "[exit]") && !strstr(st, "[crash]")) unclean = 1; } } }
   int p[2]; fflush(stderr);
   if (pipe(p)) return;
-  teeFd = dup(2); if (teeFd < 0) { close(p[0]); close(p[1]); return; }
+  { int f = fileno(stderr); errFd = f >= 0 ? f : 2; }
+  teeFd = dup(errFd); if (teeFd < 0) { close(p[0]); close(p[1]); return; }
   fcntl(teeFd, F_SETFD, FD_CLOEXEC); fcntl(p[0], F_SETFD, FD_CLOEXEC); if (fileFd >= 0) fcntl(fileFd, F_SETFD, FD_CLOEXEC);
   fcntl(p[0], F_SETFL, fcntl(p[0], F_GETFL) | O_NONBLOCK);
 #ifdef F_SETPIPE_SZ
   fcntl(p[1], F_SETPIPE_SZ, 1 << 20); /* room for bursts while the thread writes the file: the main thread must never wait on a log line */
 #endif
-  pipeR = p[0]; dup2(p[1], 2); close(p[1]);
+  pipeR = p[0]; dup2(p[1], errFd); close(p[1]);
   setvbuf(stderr, NULL, _IOLBF, 0);
-  pthread_t t; if (pthread_create(&t, NULL, reader, NULL)) { dup2(teeFd, 2); return; } pthread_detach(t);
+  pthread_t t; if (pthread_create(&t, NULL, reader, NULL)) { dup2(teeFd, errFd); return; } pthread_detach(t);
   for (size_t i = 0; i < sizeof SIGS / sizeof SIGS[0]; i++) {
     struct sigaction o; sigaction(SIGS[i], NULL, &o); oldAct[i] = o;
     if (SIGS[i] == SIGALRM && !(o.sa_flags & SA_SIGINFO) && (o.sa_handler == SIG_DFL || o.sa_handler == SIG_IGN)) continue; /* nobody listens for it */

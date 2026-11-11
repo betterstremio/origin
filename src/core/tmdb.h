@@ -29,6 +29,13 @@ void tmdb_init(void);                 /* after store_init and i18n_init; otherwi
 int  tmdb_has_key(void);
 int  tmdb_builtin(void);            /* this build carries the app's own key: nobody needs to add one */
 void tmdb_key_clear(void);            /* "Remove the TMDB key" */
+/* a key from the clipboard (fromNuvio 0) or from the Nuvio account (1), checked with TMDB on a thread, then kept and
+   used at once. The account's key never replaces one the user added, nor comes back after "Remove". 1: being checked */
+enum { TK_NONE = 0, TK_CHECKING, TK_KEPT, TK_BAD = -1, TK_NET = -2 };
+enum { TKO_NOT_A_KEY = 0, TKO_CHECKING = 1, TKO_SAME = 2 }; /* what an offer did: nothing (not a key, or not wanted), sent to TMDB, or the key in use already */
+int  tmdb_key_offer(const char *k, int fromNuvio);
+int  tmdb_key_check_state(void);      /* the last offer: TK_* */
+int  tmdb_key_from_nuvio(void);       /* the key in use came from the Nuvio account */
 /* changes whenever lookups start again (a key added or removed, another language): screens drop what they
    applied */
 unsigned tmdb_generation(void);

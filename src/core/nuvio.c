@@ -10,6 +10,7 @@
 #include "core/stremio.h"
 #include "core/nuvio_merge.h"
 #include "core/recs.h"
+#include "core/tmdb.h"
 #include "screens/player.h"
 #include "platform/plat.h"
 #include "core/net.h"
@@ -383,8 +384,21 @@ static void on_addons(int st, const cJSON *j, void *ud) {
   AddReq *r = ud; if (st == 200 && cJSON_IsArray(j) && cJSON_GetArraySize(j)) { addons_from_rows(r, j); return; }
   char q[300]; snprintf(q, sizeof q, "owner_id=eq.%s&select=*&order=position.asc", store_get("nvOwner", "")); table_get("tv_addons", q, on_addons_tv, r);
 }
+/* the profile's saved keys (Nuvio's own apps keep them per profile): its TMDB key turns on the recommendations without
+   anyone typing one. Only a few names come back: the rows hold other services' keys too, which are left alone */
+static void on_creds(int st, const cJSON *j, void *ud) {
+  (void)ud; if (st != 200 || !cJSON_IsArray(j)) { fprintf(stderr, "[nuvio] saved keys: http %d\n", st); return; }
+  const cJSON *r; cJSON_ArrayForEach(r, j) { const char *pv = js_str(r, "provider", ""); if (strcmp(pv, "tmdb")) continue;
+    const char *k = js_str(js_obj(r, "credential_json"), "api_key", ""); fprintf(stderr, "[nuvio] the account has %s TMDB key\n", k[0] ? "a" : "no");
+    if (k[0] && tmdb_key_offer(k, 1) == TKO_CHECKING) fprintf(stderr, "[nuvio] its TMDB key is being checked\n"); }
+}
+static void pull_creds(void) {
+  static double at; double now = SDL_GetTicks() / 1000.0; if (at && now - at < 600) return; at = now; /* (at most every 10 minutes) */
+  cJSON *p = cJSON_CreateObject(); cJSON_AddNumberToObject(p, "p_profile_id", nv_profile_current()); rpc("sync_pull_provider_credentials", p, on_creds, NULL);
+}
 void nv_sync_addons(void (*cb)(int, void *), void *ud) {
   if (!nv_signed_in() || !nv_profile_current() || !store_get("nvOwner", NULL)) { if (cb) cb(0, ud); return; }
+  if (!tmdb_builtin()) pull_creds();
   AddReq *r = calloc(1, sizeof *r); r->cb = cb; r->ud = ud; r->gen = syncGen;
   char q[300]; snprintf(q, sizeof q, "user_id=eq.%s&profile_id=eq.%d&select=*&order=sort_order.asc", store_get("nvOwner", ""), addon_profile());
   table_get("addons", q, on_addons, r);

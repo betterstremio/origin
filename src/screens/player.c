@@ -2060,11 +2060,12 @@ static void draw_osd(void) {
     xline_draw(&stX[2], P.p2pLine, 72 + 2 + 16 + 10 + 12, 52 + (46 - text_line_height(24)) / 2, 24, WHITE_A(255), 0, ALIGN_LEFT); gfx_opacity_pop(); }
   /* top right: the clock, the pages' own (a new minute: only its changed digits crossfade), and when it ends */
   if (P.topR.v > 0.001f) { gfx_opacity_push(P.topR.v); gfx_offset_push(0, P.topY.v);
-    app_clock_draw(W - 64, 46, 1);
+    float fsR = app_fs_button(W - 38, 46 + text_line_height(38) / 2); /* (Windows: the fullscreen button in the corner, the clock left of it) */
+    app_clock_draw(W - 64 - fsR, 46, 1);
     double d = dur(); if (d > 0) { time_t t = time(NULL) + (time_t)(d - video_time());
       static char s[64]; static long sMin = -1; static unsigned sLg; /* made again when its minute or the language changes */
       if ((long)(t / 60) != sMin || sLg != i18n_gen()) { sMin = (long)(t / 60); sLg = i18n_gen(); struct tm tm; localtime_r(&t, &tm); char e[16]; snprintf(e, sizeof e, "%02d:%02d", tm.tm_hour, tm.tm_min); snprintf(s, sizeof s, "%s", T1("Ends at {t}", "t", e)); text_upper(s, sizeof s); }
-      txt_sh(s, W - 64, 46 + text_line_height(38) / 2 + 38 + 14, 20, 600, WHITE_A(178), 1.6f, 0, ALIGN_RIGHT, 128); } /* a quiet line just under the clock's glass, in line with the time */
+      txt_sh(s, W - 64 - fsR, 46 + text_line_height(38) / 2 + 38 + 14, 20, 600, WHITE_A(178), 1.6f, 0, ALIGN_RIGHT, 128); } /* a quiet line just under the clock's glass, in line with the time */
     gfx_offset_pop(); gfx_opacity_pop(); }
   /* bottom left: the title's art, S:E and its name, the info chips, year · genre · via addon (laid out from the bar up) */
   if (P.ttlA.v > 0.001f) { gfx_opacity_push(P.ttlA.v); gfx_offset_push(P.ttlX.v, P.ttlY.v);
