@@ -183,15 +183,14 @@ void saver_draw(void) {
   if (!(top->ok && top->a.v >= 0.999f)) gfx_rect(0, 0, SB_W, SB_H, RGB(0, 0, 0));
   float dk = clampf((float)((app_now() - SS.startAt) / 40.0), 0, 1), dim = SS.on ? 0.45f * (1 - powf(1 - dk, 2)) : 0; /* the TV settles: darker over the first 40 s */
   layer_draw(und, dim); layer_draw(top, dim);
-  /* the mark: top left (or right), "Stremio" in the icon's violet, "Origin" plain and light, in a pill of glass that flows
-     to the other corner when it moves */
-  static float w1 = -1, w2, wc; if (w1 < 0) { w1 = text_width("Stremio ", 36, 800, 0.2f); w2 = text_width("Origin", 36, 400, 0.2f); wc = text_width(":", 88, 400, -1.5f) + 4; } /* measured once */
+  /* the mark: top left (or right), "Origin" in a pill of glass that flows to the other corner when it moves */
+  static float w1 = -1, wc; if (w1 < 0) { w1 = text_width("Origin", 36, 800, 0.2f); wc = text_width(":", 88, 400, -1.5f) + 4; } /* measured once */
   float dt = app_dt(), dimA2 = dim;
-  { float mw = w1 + w2 + 64, mh = 76, tx = SS.markR ? SB_W - 96 + 32 - mw - SS.markDx : 96 - 32 + SS.markDx, ty = 72 - 14 + SS.markDy;
+  { float mw = w1 + 64, mh = 76, tx = SS.markR ? SB_W - 96 + 32 - mw - SS.markDx : 96 - 32 + SS.markDx, ty = 72 - 14 + SS.markDy;
     if (!SS.flowInit) { SS.mX = tx; SS.mY = ty; } float sx, sy; flow(&SS.mX, &SS.mY, &SS.mVX, &SS.mVY, tx, ty, dt, &sx, &sy, 11.0f);
     float ma = SS.markA.v * 0.9f; if (ma > 0.001f) { gfx_opacity_push(ma); gfx_scale_push(sx, sy, SS.mX + mw / 2, SS.mY + mh / 2);
       ss_glass(SS.mX, SS.mY, mw, mh, mh / 2, 22, dimA2); float x = SS.mX + 32, y = SS.mY + (mh - text_line_height(36)) / 2;
-      text_draw("Stremio", x, y, 36, 800, RGB(0xa9, 0x8b, 0xff), 0.2f, 0, ALIGN_LEFT); text_draw("Origin", x + w1, y, 36, 400, WHITE_A(200), 0.2f, 0, ALIGN_LEFT);
+      text_draw("Origin", x, y, 36, 800, WHITE_A(230), 0.2f, 0, ALIGN_LEFT);
       gfx_scale_pop(); gfx_opacity_pop(); } }
   /* the clock: bottom right (or left), the date under it, in a pill of glass that flows across when it moves */
   float pa = SS.pairA.v;

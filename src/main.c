@@ -1,6 +1,6 @@
 #include <stdint.h>
 #include <math.h>
-/* Stremio Origin, native. The window, the GL context, the frame loop; everything else is in
+/* Origin, native. The window, the GL context, the frame loop; everything else is in
    core/, ui/ and screens/. */
 #include <SDL2/SDL.h>
 #include <stdio.h>

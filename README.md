@@ -6,7 +6,7 @@
 
 <h1 align="center">Origin</h1>
 
-<p align="center">A native app for your Stremio and Nuvio accounts and their addons, written in C, for LG webOS TVs, Android TV, Google TV, Fire TV and phones.<br>Formerly Better Stremio.</p>
+<p align="center">A native app for your Stremio and Nuvio accounts and their addons, written in C, for LG webOS TVs, Android TV, Google TV and Fire TV.<br>Formerly Better Stremio.</p>
 
 <p align="center"><a href="https://github.com/betterstremio/origin/releases">Releases</a> · <a href="https://betterstremio.github.io/">Website</a></p>
 
@@ -53,7 +53,7 @@ Settings > For You > Preview on focus also offers The title itself: the film, pa
 
 **Only on webOS:** DTS converted on the TV, an optional USB drive for P2P, and casting to the TV from your phone.
 
-**Only on Android:** a phone mode, with the TV layout in a 16:9 frame and taps for the pointer. DTS and TrueHD play where the device decodes them or passes them to a receiver.
+**Only on Android:** DTS and TrueHD play where the device decodes them or passes them to a receiver.
 
 ## Set up For You
 Recommendations need your own free [TMDB](https://www.themoviedb.org/settings/api) API key, added in Settings > Keys. Trakt is optional and adds ratings and reviews, also with your own client id. No keys are built into the app.
@@ -67,13 +67,11 @@ For LG TVs running webOS 3 or later (ARM). See [Compatibility](docs/compatibilit
 
 Download the `.ipk` from [Releases](https://github.com/betterstremio/origin/releases) and install it on a TV in Developer Mode.
 
-### Android TV, Google TV, Fire TV and phones
-Android 7.0 or later, on ARM (64-bit or 32-bit). One APK for TVs and phones.
+### Android TV, Google TV and Fire TV
+Android 7.0 or later, on ARM (64-bit or 32-bit). Phones are not supported.
 
 1. Download `tv.stremioorigin.app_<version>_android.apk` from [Releases](https://github.com/betterstremio/origin/releases).
-2. Allow installs from the app you open it with. Android asks the first time.
-   - On a TV, the Downloader app can fetch the APK from the release link and install it. On Fire TV, first turn on Settings > My Fire TV > Developer options > Install unknown apps for Downloader.
-   - On a phone, open the downloaded file.
+2. Allow installs from the app you open it with. Android asks the first time. The Downloader app can fetch the APK from the release link and install it. On Fire TV, first turn on Settings > My Fire TV > Developer options > Install unknown apps for Downloader.
 3. Open the app, choose Stremio or Nuvio at the top, and sign in by scanning the code with your phone, or with your email.
 
 ### Updates
@@ -81,7 +79,7 @@ Settings > About shows a new version when there is one. The app downloads it and
 
 ## Status
 - **webOS:** tested on an LG C1 (webOS 6.5) and on webOS 4.4.
-- **Android:** the automated tests pass on the Google TV emulator (Android 14), and the 32-bit ARM build through Android's ARM translation. Not yet tested on a real TV box, Fire TV stick or phone, and For You and previews have not been tried with real addons on Android.
+- **Android:** the automated tests pass on the Google TV emulator (Android 14), and the 32-bit ARM build through Android's ARM translation. Not yet tested on a real TV box or Fire TV stick, and For You and previews have not been tried with real addons on Android.
 
 Reports are welcome, with your device and system version: [Issues](https://github.com/betterstremio/origin/issues).
 
