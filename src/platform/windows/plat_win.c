@@ -180,11 +180,12 @@ void plat_fullscreen_toggle(void) {
   SDL_SetWindowFullscreen(sw, full ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP); fprintf(stderr, "[window] %s\n", full ? "windowed" : "fullscreen"); save_geom();
 }
 /* the keyboard: arrows, Enter and Escape are the remote's arrows, OK and Back; Backspace deletes where text is typed;
-   F11 or Alt+Enter: fullscreen; Ctrl+F: Search; F1-F4: the colour keys; Space and the media keys: play and pause */
+   F11 or Alt+Enter: fullscreen; Ctrl+F: Search; Ctrl+V: paste on a code card; F1-F4: the colour keys; Space and the media keys: play and pause */
 int plat_map_key(const SDL_KeyboardEvent *e) {
   SDL_Keycode k = e->keysym.sym; int alt = (e->keysym.mod & KMOD_ALT) != 0, ctrl = (e->keysym.mod & KMOD_CTRL) != 0;
   if (k == SDLK_F11 || ((k == SDLK_RETURN || k == SDLK_KP_ENTER) && alt)) { if (e->type == SDL_KEYDOWN && !e->repeat) plat_fullscreen_toggle(); return K_NONE; }
   if (ctrl && k == SDLK_f) return K_GREEN;
+  if (ctrl && k == SDLK_v) return K_PASTE;
   if (alt || ctrl) return K_NONE; /* (Alt+Tab, Ctrl+C...: not the app's keys) */
   switch (k) {
     case SDLK_LEFT: return K_LEFT; case SDLK_RIGHT: return K_RIGHT; case SDLK_UP: return K_UP; case SDLK_DOWN: return K_DOWN;

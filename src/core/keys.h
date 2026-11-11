@@ -9,6 +9,7 @@ enum {
   K_CH_UP, K_CH_DOWN, K_EXIT,
   K_CURSOR_SHOW, K_CURSOR_HIDE,  /* the Magic Remote pointer appeared / went away */
   K_CHAR,                         /* typed text (login fields): the codepoint comes separately */
-  K_ERASE                         /* a keyboard's Backspace: deletes a typed character where text is typed, else Back */
+  K_ERASE,                        /* a keyboard's Backspace: deletes a typed character where text is typed, else Back */
+  K_PASTE                         /* Ctrl+V on a keyboard: the code cards take a key from the clipboard */
 };
 #endif

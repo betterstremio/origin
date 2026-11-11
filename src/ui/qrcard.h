@@ -12,11 +12,15 @@ typedef struct {
   const char *doneTitle, *doneSub; /* the tick's words (doneSub may be NULL) */
   float doneHold;               /* seconds the tick stays before the card goes */
   void (*onClose)(void *ud);    /* once it is closed, however that happened */
+  int (*paste)(void *ud);       /* desktop (SB_WINDOWED): the card takes the key from the clipboard instead of showing a code
+                                   (Enter, Ctrl+V or its button); 1 = being checked (check() is asked more often) */
+  const char *link;             /* desktop: where to get a key, opened in the browser from the card */
   void *ud;
 } QrCardOpts;
 
 void qrcard_show(const QrCardOpts *o);
 void qrcard_close(void);
+void qrcard_note(const char *msg); /* desktop: a line under the paste button, how the paste went */
 
 /* the ready-made cards */
 /* Settings > Language > Titles and descriptions: the TMDB key page; onClose(hasKey, ud) once it is closed */

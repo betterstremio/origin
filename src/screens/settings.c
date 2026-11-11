@@ -164,7 +164,11 @@ static void recs_rows_again(void);
 static int keys_opts(void) {
   int n = 0; tmdbOn = tmdb_has_key(); traktOn = trakt_has_key();
   set_act(&keyS[n++], "__coll", "Collections", "Rows of tiles on Home. OK to import or remove them from your phone");
+#if SB_WINDOWED
+  if (!tmdb_builtin()) set_act(&keyS[n++], "__tmdb", "Titles and descriptions", tmdbOn ? "In the app\xe2\x80\x99s language, from TMDB. OK to change the key" : "Only in English. OK to paste a TMDB key");
+#else
   if (!tmdb_builtin()) set_act(&keyS[n++], "__tmdb", "Titles and descriptions", tmdbOn ? "In the app\xe2\x80\x99s language, from TMDB. OK to change the key" : "Only in English. OK to add a TMDB key from your phone");
+#endif
   if (tmdbOn && !tmdb_builtin()) set_act(&keyS[n++], "__tmdbOff", "Remove the TMDB key", "Titles and descriptions go back to English");
   if (!trakt_builtin()) set_act(&keyS[n++], "__trakt", "Ratings and reviews", traktOn ? "The rating, its spread and people\xe2\x80\x99s comments, from Trakt. OK to change the id" : "OK to add a Trakt client id from your phone");
   if (traktOn && !trakt_builtin()) set_act(&keyS[n++], "__traktOff", "Remove the Trakt id", "Ratings and comments from the other sources alone");
@@ -479,9 +483,7 @@ static int key(int k) {
         char *c = getenv("SB_CLIPBOARD") ? SDL_strdup(getenv("SB_CLIPBOARD")) : SDL_GetClipboardText(); int r = tmdb_key_offer(c ? c : "", 0); SDL_free(c); /* (what was copied is never logged; SB_CLIPBOARD stands in for it in tests) */
         if (r == TKO_CHECKING) { toast(T("Checking the key with TMDB\xe2\x80\xa6"), 2000, NULL); recs_rows_again(); }
         else if (r == TKO_SAME) toast(T("That key is already in use"), 2500, NULL);
-        else if (tmdb_key_from_nuvio()) toast(T("Using the TMDB key from your Nuvio account. To change it, copy another key first"), 3000, NULL); /* (the clipboard held no key: nothing changed) */
-        else if (tmdb_has_key()) toast(T("Your TMDB key is in use. To change it, copy another key first"), 3000, NULL);
-        else toast(T("No TMDB key on the clipboard. Copy your key first, then press OK here"), 3000, NULL);
+        else qrcard_show_tmdb(on_tmdb_card, NULL); /* (no key on the clipboard: the card says how, with a paste button and the link to get one) */
 #else
         qrcard_show_tmdb(on_tmdb_card, NULL);
 #endif

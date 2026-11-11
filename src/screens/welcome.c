@@ -32,6 +32,9 @@
 #include "core/best.h"
 #include "core/hit.h"
 #include "platform/plat.h"
+#ifndef SB_WINDOWED
+#define SB_WINDOWED 0 /* target.h: 1 on a desktop window (the TMDB key is pasted there, not scanned) */
+#endif
 #ifndef SB_REMOTE_GUIDE
 #define SB_REMOTE_GUIDE 1 /* the tour shows the remote's keys (target.h: 0 where there is no TV remote) */
 #endif
@@ -905,7 +908,7 @@ static int at_keys(void);
 static int at_ctl(void) { const Page *p = &W.p[W.cur]; return p->ctl && W.step == p->nb - 1; }
 static void hints(float a) {
   int lastPage = W.cur == W.n - 1, last = lastPage && W.step >= W.p[W.cur].nb - 1, rtl = app_rtl(), ctl = at_ctl(), codes = at_codes(); uint32_t c = WHITE_A((int)(215 * a));
-  const char *ok = codes ? (W.tipWant ? T("Buy me a coffee") : T("Star on GitHub")) : at_keys() ? T("Show the code") : ctl && !best_on() ? (best_speed_busy() ? T("Measuring\xe2\x80\xa6") : T("Turn on")) : last ? T("Close") : T("Next");
+  const char *ok = codes ? (W.tipWant ? T("Buy me a coffee") : T("Star on GitHub")) : at_keys() ? (SB_WINDOWED && W.step + ykOff == 0 ? T("Add the key") : T("Show the code")) : ctl && !best_on() ? (best_speed_busy() ? T("Measuring\xe2\x80\xa6") : T("Turn on")) : last ? T("Close") : T("Next");
   const char *nx = T("Next page"), *bk = lastPage ? T("Close") : T("Skip"); int showNx = !lastPage, showBk = !last || codes;
   float g = 44, wo = 38 + 10 + text_width(ok, 22, 600, 0), wn = showNx ? 38 + 10 + text_width(nx, 22, 600, 0) + g : 0, wb = showBk ? 38 + 10 + text_width(bk, 22, 600, 0) + g : 0;
   gfx_scale_push(1.25f, 1.25f, rtl ? MX : SB_W - MX, BOTY);
@@ -1111,9 +1114,11 @@ static void open_guide(int tour) {
 #if !SB_HAS_USB
       if (pg->pv == PV_P2P) pg->nb = 1;
 #endif
+      if (pg->pv == PV_YOURKEYS && SB_WINDOWED) snprintf(pg->lead, sizeof pg->lead, "%s", "Two keys bring more. OK adds one; you can always add them later in Settings \xe2\x80\xba Keys."); /* (the TMDB key is pasted here, not scanned) */
       if (pg->pv == PV_YOURKEYS) { int tm = !tmdb_builtin(), tk = !trakt_builtin(); ykOff = 0; /* (a key this build carries is not asked for: its step goes, and the page with both) */
         if (!tm && !tk) W.n--;
-        else if (!tk) { pg->nb = 1; snprintf(pg->lead, sizeof pg->lead, "%s", "Ratings and comments come built in. A TMDB key brings more: OK shows the code. You can always add it later in Settings \xe2\x80\xba Keys."); }
+        else if (!tk) { pg->nb = 1; snprintf(pg->lead, sizeof pg->lead, "%s", SB_WINDOWED ? "Ratings and comments come built in. A TMDB key brings more: OK to paste it. You can always add it later in Settings \xe2\x80\xba Keys."
+                                                                          : "Ratings and comments come built in. A TMDB key brings more: OK shows the code. You can always add it later in Settings \xe2\x80\xba Keys."); }
         else if (!tm) { pg->nb = 1; ykOff = 1; snprintf(pg->b[0], sizeof pg->b[0], "%s", pg->b[1]); pg->ic[0] = pg->ic[1];
           snprintf(pg->lead, sizeof pg->lead, "%s", "Titles and descriptions in your language come built in. A Trakt id brings ratings and comments: OK shows the code. You can always add it later in Settings \xe2\x80\xba Keys."); } } } }
   else { Page *pg = &W.p[W.n++]; memset(pg, 0, sizeof *pg); pg->pv = PV_NEWS; snprintf(pg->title, sizeof pg->title, "%s", "What\xe2\x80\x99s new"); }
