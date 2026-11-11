@@ -124,6 +124,7 @@ static int lang_opts(void) {
 /* For You: recommendations on Home (core/recs.c); every row is a store key recs.c and Home watch, so a change applies at once */
 static const Opt PREV[] = { { "imdb", "Short clips" }, { "trailer", "Trailer" }, { "off", "Off" }, { "title", "The title itself" } }; /* (The title itself last: flicking through the values does not stop on its warning) */
 static const Opt HLAY[] = { { "cinematic", "Cinematic" }, { "classic", "Classic" } };
+static const Opt CDLY[] = { { "120", "At once" }, { "250", "0.25 s" }, { "400", "0.4 s" }, { "600", "0.6 s" }, { "1000", "1 s" }, { "1500", "1.5 s" } }; /* the cinematic card's rest before it opens */
 /* Main / Second language: every language the picks engine can name; the second list leaves out the main one */
 static void lang_choices(Setting *s, const char *first, const char *skip) {
   int k = 0; snprintf(s->dynS[k], 64, "%s", ""); s->dyn[k].v = s->dynS[k]; s->dyn[k].lb = first; k++;
@@ -145,6 +146,7 @@ static int recs_opts(void) {
 #endif
     set_act(&recsS[n++], "__tmdbKey", "TMDB key", d); }
   set_s(&recsS[n++], "homeLayout", "Home layout", "Cinematic: a billboard and cards that open, as on Netflix", HLAY, 2, "cinematic");
+  if (strcmp(store_get("homeLayout", "cinematic"), "classic")) set_s(&recsS[n++], "cardDelay", "Card opens after", "How long a card waits once you stop on it", CDLY, (int)(sizeof CDLY / sizeof CDLY[0]), "250");
   { Setting *s = &recsS[n++]; set_s(s, "recsRegion", "Region", "Top 10 rows and where titles stream", NULL, 0, ""); int k = 0;
     snprintf(s->dynS[k], 64, "%s", ""); s->dyn[k].v = s->dynS[k]; s->dyn[k].lb = "Automatic"; k++;
     for (int i = 0; i < recs_region_count() && k < 40; i++) { snprintf(s->dynS[k], 64, "%s", recs_region_code(i)); s->dyn[k].v = s->dynS[k]; s->dyn[k].lb = recs_region_name(recs_region_code(i)); k++; }
@@ -342,6 +344,7 @@ static void set_val(Setting *o, const char *v, int dir) {
   store_set(o->k, v); S.dirty = 1; if (!strcmp(o->k, "netLogs")) net_logs_set(v);
   if (!strcmp(o->k, "recsLang1")) { if (v[0] && !strcmp(store_get("recsLang2", ""), v)) store_set("recsLang2", ""); recs_rows_again(); } /* the second list never offers the main one */
   if (!strcmp(o->k, "bgTrailer")) play_layout(); /* its volume row comes and goes with it, right under it */
+  if (!strcmp(o->k, "homeLayout")) recs_rows_again(); /* "Card opens after" is there only with the cinematic Home */
   if (!strncmp(o->k, "adOn_", 5)) { board_invalidate(); cats[5].n = addon_opts(); return; } /* an addon on/off here: rows, metadata and streams follow */
   if (!strcmp(o->k, "bingeWatch")) store_set("enableNextVideo", v);
   if (!strcmp(o->k, "accent")) accent_apply();

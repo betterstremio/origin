@@ -105,6 +105,9 @@ static float step_of(const Row *r) { return card_w(r) + RGAP + (r->rank ? RANK_W
    the details and the hold menu never see it); the whole catalog is on the grid it opens */
 #define SEEALL_AT 60
 #define CARD_OPEN_AFTER 3.0f
+#define CINE_OPEN_MIN 0.12f /* the cinematic card at its quickest: the row has settled under a held arrow */
+/* the cinematic card's rest before it opens (Settings > For You > Card opens after), read again only when a setting changes */
+static float cine_open_after(void) { static unsigned ser; static float v = 0.25f; if (store_serial() != ser) { ser = store_serial(); v = (float)atof(store_get("cardDelay", "250")) / 1000.0f; if (v < CINE_OPEN_MIN) v = CINE_OPEN_MIN; if (v > 3) v = 3; } return v; }
 #define CARD_OPEN_W 800.0f /* 16:9 at a poster's height */
 #define WIDE_SM_W 320
 #define WIDE_SM_H 180
@@ -115,6 +118,7 @@ static const ColFolder *tile_cur(const Board *b) { if (b->rowIdx < 0 || b->rowId
 static void see_all_open(const Row *r) { CatParams p; memset(&p, 0, sizeof p); p.def = r->def; snprintf(p.title, sizeof p.title, "%s", T(r->title)); app_go(SCR_CAT, &p, 0); }
 static const Item *focused_of(Board *b) { if (spotOn(b) && b->nfeat) return &b->feat[b->featIdx % b->nfeat]; if (b->rowIdx < 0 || b->rowIdx >= b->n) return NULL; Row *r = &b->rows[b->rowIdx]; return r->col < r->items.n ? &r->items.items[r->col] : NULL; }
 const Item *board_next_item(void) { Board *b = cur(); if (!b || topNav.active) return NULL; if (spotOn(b)) return b->kind == 0 && b->nfeat > 1 ? &b->feat[(b->featIdx + 1) % b->nfeat] : NULL; /* (the billboard's next title: its link ready before it turns) */ if (b->rowIdx >= b->n) return NULL; Row *r = &b->rows[b->rowIdx]; return r->col + 1 < r->items.n ? &r->items.items[r->col + 1] : NULL; }
+float board_open_wait(void) { Board *b = cur(); return b && b->kind == 0 && b->cine && focusOn(b) ? cine_open_after() - CINE_OPEN_MIN : 0; } /* (the clip in the card waits as long as it does) */
 int board_on_billboard(void) { Board *b = cur(); return b && !topNav.active && spotOn(b) && b->kind == 0 && b->cine && b->bill; }
 int board_near_items(const Item **out, int max) { Board *b = cur(); int n = 0; if (!b || topNav.active) return 0;
 #define NEAR_ADD(rw, i) do { if ((i) >= 0 && (i) < (rw)->items.n && n < max) out[n++] = &(rw)->items.items[i]; } while (0)
@@ -621,7 +625,7 @@ static void card_focus(int r, int c) { Board *b = cur(); if (!b || r >= b->n) re
 static void card_open_tick(Board *b, float dt) {
   const Row *r = b->rowIdx < b->n ? &b->rows[b->rowIdx] : NULL; int here = r && r->col < r->items.n && focusOn(b) && !app_overlay;
   if (b->exp.v > 0.001f && (!here || b->expRow != b->rowIdx || b->expCol != r->col)) tween_set(&b->exp, 0); /* moved: shut at once, the row must not lag behind the remote */
-  if (here && app_trailer_idle() > (b->cine ? 0.12f : CARD_OPEN_AFTER) && (b->cine || strcmp(store_get("bgTrailer", "true"), "false"))) { /* (the setting read only once it could matter: not every frame) */ if (b->exp.to < 1) { b->expRow = b->rowIdx; b->expCol = r->col; tween_to(&b->exp, 1, 0.28f, EASE_STD); } } else if (b->exp.to > 0) tween_set(&b->exp, 0);
+  if (here && app_trailer_idle() > (b->cine ? cine_open_after() : CARD_OPEN_AFTER) && (b->cine || strcmp(store_get("bgTrailer", "true"), "false"))) { /* (the setting read only once it could matter: not every frame) */ if (b->exp.to < 1) { b->expRow = b->rowIdx; b->expCol = r->col; tween_to(&b->exp, 1, 0.28f, EASE_STD); } } else if (b->exp.to > 0) tween_set(&b->exp, 0);
   tween_tick(&b->exp, dt);
 }
 static void board_tick(float dt) {

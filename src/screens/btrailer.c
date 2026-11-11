@@ -50,7 +50,8 @@ void btr_tick(float dt) {
   const Item *f = NULL;
   int cardScr = SCR == SCR_HOME || SCR == SCR_DISC || SCR == SCR_COL; /* where a card opens */
   if (cardScr && !topNav.active && screens[SCR] && screens[SCR]->focused) f = screens[SCR]->focused();
-  BgtView v = { app_trailer_idle(), cardScr, f, topNav.active || app_overlay != NULL || /* (a sheet or the long-press menu: it gives way, softly, and none starts under it) */ player_open() || !app_splash_done || saver_on(),
+  float ow = cardScr ? board_open_wait() : 0, idle = app_trailer_idle() - ow; /* (a card set to wait longer: its clip, too, as if the key came that much later) */
+  BgtView v = { idle < 0 ? 0 : idle, cardScr, f, topNav.active || app_overlay != NULL || /* (a sheet or the long-press menu: it gives way, softly, and none starts under it) */ player_open() || !app_splash_done || saver_on(),
                 board_spot_up(), pace_period() > 21.5 };
   v.next = cardScr ? board_next_item() : NULL; v.hero = cardScr && board_on_billboard(); v.nnear = cardScr ? board_near_items(v.near, 10) : 0;
   bgt_tick(&v);
