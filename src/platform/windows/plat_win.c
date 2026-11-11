@@ -91,6 +91,7 @@ void plat_pre_init(const char *appId) {
     else snprintf(devName, sizeof devName, "Windows"); }
   fprintf(stderr, "[start] %s, data %s, assets %s\n", devName, dataDir, assetDir);
 }
+void *plat_win_hwnd(void) { return top; }
 static void find_hwnd(SDL_Window *w) { SDL_SysWMinfo wi; SDL_VERSION(&wi.version); if (!top && SDL_GetWindowWMInfo(w, &wi)) top = wi.info.win.window; }
 void plat_post_window(SDL_Window *w) {
   find_hwnd(w);
@@ -193,7 +194,12 @@ void *plat_gl_create(SDL_Window *w) {
   fprintf(stderr, "[gl] ANGLE %d.%d on Direct3D 11, %s\n", ma, mi, comp ? "composition layer" : "plain window surface");
   return ctxt;
 }
-void plat_gl_swap(SDL_Window *w) { (void)w; E.SwapBuffers(dpy, surf); }
+int win_screen_shot(void *hwnd, const char *path); /* (dev_win.c) */
+void plat_gl_swap(SDL_Window *w) {
+  (void)w; E.SwapBuffers(dpy, surf);
+  static int n, at = -2; if (at == -2) at = getenv("SB_SCREEN_SHOT") && getenv("SB_SCREEN_FRAME") ? atoi(getenv("SB_SCREEN_FRAME")) : -1; /* development: the composed screen at that frame */
+  if (at >= 0 && ++n == at) win_screen_shot(top, getenv("SB_SCREEN_SHOT"));
+}
 void plat_gl_interval(int n) { if (dpy) E.SwapInterval(dpy, n); }
 void plat_gl_size(SDL_Window *w, int *pw, int *ph) { RECT r; (void)w; if (top && GetClientRect(top, &r)) { *pw = r.right - r.left; *ph = r.bottom - r.top; } else { *pw = *ph = 0; } }
 void plat_gl_destroy(void *c) {

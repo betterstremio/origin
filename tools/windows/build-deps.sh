@@ -3,7 +3,9 @@
 #   SDL2, zlib, mbedTLS, curl (all static, so the exe needs no runtime DLLs of its own)
 #   ANGLE (libEGL.dll, libGLESv2.dll): GLES2 on Direct3D 11, taken from a pinned Electron release (the version VS Code 1.145
 #   ships; Electron 44 builds ANGLE into its exe and has no separate DLLs)
-# Output: $WB/deps/{include,lib,bin}. Sources are pinned and checked.
+#   libmpv (libmpv-2.dll and its header): shinchiro's build, loaded at run time by video_win.c, not linked. The stock
+#   build (about 116 MB) stands in until a smaller one is built
+# Output: $WB/deps/{include,lib,bin}. Sources are pinned and checked (needs 7z: apt install p7zip-full).
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/../paths.sh"
 X=x86_64-w64-mingw32; CC="$X-gcc-posix"; CXX="$X-g++-posix"
@@ -18,6 +20,8 @@ fetch https://zlib.net/fossils/zlib-$ZLIB_V.tar.gz 9a93b2b7dfdac77ceba5a558a580e
 fetch https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-$MBED_V/mbedtls-$MBED_V.tar.bz2 8b54fb9bcf4d5a7078028e0520acddefb7900b3e66fec7f7175bb5b7d85ccdca mbedtls.tbz
 fetch https://curl.se/download/curl-$CURL_V.tar.xz db59cf0d671ca6e7f5c2c5ec177084a33a79e04c97e71cf183a5cdea235054eb curl.txz
 fetch https://github.com/electron/electron/releases/download/v$ELECTRON_V/electron-v$ELECTRON_V-win32-x64.zip 98efbd2d1c7bd44150c0aa800cd9ac5fefcefd2d44fd94958a95d6744d86c6de electron.zip
+MPV_V=20261110; MPV_F=mpv-dev-x86_64-$MPV_V-git-a61f6c3abd.7z
+fetch https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/$MPV_V/$MPV_F f07b97a72f2394a7798d6e1d36d952bbfd63577e25cef051f716751ea5dc9688 mpv-dev.7z
 for p in sdl.tgz:SDL2-$SDL_V zlib.tgz:zlib-$ZLIB_V mbedtls.tbz:mbedtls-$MBED_V curl.txz:curl-$CURL_V; do
   IFS=: read -r f d <<<"$p"; [ -d "$SRC/$d" ] || tar -xf "$SRC/$f" -C "$SRC"; done
 
@@ -59,6 +63,10 @@ if [ ! -f "$O/lib/libGLESv2.dll.a" ]; then echo "== ANGLE (Electron $ELECTRON_V)
   $X-dlltool -d "$WB/b/angle/GLESv2.def" -l "$O/lib/libGLESv2.dll.a"
   # the Khronos headers (GLES2, EGL, KHR) from SDL's source tree
   for d in GLES2 EGL KHR; do mkdir -p "$O/include/$d"; cp "$SRC/SDL2-$SDL_V/src/video/khronos/$d/"*.h "$O/include/$d/"; done
+fi
+if [ ! -f "$O/bin/libmpv-2.dll" ]; then echo "== libmpv ($MPV_V)"
+  rm -rf "$WB/b/mpv"; mkdir -p "$WB/b/mpv"; (cd "$WB/b/mpv" && 7z x -y "$SRC/mpv-dev.7z" >/dev/null)
+  mkdir -p "$O/include/mpv"; cp "$WB/b/mpv/include/mpv/client.h" "$O/include/mpv/"; cp "$WB/b/mpv/libmpv-2.dll" "$O/bin/"
 fi
 ls "$O/lib" "$O/bin" | tr '\n' ' '; echo
 echo DEPS_OK

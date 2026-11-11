@@ -10,6 +10,10 @@ int plat_mem_free_mb(void) {
   const char *e = getenv("SB_MEMFREE"); if (e) return atoi(e); /* development: act like a device short of memory */
   MEMORYSTATUSEX m; m.dwLength = sizeof m; return GlobalMemoryStatusEx(&m) ? (int)(m.ullAvailPhys >> 20) : -1;
 }
+int win_private_mb(void) { /* memory only this process holds (the working set also counts the DLLs' shared pages) */
+  PROCESS_MEMORY_COUNTERS_EX c; c.cb = sizeof c;
+  return GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS *)&c, sizeof c) ? (int)(c.PrivateUsage >> 20) : -1;
+}
 void plat_mem_self(int *rssMb, int *swapMb) {
   PROCESS_MEMORY_COUNTERS_EX c; c.cb = sizeof c;
   if (GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS *)&c, sizeof c)) {
