@@ -23,6 +23,7 @@ static struct curl_slist *(*f_slist_append)(struct curl_slist *, const char *);
 static void (*f_slist_free_all)(struct curl_slist *);
 static CURLcode (*f_global_init)(long);
 static void (*f_easy_reset)(CURL *); /* (optional: without it every request opens its own connection, as before) */
+static CURLSH *(*f_share_init)(void); static CURLSHcode (*f_share_setopt)(CURLSH *, CURLSHoption, ...); /* (optional too) */
 static char caPath[1024];
 /* "StremioOrigin/1.0.0 (webOS; native)": the running version, the platform it runs on */
 static const char *ua(void) { static char u[96]; if (!u[0]) { const char *d = plat_device_name(); snprintf(u, sizeof u, "StremioOrigin/%s (%s; native)", update_current(), strstr(d, "webOS") ? "webOS" : strstr(d, "Android") ? "Android TV" : "Mac"); } return u; }
@@ -31,6 +32,7 @@ static int resolve(void) {
 #if SB_STATIC_CURL
   f_easy_init = curl_easy_init; f_easy_setopt = curl_easy_setopt; f_easy_perform = curl_easy_perform; f_easy_getinfo = curl_easy_getinfo;
   f_easy_cleanup = curl_easy_cleanup; f_slist_append = curl_slist_append; f_slist_free_all = curl_slist_free_all; f_global_init = curl_global_init; f_easy_reset = curl_easy_reset;
+  f_share_init = curl_share_init; f_share_setopt = curl_share_setopt;
   return 1;
 #else
   static const char *names[] = { "libcurl.so.5", "libcurl.so.4", "libcurl.so", NULL };
@@ -41,6 +43,7 @@ static int resolve(void) {
   L(f_easy_cleanup, "curl_easy_cleanup"); L(f_slist_append, "curl_slist_append"); L(f_slist_free_all, "curl_slist_free_all"); L(f_global_init, "curl_global_init");
 #undef L
   *(void **)(&f_easy_reset) = dlsym(h, "curl_easy_reset");
+  *(void **)(&f_share_init) = dlsym(h, "curl_share_init"); *(void **)(&f_share_setopt) = dlsym(h, "curl_share_setopt");
   return 1;
 #endif
 }
@@ -86,6 +89,16 @@ static size_t on_size_data(char *p, size_t s, size_t n, void *ud) { (void)p; (vo
    memory, so it is bounded: a device under 1200 MB (a Firestick) keeps them on the quick lane only, one per worker. */
 static CURL *handles[WORKERS]; static int keepSlots, keepConns;
 static void keep_limits(void) { int mb = plat_mem_total_mb(), small = mb > 0 && mb < 1200; keepSlots = !f_easy_reset ? 0 : small ? SLOW0 : WORKERS; keepConns = small ? 1 : 2; fprintf(stderr, "[net] kept connections: %d workers, up to %d each\n", keepSlots, keepConns); }
+/* DNS answers and TLS sessions shared by every worker: a host one worker has met costs another no lookup, and its TLS
+   resumes (a full handshake is the slow part on a TV's CPU). Small and fixed: curl keeps a few dozen of each */
+static CURLSH *share; static pthread_mutex_t shareMu[CURL_LOCK_DATA_LAST];
+static void share_lock(CURL *c, curl_lock_data d, curl_lock_access a, void *u) { (void)c; (void)a; (void)u; if ((int)d >= 0 && d < CURL_LOCK_DATA_LAST) pthread_mutex_lock(&shareMu[d]); }
+static void share_unlock(CURL *c, curl_lock_data d, void *u) { (void)c; (void)u; if ((int)d >= 0 && d < CURL_LOCK_DATA_LAST) pthread_mutex_unlock(&shareMu[d]); }
+static void share_make(void) {
+  if (!f_share_init || !f_share_setopt || !(share = f_share_init())) { fprintf(stderr, "[net] no shared DNS and TLS sessions\n"); return; }
+  for (int i = 0; i < CURL_LOCK_DATA_LAST; i++) pthread_mutex_init(&shareMu[i], NULL);
+  f_share_setopt(share, CURLSHOPT_LOCKFUNC, share_lock); f_share_setopt(share, CURLSHOPT_UNLOCKFUNC, share_unlock);
+  f_share_setopt(share, CURLSHOPT_SHARE, CURL_LOCK_DATA_DNS); f_share_setopt(share, CURLSHOPT_SHARE, CURL_LOCK_DATA_SSL_SESSION); }
 static int nReq, nConn, nShake; static double shakeSum;
 static void net_stats(CURL *c) { long nc = 0; double t = 0; f_easy_getinfo(c, CURLINFO_NUM_CONNECTS, &nc); f_easy_getinfo(c, CURLINFO_APPCONNECT_TIME, &t);
   pthread_mutex_lock(&mu); nReq++; if (nc > 0) nConn++; if (nc > 0 && t > 0) { nShake++; shakeSum += t; }
@@ -96,6 +109,7 @@ static void perform(Req *r, int slot) {
   if (kept) { c = handles[slot]; if (c) f_easy_reset(c); else c = handles[slot] = f_easy_init(); } else c = f_easy_init();
   if (!c) { r->status = 0; return; }
   if (kept) { f_easy_setopt(c, CURLOPT_MAXCONNECTS, (long)keepConns); f_easy_setopt(c, CURLOPT_DNS_CACHE_TIMEOUT, 300L); }
+  if (share) f_easy_setopt(c, CURLOPT_SHARE, share);
   struct curl_slist *hs = NULL;
   f_easy_setopt(c, CURLOPT_URL, r->url); f_easy_setopt(c, CURLOPT_WRITEFUNCTION, on_data); f_easy_setopt(c, CURLOPT_WRITEDATA, r);
   f_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L); f_easy_setopt(c, CURLOPT_MAXREDIRS, 8L); f_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
@@ -197,7 +211,7 @@ int net_init(const char *ca) {
 #endif
   f_global_init(CURL_GLOBAL_ALL);
   if (ca) snprintf(caPath, sizeof caPath, "%s", ca);
-  keep_limits();
+  keep_limits(); share_make();
   for (int i = 0; i < WORKERS; i++) { pthread_t t; pthread_create(&t, NULL, worker, (void *)(size_t)i); pthread_detach(t); }
   { pthread_t t; pthread_create(&t, NULL, file_worker, NULL); pthread_detach(t); }
   return 1;
@@ -236,6 +250,14 @@ unsigned net_send(const char *method, const char *url, const char *headers, cons
   r->id = nextId++; push_req(r); npending++;
   pthread_mutex_unlock(&mu);
   return r->id;
+}
+/* only while it waits in a queue: a request already running finishes, so its kept connection is not torn down */
+void net_cancel_queued(unsigned id) {
+  pthread_mutex_lock(&mu);
+  for (Req *r = queue; r; r = r->next) if (r->id == id) r->cancelled = 1;
+  for (Req *r = slowQ; r; r = r->next) if (r->id == id) r->cancelled = 1;
+  for (Req *r = bgQ; r; r = r->next) if (r->id == id) r->cancelled = 1;
+  pthread_mutex_unlock(&mu);
 }
 void net_cancel(unsigned id) {
   pthread_mutex_lock(&mu);

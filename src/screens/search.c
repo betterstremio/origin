@@ -17,10 +17,11 @@
 #include "core/httpd.h"
 #include "core/tmdb.h"
 #include "ui/qr.h"
+#include "core/net.h"
+#include "platform/plat.h"
 
-#define SKEYS "abcdefghijklmnopqrstuvwxyz1234567890"
-#define NK 36
-#define SCOLS 6
+#define SKEYS SEARCH_KEYS
+#define NK SEARCH_NK
 #define SMAX 24
 #define NCAT 16
 #define SGC 4
@@ -39,11 +40,65 @@ static struct {
   int drawn;                                  /* a search ran once: the hint line speaks from then on */
   char qrUrl[300]; int qrOk; double qrAt, typedAt; int seq, seqKnown, phone; /* typing on the phone */
   char pu[SMAX][512];                         /* each result's poster address, resolved when the results change */
+  unsigned reqSug, reqCat[NCAT];              /* the requests out for the query asked (dropped from their queues when a newer one is asked) */
+  char askedQ[48];                            /* the query those answers are for */
+  int catGone;                                /* its catalogs were asked (until then it is not whole) */
+  int tImdb, tFirst, tCats, tSlow, slowC, nEmpty; /* for the one line each search leaves in the log (ms after the last key) */
 } S;
-static int rows_of(void) { return (NK + SCOLS - 1) / SCOLS; }
-static int key_at(int r, int c) { if (r < rows_of()) return r * SCOLS + c; return NK + (c / 2 < 2 ? c / 2 : 2); } /* the last row: Space, backspace, (clear) */
+#define TYPE_PAUSE 0.15  /* IMDb is asked once the typing pauses this long (it answers in ~0.2 s and costs little) */
+#define CAT_PAUSE 0.35   /* the catalogs (up to 16 addons) once it pauses this long: not on every letter of a word being typed */
+/* SB_SLOWLOG: how long each part of a search took, counted from the key that made the query */
+static double qAt; static int qLogged; static int slowlog(void) { static int v = -1; if (v < 0) v = getenv("SB_SLOWLOG") != NULL; return v; }
+#define SSTAT(...) do { if (slowlog()) { fprintf(stderr, "[sstat] +%4d ms ", (int)((app_now() - qAt) * 1000)); fprintf(stderr, __VA_ARGS__); fputc('\n', stderr); } } while (0)
+/* the keyboard (search.h): where each row starts in SEARCH_KEYS, and how far in it sits, in keys */
+static const int KROW0[SEARCH_KROWS + 1] = { 0, 10, 20, 29, 36 };
+static const float KOFF[SEARCH_KROWS] = { 0, 0, 0.5f, 1.0f };
+int search_key_row_len(int r) { return r < SEARCH_KROWS ? KROW0[r + 1] - KROW0[r] : 3; }
+int search_key_index(int r, int c) { return r < SEARCH_KROWS ? KROW0[r] + c : NK + c; }
+void search_key_rc(int ki, int *r, int *c) { if (ki >= NK) { *r = SEARCH_KROWS; *c = ki - NK; return; } int k = 0; while (k + 1 < SEARCH_KROWS && ki >= KROW0[k + 1]) k++; *r = k; *c = ki - KROW0[k]; }
+void search_key_pos(int ki, float *x, float *y, float *w) { int r, c; search_key_rc(ki, &r, &c);
+  if (r < SEARCH_KROWS) { *x = (KOFF[r] + c) * SEARCH_KPITCH; *w = SEARCH_KW; }
+  else { float bw = (9 * SEARCH_KPITCH + SEARCH_KW - 2 * 8) / 3; *x = c * (bw + 8); *w = bw; } /* Space, Backspace, Clear: a third each */
+  *y = r * SEARCH_KROWH; }
+static int rows_of(void) { return SEARCH_KROWS; }
+static int key_at(int r, int c) { return search_key_index(r, c); }
+/* Up or Down: the key in row r whose middle is nearest mx */
+static int key_near(int r, float mx) { int best = 0; float bd = 1e9f;
+  for (int c = 0; c < search_key_row_len(r); c++) { float x, y, w; search_key_pos(search_key_index(r, c), &x, &y, &w); float d = fabsf(x + w / 2 - mx); if (d < bd) { bd = d; best = c; } } return best; }
 static void live(void);
-static void set_q(const char *q) { snprintf(S.q, sizeof S.q, "%.40s", q); S.liveAt = app_now() + 0.26; S.livePending = 1; }
+/* ---- the searches of this session, kept in memory: Backspace and a query typed again show their results at once ---- */
+typedef struct { char q[48]; Item *items; int n; char sug[6][128]; int nsug; double at; } SMem;
+static SMem smem[12]; static int smemN = -1;
+static void q_key(const char *q, char *out, size_t cap) { /* trimmed, lower case */
+  while (*q == ' ') q++; size_t n = 0; for (; *q && n + 1 < cap; q++) out[n++] = (*q >= 'A' && *q <= 'Z') ? *q + 32 : *q; while (n && out[n - 1] == ' ') n--; out[n] = 0; }
+static void smem_put(const char *q, const ItemList *l) {
+  if (smemN < 0) { int mb = plat_mem_total_mb(); smemN = mb > 0 && mb < 1200 ? 6 : 12; } /* about 85 KB each; a Firestick keeps half */
+  char k[48]; q_key(q, k, sizeof k); if (!*k || !l->n) return;
+  int at = 0; for (int i = 0; i < smemN; i++) { if (!strcmp(smem[i].q, k)) { at = i; break; } if (smem[i].at < smem[at].at) at = i; } /* the same query, else the oldest */
+  SMem *m = &smem[at]; free(m->items); m->items = malloc(l->n * sizeof(Item)); memcpy(m->items, l->items, l->n * sizeof(Item)); m->n = l->n;
+  snprintf(m->q, sizeof m->q, "%s", k); memcpy(m->sug, S.sug, sizeof m->sug); m->nsug = S.nsug; m->at = app_now(); }
+static const SMem *smem_get(const char *q) { char k[48]; q_key(q, k, sizeof k); if (!*k) return NULL;
+  for (int i = 0; i < 12; i++) if (smem[i].items && !strcmp(smem[i].q, k) && app_now() - smem[i].at < 600) return &smem[i]; return NULL; } /* (10 minutes) */
+/* a name holding every word of the query (any case): what is kept on screen while the new answers are on their way */
+static int ci_has(const char *s, const char *w, size_t L) { for (; *s; s++) if (!strncasecmp(s, w, L)) return 1; return 0; }
+static int name_fits(const char *name, const char *q) {
+  for (const char *p = q; *p; ) { while (*p == ' ') p++; const char *e = p; while (*e && *e != ' ') e++; if (e > p && !ci_has(name, p, (size_t)(e - p))) return 0; p = e; } return 1; }
+static void results_draw_state(void);
+static void keep_fitting(void) {
+  int k = 0; for (int i = 0; i < S.items.n; i++) if (name_fits(S.items.items[i].name, S.q)) { if (k != i) { S.items.items[k] = S.items.items[i]; memcpy(S.pu[k], S.pu[i], sizeof S.pu[k]); } k++; }
+  S.items.n = k; int j = 0; for (int i = 0; i < S.nsug; i++) if (name_fits(S.sug[i], S.q)) { if (j != i) memcpy(S.sug[j], S.sug[i], sizeof S.sug[j]); j++; } S.nsug = j; results_draw_state(); }
+static void cancel_asked(void) { if (S.reqSug) net_cancel_queued(S.reqSug); S.reqSug = 0; for (int c = 0; c < S.ncat && c < NCAT; c++) { if (S.reqCat[c]) net_cancel_queued(S.reqCat[c]); S.reqCat[c] = 0; } }
+static int from_memory(void) {
+  const SMem *m = smem_get(S.q); if (!m) return 0;
+  cancel_asked(); S.tok++; itemlist_clear(&S.top); for (int c = 0; c < S.ncat; c++) itemlist_clear(&S.cat[c]); S.ncat = 0; S.livePending = S.catPending = 0;
+  itemlist_clear(&S.items); S.items.items = malloc(m->n * sizeof(Item)); memcpy(S.items.items, m->items, m->n * sizeof(Item)); S.items.n = m->n;
+  for (int i = 0; i < m->n && i < SMAX; i++) sb_poster_of(&S.items.items[i], S.pu[i], sizeof S.pu[i]);
+  memcpy(S.sug, m->sug, sizeof S.sug); S.nsug = m->nsug; snprintf(S.askedQ, sizeof S.askedQ, "%s", S.q);
+  S.topDone = 1; S.topFail = 0; S.allFailed = 0; S.final = 1; S.loading = 0; S.drawn = 1; timer_start(&S.gridIn, 0.3f); results_draw_state();
+  qLogged |= 5; SSTAT("from memory for \"%s\", %d results", S.q, m->n); return 1; }
+static void set_q(const char *q) { snprintf(S.q, sizeof S.q, "%.40s", q); qAt = app_now(); qLogged = 0;
+  if (from_memory()) return;
+  keep_fitting(); S.liveAt = app_now() + TYPE_PAUSE; S.livePending = 1; S.catPending = 0; } /* (live() asks for the catalogs again) */
 static void type_key(int ki) {
   char q[64]; snprintf(q, sizeof q, "%s", S.q); size_t n = strlen(q);
   if (ki < NK) { if (n < 40) { q[n] = SKEYS[ki]; q[n + 1] = 0; } }
@@ -85,11 +140,19 @@ static void merge(void) {
   for (int i = 0; i < S.top.n && n < SMAX; i++) ADD(&S.top.items[i]);
   for (int j = 0; j < 40 && n < SMAX; j++) for (int c = 0; c < S.ncat && n < SMAX; c++) if (j < S.cat[c].n) ADD(&S.cat[c].items[j]); /* the catalogs take turns */
   #undef ADD
+  if (strcmp(S.askedQ, S.q)) { int k = 0; for (int i = 0; i < n; i++) if (name_fits(out[i].name, S.q)) out[k++] = out[i]; n = k; } /* typed on since: what still fits */
   int changed = n != S.items.n; for (int i = 0; !changed && i < n; i++) if (strcmp(out[i].id, S.items.items[i].id)) changed = 1;
   itemlist_clear(&S.items); S.items.items = out; S.items.n = n;
   for (int i = 0; i < n; i++) sb_poster_of(&out[i], S.pu[i], sizeof S.pu[i]);
   if (changed && n) timer_start(&S.gridIn, 0.3f); /* new results fade in */
-  int all = S.topDone && !S.catPending; for (int c = 0; c < S.ncat; c++) all = all && S.catDone[c]; S.final = all; S.loading = !S.final;
+  int all = S.topDone && S.catGone; for (int c = 0; c < S.ncat; c++) all = all && S.catDone[c]; S.final = all; S.loading = !S.final;
+  int mine = !strcmp(S.askedQ, S.q); /* answers for the query on screen (not one typed over since) */
+  if (mine && n && !(qLogged & 4)) { qLogged |= 4; S.tFirst = (int)((app_now() - qAt) * 1000); SSTAT("first results on screen, %d", n); }
+  if (mine && all && !(qLogged & 1)) { qLogged |= 1; SSTAT("all answered, %d results", n);
+    /* one line per search, always (Share logs): where the time went, counted from the last key */
+    fprintf(stderr, "[search] took: imdb %d ms, first results %d ms, %d catalogs asked at %d ms, %d empty or failed, slowest %d ms (catalog %d), %d results (%d MB device)\n",
+            S.tImdb, S.tFirst, S.ncat, S.tCats, S.nEmpty, S.tSlow, S.slowC, n, plat_mem_total_mb()); }
+  if (mine && all && !S.topFail) smem_put(S.q, &S.items);
   int failed = all && S.topFail; for (int c = 0; c < S.ncat; c++) failed = failed && S.catFail[c]; S.allFailed = failed && !n; /* every source failed: said in the hint line, never as a card */
   if (S.phone && n && SCR == SCR_SEARCH) { S.phone = 0; S.zone = 2; S.ri = 0; topNav.active = 0; } /* typed on the phone: the results take the focus */
   results_draw_state();
@@ -98,52 +161,70 @@ static void on_sug(ItemList *l, char names[6][128], int nn, void *ud) {
   if ((unsigned)(uintptr_t)ud != S.tok) { if (l) itemlist_free(l); return; }
   itemlist_clear(&S.top); S.topFail = !l || l->total < 0; if (l) { S.top = *l; free(l); }
   S.nsug = 0; for (int i = 0; i < nn && S.nsug < 6; i++) { int dup = 0; for (int k = 0; k < S.nsug; k++) if (!strcasecmp(S.sug[k], names[i])) dup = 1; if (!dup && names[i][0]) snprintf(S.sug[S.nsug++], 128, "%s", names[i]); }
-  S.topDone = 1; merge();
+  SSTAT("imdb %s, %d titles", S.topFail ? "failed" : "answered", S.top.n); S.tImdb = (int)((app_now() - qAt) * 1000); S.topDone = 1; merge();
 }
 /* a catalog's answer: the query's token above, the catalog's place in the low 5 bits */
 static void on_cat(ItemList *l, int cached, void *ud) { (void)cached; uintptr_t t = (uintptr_t)ud; int c = (int)(t & 31);
   if ((unsigned)(t >> 5) != (S.tok & 0x7ffffff) || c >= S.ncat) { itemlist_free(l); return; } itemlist_clear(&S.cat[c]); S.catFail[c] = l->total < 0; if (!S.catFail[c]) { int k = 0; for (int i = 0; i < l->n; i++) if (!notice_item(&l->items[i])) k++; else fprintf(stderr, "[search] catalog %d sent a notice, left out: %s (%s)\n", c, l->items[i].name, l->items[i].id); S.catFail[c] = l->n > 0 && !k; } /* only notices: failed too */
-  S.cat[c] = *l; free(l); S.catDone[c] = 1; merge(); }
+  SSTAT("catalog %d %s, %d titles", c, S.catFail[c] ? "failed" : "answered", l->n); { int t = (int)((app_now() - qAt) * 1000); if (t > S.tSlow) { S.tSlow = t; S.slowC = c; } if (!l->n || S.catFail[c]) S.nEmpty++; } S.cat[c] = *l; free(l); S.catDone[c] = 1; merge(); }
 static void urlenc(const char *s, char *out, size_t cap) { size_t o = 0; for (; *s && o + 4 < cap; s++) { unsigned char c = *s; if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.') out[o++] = c; else o += snprintf(out + o, cap - o, "%%%02X", c); } out[o] = 0; }
 static void live(void) {
   char q[48]; snprintf(q, sizeof q, "%s", S.q); char *e = q + strlen(q); while (e > q && e[-1] == ' ') *--e = 0; const char *p = q; while (*p == ' ') p++;
+  cancel_asked(); snprintf(S.askedQ, sizeof S.askedQ, "%s", S.q); S.catGone = 0; S.tImdb = S.tFirst = S.tCats = S.tSlow = S.nEmpty = 0; S.slowC = -1;
   S.tok++; S.topDone = 0; S.topFail = 0; S.allFailed = 0; for (int c = 0; c < S.ncat; c++) { S.catDone[c] = 0; S.catFail[c] = 0; itemlist_clear(&S.cat[c]); } S.ncat = 0; S.drawn = 1;
   if (!*p) { itemlist_clear(&S.items); S.nsug = 0; S.loading = 0; S.final = 1; results_draw_state(); return; }
-  S.loading = 1; S.final = 0;
-  sb_suggest(p, on_sug, (void *)(uintptr_t)S.tok);
-  S.catAt = app_now() + 0.5; S.catPending = 1;
+  S.loading = 1; S.final = 0; SSTAT("asked imdb for \"%s\"", p);
+  S.reqSug = sb_suggest(p, on_sug, (void *)(uintptr_t)S.tok);
+  S.catAt = qAt + CAT_PAUSE; S.catPending = 1; /* (cat_go at once when the query came whole: a suggestion, the phone, Enter) */
 }
 static void cat_go(void) {
-  char q[48]; snprintf(q, sizeof q, "%s", S.q); char *e = q + strlen(q); while (e > q && e[-1] == ' ') *--e = 0; const char *p = q; while (*p == ' ') p++;
+  char q[48]; snprintf(q, sizeof q, "%s", S.askedQ); char *e = q + strlen(q); while (e > q && e[-1] == ' ') *--e = 0; const char *p = q; while (*p == ' ') p++;
   CatalogDef defs[NCAT]; int n = sb_search_defs(p, defs, NCAT);
   if (!n) { char enc[200]; urlenc(p, enc, sizeof enc); const char *ty[2] = { "movie", "series" }; /* no installed catalog searches: Cinemeta's */
     for (int i = 0; i < 2; i++) { memset(&defs[n], 0, sizeof defs[n]); snprintf(defs[n].type, sizeof defs[n].type, "%s", ty[i]); snprintf(defs[n].url, sizeof defs[n].url, CINEMETA "/catalog/%s/top/search=%s.json", ty[i], enc); n++; } }
-  for (int c = 0; c < S.ncat; c++) itemlist_clear(&S.cat[c]); S.ncat = n; for (int c = 0; c < n; c++) S.catDone[c] = S.catFail[c] = 0;
-  fprintf(stderr, "[search] \"%s\" in %d catalog(s)\n", p, n);
-  for (int c = 0; c < n; c++) sb_catalog_url(defs[c].url, defs[c].type, 20, on_cat, (void *)(uintptr_t)(((uintptr_t)(S.tok & 0x7ffffff) << 5) | (uintptr_t)c));
+  for (int c = 0; c < S.ncat; c++) itemlist_clear(&S.cat[c]); S.ncat = n; S.catGone = 1; S.tCats = (int)((app_now() - qAt) * 1000); for (int c = 0; c < n; c++) S.catDone[c] = S.catFail[c] = 0;
+  fprintf(stderr, "[search] \"%s\" in %d catalog(s)\n", p, n); SSTAT("asked %d catalog(s)", n);
+  int mb = plat_mem_total_mb(), two = !(mb > 0 && mb < 1200); /* a small device (Firestick): its previews' lane keeps no connections, so everything stays on the quick one */
+  for (int c = 0; c < n; c++) S.reqCat[c] = sb_search_catalog(defs[c].url, defs[c].type, 20, two && (c & 1), on_cat, (void *)(uintptr_t)(((uintptr_t)(S.tok & 0x7ffffff) << 5) | (uintptr_t)c)); /* else every other one on the previews' lane: idle on Search */
 }
+static void cat_now(void) { if (S.catPending) { S.catPending = 0; cat_go(); } }
 /* the QR for typing on the phone, and what arrives from it (asked only while Search is up) */
-static void phone_ask(void) { if (S.qrOk) { httpd_start(); return; } S.qrAt = app_now(); S.qrOk = httpd_url("", S.qrUrl, sizeof S.qrUrl); }
+static void phone_ask(void) { if (!SB_PHONE_TYPE) return; if (S.qrOk) { httpd_start(); return; } S.qrAt = app_now(); S.qrOk = httpd_url("", S.qrUrl, sizeof S.qrUrl); }
 static void phone_tick(void) {
-  double now = app_now();
+  double now = app_now(); if (!SB_PHONE_TYPE) return;
   if (!S.qrOk && now - S.qrAt >= 2.5) phone_ask(); /* no network address yet: again in a moment */
-  if (!S.qrOk || now - S.typedAt < 2) return; S.typedAt = now;
+  if (!S.qrOk || now - S.typedAt < 0.1) return; S.typedAt = now; /* (a lock and a number: cheap. Every 2 s, as it was, a phone's search started up to 2 s late) */
   char t[96]; int sq = httpd_typed(S.seqKnown ? S.seq : 0, t, sizeof t);
   if (!S.seqKnown) { S.seqKnown = 1; S.seq = sq; return; } /* what was typed before this visit stays out */
-  if (sq > S.seq) { S.seq = sq; S.phone = 1; app_glow_kick(); snprintf(S.q, sizeof S.q, "%.40s", t); S.livePending = 0; live(); }
+  if (sq > S.seq) { S.seq = sq; S.phone = 1; app_glow_kick(); snprintf(S.q, sizeof S.q, "%.40s", t); qAt = app_now(); qLogged = 0; S.livePending = 0; if (!from_memory()) { live(); cat_now(); } }
 }
-static void enter(const void *p) { (void)p; S.zone = (S.zone == 2 && S.items.n) ? 2 : 0; timer_start(&S.in, 0.42f); results_draw_state(); S.typedAt = app_now() - 0.8; phone_ask(); }
+/* Search opened: one small request to IMDb and to each searching addon's host, so the lookup and the TLS handshake are
+   done before the first letter (the workers share DNS answers and TLS sessions). At most once a minute */
+static void warm_done(int st, const unsigned char *b, size_t n, void *ud) { (void)st; (void)b; (void)n; (void)ud; }
+static void warm_hosts(void) { static double at = -100; if (app_now() - at < 60) return; at = app_now();
+  net_get_bg("https://v3.sg.media-imdb.com/suggestion/a/a.json", 5000, warm_done, NULL); /* (on the previews' lane: never ahead of a query) */
+  CatalogDef d[NCAT]; int n = sb_search_defs("a", d, NCAT); char seen[8][128]; int ns = 0;
+  for (int i = 0; i < n && ns < 8; i++) { const char *h = strstr(d[i].path, "://"); if (!h) continue; h += 3; size_t L = strcspn(h, "/"); if (L >= 128) continue;
+    int dup = 0; for (int k = 0; k < ns; k++) if (strlen(seen[k]) == L && !strncmp(seen[k], h, L)) dup = 1; if (dup) continue;
+    snprintf(seen[ns++], 128, "%.*s", (int)L, h); char u[600]; const char *c = strstr(d[i].path, "/catalog/"); snprintf(u, sizeof u, "%.*s/manifest.json", c ? (int)(c - d[i].path) : (int)strlen(d[i].path), d[i].path); net_get_bg(u, 5000, warm_done, NULL); } }
+static void enter(const void *p) { (void)p; warm_hosts(); S.zone = (S.zone == 2 && S.items.n) ? 2 : 0; timer_start(&S.in, 0.42f); results_draw_state(); S.typedAt = app_now() - 0.8; phone_ask(); }
 static void leave(void) {} /* Search keeps its query and results for when you come back */
 static const Item *focused(void) { return S.zone == 2 && S.ri < S.items.n ? &S.items.items[S.ri] : NULL; }
 static int key(int k) {
   int rows = rows_of(), C = SGC; int z0 = S.zone, kr0 = S.kr, kc0 = S.kc, si0 = S.si, ri0 = S.ri;
-  if (kbTyped && k == K_OK && S.zone == 0) { kbTyped = 0; if (S.livePending) { S.livePending = 0; live(); } if (S.items.n) { S.zone = 2; S.ri = 0; } return 1; }
+  if (kbTyped && k == K_OK && S.zone == 0) { kbTyped = 0; if (S.livePending) { S.livePending = 0; live(); } cat_now(); if (S.items.n) { S.zone = 2; S.ri = 0; } return 1; }
   if (k != K_OK) kbTyped = 0;
   if (S.zone == 0) {
-    if (k == K_LEFT) { if (S.kr == rows) S.kc = S.kc >= 2 ? S.kc - 2 : 0; else S.kc = S.kc > 0 ? S.kc - 1 : 0; }
-    else if (k == K_RIGHT) { int edge = S.kr == rows ? S.kc >= 4 : S.kc >= SCOLS - 1; if (edge) { if (S.nsug) { S.zone = 1; S.si = 0; } else if (S.items.n) { S.zone = 2; S.ri = 0; } } else S.kc = S.kc + (S.kr == rows ? 2 : 1) < SCOLS ? S.kc + (S.kr == rows ? 2 : 1) : SCOLS - 1; }
-    else if (k == K_UP) { if (S.kr > 0) S.kr--; else { topnav_focus(); return 1; } }
-    else if (k == K_DOWN) { if (S.kr < rows) S.kr++; }
+    /* the keys keep their left-to-right order in every language, so the arrows move the way they look; the side
+       toward the results is the right (the left in a right-to-left language, where the keyboard sits on the right) */
+    int rtl = app_rtl(), vk = rtl ? app_mirror_key(k) : k, last = search_key_row_len(S.kr) - 1;
+    int out = rtl ? (vk == K_LEFT && S.kc == 0) : (vk == K_RIGHT && S.kc == last);
+    float x, y, w; search_key_pos(key_at(S.kr, S.kc), &x, &y, &w); float mx = x + w / 2;
+    if (out) { if (S.nsug) { S.zone = 1; S.si = 0; } else if (S.items.n) { S.zone = 2; S.ri = 0; } }
+    else if (vk == K_LEFT) { if (S.kc > 0) S.kc--; }
+    else if (vk == K_RIGHT) { if (S.kc < last) S.kc++; }
+    else if (k == K_UP) { if (S.kr > 0) { S.kr--; S.kc = key_near(S.kr, mx); } else { topnav_focus(); return 1; } }
+    else if (k == K_DOWN) { if (S.kr < rows) { S.kr++; S.kc = key_near(S.kr, mx); } }
     else if (k == K_OK) type_key(key_at(S.kr, S.kc));
     else if (k == K_BACK) return 0;
     if (k != K_OK && z0 == S.zone && kr0 == S.kr && kc0 == S.kc) nudge_start(&S.nudge, k); /* the key with its ring */
@@ -152,7 +233,7 @@ static int key(int k) {
     else if (k == K_RIGHT) { if (S.si < S.nsug - 1) S.si++; }
     else if (k == K_DOWN) { if (S.items.n) { S.zone = 2; S.ri = 0; } }
     else if (k == K_UP) { topnav_focus(); return 1; }
-    else if (k == K_OK) { snprintf(S.q, sizeof S.q, "%.40s", S.sug[S.si]); S.livePending = 0; live(); }
+    else if (k == K_OK) { snprintf(S.q, sizeof S.q, "%.40s", S.sug[S.si]); qAt = app_now(); qLogged = 0; S.livePending = 0; if (!from_memory()) { live(); cat_now(); } }
     else if (k == K_BACK) { S.zone = 0; return 1; }
     if (k != K_OK && z0 == S.zone && si0 == S.si) nudge_start(&S.nudge, k);
   } else {
@@ -168,10 +249,7 @@ static int key(int k) {
   return 1;
 }
 static void key_rect(int ki, float *x, float *y, float *w) {
-  float kx = LEFT_X, ky = TOP_Y + 76 + 18;
-  if (ki < NK) { *x = kx + (ki % SCOLS) * 92; *y = ky + (ki / SCOLS) * 74; *w = 84; }
-  else { *x = kx + (ki - NK) * 184; *y = ky + rows_of() * 74; *w = 176; }
-  if (app_rtl()) *x = SB_W - *x - *w;
+  search_key_pos(ki, x, y, w); *x += app_rtl() ? SB_W - LEFT_X - 552 : LEFT_X; *y += TOP_Y + 76 + 18; /* (on the right in a right-to-left language, the keys in the same order) */
 }
 /* the text art of the results around the focus, for their pages (drawn there at 520x175): ready when one opens */
 static void logos_ahead(void) { static double at0; double now = app_now(); if (now - at0 < 0.5 || S.zone != 2) return; at0 = now;
@@ -190,7 +268,7 @@ static void tick(float dt) {
   if (act && S.zone == 2 && S.ri < S.items.n) { float gx = (app_rtl() ? SB_W - RIGHT_X - 236 - (S.ri % SGC) * 272 : RIGHT_X + (S.ri % SGC) * 272), gy = row * SPITCH; ring_to(&S.ring, gx, gy, 0); } else ring_hide(&S.ring);
 }
 static void ptr_off(void) { if (topNav.active) topNav.active = 0; }
-static void key_focus(int ki, int b) { (void)b; int kr = ki < NK ? ki / SCOLS : rows_of(), kc = ki < NK ? ki % SCOLS : (ki - NK) * 2; ptr_off(); if (S.zone != 0 || S.kr != kr || S.kc != kc) { S.zone = 0; S.kr = kr; S.kc = kc; } }
+static void key_focus(int ki, int b) { (void)b; int kr, kc; search_key_rc(ki, &kr, &kc); ptr_off(); if (S.zone != 0 || S.kr != kr || S.kc != kc) { S.zone = 0; S.kr = kr; S.kc = kc; } }
 static void sug_focus(int i, int b) { (void)b; ptr_off(); if (S.zone != 1 || S.si != i) { S.zone = 1; S.si = i; } }
 static void res_focus(int i, int b) { (void)b; ptr_off(); if (S.zone != 2 || S.ri != i) { S.zone = 2; S.ri = i; } }
 static void draw(void) {
@@ -255,7 +333,7 @@ static void draw(void) {
     const TmdbLoc *L = tmdb_loc(it->type, it->id, 1); /* translated poster and name, in place when they land */
     const char *src = L && L->poster && L->poster[0] ? L->poster : i < SMAX ? S.pu[i] : "";
     unsigned long long lk = lift_key(&S, i); lift_begin(lk, pass, pass ? hp : 0, x, y, 236, 354, 16);
-    GLuint t = src && *src ? img_get_shaped(src, 236, 354, 16, 0) : 0; if (!t && (!src || !*src || img_shaped_failed(src, 236, 354, 16, 0))) ph_surface(x, y, 236, 354, 16); else ph_picture(t, x, y, 236, 354, 16, WHITE_A(255));
+    GLuint t = src && *src ? img_get_shaped(src, 236, 354, 16, 0) : 0; if (t && i == 0 && (qLogged & 6) == 4) { qLogged |= 2; SSTAT("first poster on screen"); } if (!t && (!src || !*src || img_shaped_failed(src, 236, 354, 16, 0))) ph_surface(x, y, 236, 354, 16); else ph_picture(t, x, y, 236, 354, 16, WHITE_A(255));
     if (pass && hp > 0) hold_trace_draw(x, y, 236, 354, 16, ease_apply(EASE_IN_OUT, hp));
     lift_end(lk, x, y, 236, 354, 16);
     hit_add(x, y, 236, 354 + 12 + 32, res_focus, NULL, i, 0); text_draw(L && L->name && L->name[0] ? L->name : it->name, rtl ? x + 236 - 2 : x + 2, y + 354 + 12, 25, 600, pass ? WHITE_A(255) : WHITE_A(217), 0, 232, al); }

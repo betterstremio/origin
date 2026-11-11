@@ -30,6 +30,7 @@ unsigned net_send(const char *method, const char *url, const char *headers, cons
 /* a GET allowed to take longer (or shorter) than the usual 20 s, e.g. stream addons that resolve debrid links */
 unsigned net_get_timeout(const char *url, int timeoutMs, NetCb cb, void *ud);
 void     net_cancel(unsigned id);
+void     net_cancel_queued(unsigned id);   /* only if it has not started: a running one finishes (its connection stays) */
 void     net_pump(void);           /* delivers finished requests; call once per frame */
 /* inside a callback: the JSON body, already parsed on the network worker (else parsed now); the caller owns the tree */
 struct cJSON *net_json(const unsigned char *body);

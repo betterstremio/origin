@@ -14,6 +14,7 @@
 #include "screens/welcome.h"
 #include "screens/login.h"
 #include "screens/board.h"
+#include "screens/search.h"
 #include "ui/qr.h"
 #include "ui/gfx.h"
 #include "ui/text.h"
@@ -289,15 +290,18 @@ static void search_page(float a, int typed, float res, float qrRing) {
   if (typed) cw = text_draw(q, tx, qy + (76 - text_line_height(32)) / 2, 32, 600, WHITE_A(255), 0, 420, ALIGN_LEFT);
   else text_draw(T("Search films and series"), tx + 14, qy + (76 - text_line_height(32)) / 2, 32, 500, WHITE_A(133), 0, 420, ALIGN_LEFT);
   gfx_rrect(tx + (typed ? cw + 4 : 0), qy + 20, 3, 36, 1.5f, col_alpha(ACC2 | 0xff000000u, 0.6f + 0.4f * cosf((float)app_now() * 5)));
-  static const char *K = "abcdefghijklmnopqrstuvwxyz1234567890"; int hot = typed > 0 && typed <= 4 ? (int)(strchr(K, WORD[typed - 1]) - K) : -1;
-  for (int i = 0; i < 36; i++) { float x = qx + (i % 6) * 93, y = qy + 94 + (i / 6) * 74; int f = i == hot;
-    gfx_rrect(x, y, 84, 66, 14, f ? ACC | 0xff000000u : WHITE_A(15)); char s[2] = { (char)(K[i] >= 'a' ? K[i] - 32 : K[i]), 0 };
-    text_draw(s, x + 42, y + (66 - text_line_height(28)) / 2, 28, 700, f ? ACC_FG : WHITE_A(219), 0, 0, ALIGN_CENTER); }
-  float qr = qy + 94 + 6 * 74 + 30;
+  static const char *K = SEARCH_KEYS; int hot = typed > 0 && typed <= 4 ? (int)(strchr(K, WORD[typed - 1]) - K) : -1; /* the same keyboard as Search's */
+  for (int i = 0; i < SEARCH_NK + 3; i++) { float x, y, w; search_key_pos(i, &x, &y, &w); x += qx; y += qy + 94; int f = i == hot;
+    gfx_rrect(x, y, w, 66, 14, f ? ACC | 0xff000000u : WHITE_A(15));
+    if (i < SEARCH_NK) { char s[2] = { (char)(K[i] >= 'a' ? K[i] - 32 : K[i]), 0 }; text_draw(s, x + w / 2, y + (66 - text_line_height(28)) / 2, 28, 700, f ? ACC_FG : WHITE_A(219), 0, 0, ALIGN_CENTER); }
+    else if (i == SEARCH_NK + 1) icon_draw("backspace", x + w / 2 - 15, y + 18, 30, WHITE_A(219));
+    else text_draw(T(i == SEARCH_NK ? "Space" : "Clear"), x + w / 2, y + (66 - text_line_height(24)) / 2, 24, 700, WHITE_A(219), 0.4f, w - 16, ALIGN_CENTER); }
+  float qr = qy + 94 + (SEARCH_KROWS + 1) * SEARCH_KROWH + 30;
+  if (SB_PHONE_TYPE) { /* (the phone's code, as Search shows it) */
   if (qrRing > 0) gfx_ring_out(qx - 8, qr - 8, 166, 166, 20, 4 + 3 * sinf((float)app_now() * 6), col_alpha(ACC2, qrRing));
   if (!qr_draw(qrUrl, qx, qr, 150, 14, 8)) gfx_rrect(qx, qr, 150, 150, 14, WHITE_A(20));
   text_draw(T("Type on your phone"), qx + 172, qr + 40, 24, 700, WHITE_A(255), 0, 380, ALIGN_LEFT);
-  text_draw_wrapped(T("Scan with your phone's camera, then type there"), qx + 172, qr + 76, 380, 2, 23, 400, WHITE_A(191), 0, ALIGN_LEFT, 31);
+  text_draw_wrapped(T("Scan with your phone's camera, then type there"), qx + 172, qr + 76, 380, 2, 23, 400, WHITE_A(191), 0, ALIGN_LEFT, 31); }
   float rx = 760; char h[96]; snprintf(h, sizeof h, "%s", typed ? T1("Results for \xe2\x80\x9c{q}\xe2\x80\x9d", "q", q) : T("Type to search films and series"));
   text_draw(h, rx, qy, 24, 600, WHITE_A(191), 0, 1080, ALIGN_LEFT);
   for (int i = 0; i < 8; i++) { float r = cl01(res * 1.6f - i * 0.08f); if (r <= 0.004f) continue; gfx_opacity_push(r);

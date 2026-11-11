@@ -52,6 +52,8 @@ int  sb_disc_defs(CatalogDef *out, int max);
 /* cached copy first (cb with cached=1), then the fresh one if it differs; the list is malloc'd for the callback owner */
 void sb_catalog(const CatalogDef *def, void (*cb)(ItemList *list, int cached, void *ud), void *ud);
 void sb_catalog_url(const char *url, const char *type, int n, void (*cb)(ItemList *list, int cached, void *ud), void *ud);
+/* a search's catalog: never cached on disk; bg: on the previews' lane; returns the request's id */
+unsigned sb_search_catalog(const char *url, const char *type, int n, int bg, void (*cb)(ItemList *list, int cached, void *ud), void *ud);
 /* the next page of a catalog that pages: everything from item `skip` on (never cached). list NULL: the request failed
    (it can be asked again); list->n 0: the end. more: the answer's hasMore (1 / 0), -1 when it did not say */
 void sb_catalog_page(const CatalogDef *def, int skip, void (*cb)(ItemList *list, int more, void *ud), void *ud);
@@ -137,5 +139,5 @@ typedef struct { char lang[24], name[64], url[1024]; int n; char addon[64], labe
 int  sb_stream_subs(const Stream *s, SubEntry **out);
 
 /* ---- search ---- */
-void sb_suggest(const char *q, void (*cb)(ItemList *list, char names[6][128], int nnames, void *ud), void *ud);
+unsigned sb_suggest(const char *q, void (*cb)(ItemList *list, char names[6][128], int nnames, void *ud), void *ud);
 #endif

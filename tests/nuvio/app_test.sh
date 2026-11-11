@@ -77,7 +77,8 @@ check "session refused: signed out and forgotten" "not s.get('acctKind') and not
 # 9. the first sign-in with one profile still asks; Add profile: one push, the whole list, every field kept
 fresh() { rm -rf "$D"; mkdir -p "$D"; seed; }
 PUSHED="[r['b'] for r in log if r['k']=='sync_push_profiles']"
-TYPE="750:ok,780:right,810:ok,840:down,870:down,900:down,930:down,960:right,990:right,1020:right,1050:ok"
+# the name "Ab" on the QWERTY keyboard (Shift starts on): down twice to A, OK; down to Z, right 4 to B, OK; down to the last row, right twice to Done, OK
+TYPE="750:down,780:down,810:ok,840:down,870:right,900:right,930:right,960:right,990:ok,1020:down,1050:right,1080:right,1110:ok"
 fresh; ctl "list=1"; run oneprof "100:up,130:right" 800; if grep -q '\[profiles\] open, mode 1' "$O/oneprof.log"; then echo "ok   one profile: the picker still shows on the first sign-in"; else echo "FAIL one profile went straight in"; FAILS=$((FAILS + 1)); fi
 fresh; ctl "list=3"; run addp "100:up,130:right,620:right,650:right,680:right,710:ok,$TYPE" 1500
 check "add: pushed once, the whole list plus the new one" "(lambda P: len(P)==1 and [x['profile_index'] for x in P[0]['p_profiles']]==[1,2,3,4] and P[0]['p_client_max_profiles']==6)($PUSHED)"

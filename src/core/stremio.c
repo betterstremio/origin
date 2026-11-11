@@ -225,10 +225,11 @@ static ItemList *list_from_metas(const cJSON *metas, const char *type, int max) 
   const cJSON *m; cJSON_ArrayForEach(m, metas) { if (l->n >= n) break; sb_fill_item(&l->items[l->n], m, type); if (l->items[l->n].id[0]) l->n++; }
   return l;
 }
-typedef struct { char url[512], type[16], key[600]; int n; /* key: "cat:" + the whole address (cut short, every catalog of one addon shared one file) */ void (*cb)(ItemList *, int, void *); void *ud; char *cachedJson; } CatReq;
+typedef struct { char url[512], type[16], key[600]; int n, nocache; /* key: "cat:" + the whole address (cut short, every catalog of one addon shared one file) */ void (*cb)(ItemList *, int, void *); void *ud; char *cachedJson; } CatReq;
 static void on_catalog(int st, const unsigned char *b, size_t len, void *ud) {
   CatReq *r = ud; Uint32 tq0 = SDL_GetTicks(); cJSON *j = st == 200 ? net_json(b) : NULL; const cJSON *metas = js_arr(j, "metas");
-  if (metas && cJSON_GetArraySize(metas)) {
+  if (metas && cJSON_GetArraySize(metas) && r->nocache) r->cb(list_from_metas(metas, r->type, r->n), 0, r->ud); /* a search: no disk copy */
+  else if (metas && cJSON_GetArraySize(metas)) {
     ItemList *l = list_from_metas(metas, r->type, r->n); Uint32 tq1 = SDL_GetTicks();
     /* the slim list is what is cached; a copy under 12 h old stays on screen (the fresh order shows next launch) */
     cJSON *slim = cJSON_CreateArray(); for (int i = 0; i < l->n; i++) { Item *it = &l->items[i]; cJSON *o = cJSON_CreateObject();
@@ -253,6 +254,12 @@ void sb_catalog_url(const char *url, const char *type, int n, void (*cb)(ItemLis
   if (r->cachedJson) { char hk[620], cp[1200]; snprintf(hk, sizeof hk, "cah:%s", url); size_t hl; unsigned char *h = cache_read(hk, 0, &hl); long age = h ? atol((const char *)h) : 0; free(h);
     if (age > 0 && cache_file(r->key, age, cp, sizeof cp)) { free(r->cachedJson); free(r); return; } }
   net_get(url, on_catalog, r);
+}
+/* a search's catalog: no disk copy read or written (one-off queries; Search keeps its own in memory), asked on the quick
+   lane or (bg) the previews' lane, which sits idle while Search is up; 10 s at most. The request's id, for net_cancel */
+unsigned sb_search_catalog(const char *url, const char *type, int n, int bg, void (*cb)(ItemList *, int, void *), void *ud) {
+  CatReq *r = calloc(1, sizeof *r); copy_str(r->url, sizeof r->url, url); copy_str(r->type, sizeof r->type, type); r->n = n; r->nocache = 1; r->cb = cb; r->ud = ud;
+  return bg ? net_get_bg(url, 10000, on_catalog, r) : net_get_timeout(url, 10000, on_catalog, r);
 }
 void sb_catalog(const CatalogDef *d, void (*cb)(ItemList *, int, void *), void *ud) { sb_catalog_url(d->url, d->type, 16, cb, ud); }
 /* a further page: the extra the catalog is shown with, and skip */
@@ -821,9 +828,9 @@ static void on_sug(int st, const unsigned char *b, size_t n, void *ud) {
   if (!d) l->total = -1; /* no answer */
   net_json_free(j); r->cb(l, names, nn, r->ud); free(r);
 }
-void sb_suggest(const char *q, void (*cb)(ItemList *, char[6][128], int, void *), void *ud) {
+unsigned sb_suggest(const char *q, void (*cb)(ItemList *, char[6][128], int, void *), void *ud) {
   char s[128]; copy_str(s, sizeof s, q); for (char *p = s; *p; p++) if (*p >= 'A' && *p <= 'Z') *p += 32;
   char first = (s[0] >= 'a' && s[0] <= 'z') || (s[0] >= '0' && s[0] <= '9') ? s[0] : 'x'; char enc[400]; urlenc(s, enc, sizeof enc);
   char url[600]; snprintf(url, sizeof url, "https://v3.sg.media-imdb.com/suggestion/%c/%s.json", first, enc);
-  SugReq *r = malloc(sizeof *r); r->cb = cb; r->ud = ud; net_get(url, on_sug, r);
+  SugReq *r = malloc(sizeof *r); r->cb = cb; r->ud = ud; return net_get_timeout(url, 8000, on_sug, r);
 }

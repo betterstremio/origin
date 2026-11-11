@@ -7,8 +7,8 @@
 #include <stdio.h>
 #include <string.h>
 
-/* 10 keys a row: letters, digits, the address symbols; a last row of Shift, Space, Backspace, Done */
-static const char *ROWS[4] = { "abcdefghij", "klmnopqrst", "uvwxyz1234", "567890@._-" };
+/* 10 keys a row, QWERTY: digits, the letters, the address symbols at the ends; a last row of Shift, Space, Backspace, Done */
+static const char *ROWS[4] = { "1234567890", "qwertyuiop", "asdfghjkl@", "zxcvbnm._-" };
 #define KW 76.0f
 #define KH 62.0f
 #define GAP 8.0f
