@@ -293,7 +293,7 @@ void tmdb_init(void) {
   httpd_set_key_handler(key_from_phone);
 }
 int tmdb_has_key(void) { drain(); return key[0] != 0; }
-void tmdb_key_clear(void) { if (!inited) tmdb_init(); if (!strcmp(keySrc, "nuvio")) store_set("tmdbNoNuvio", "1"); /* (removed on purpose: the account's key does not come back by itself) */
+void tmdb_key_clear(void) { if (!inited) tmdb_init(); store_set("tmdbNoNuvio", "1"); /* (removed on purpose, the account's key or the user's own: the account's does not come in by itself; Settings > Keys can ask for it) */
   remove(keyPath); remove(srcPath); keySrc[0] = 0; snprintf(key, sizeof key, "%s", builtin); resetReq = 1; }
 int tmdb_key_offer(const char *k, int fromNuvio) {
   if (!inited) tmdb_init(); drain(); char c[420]; strip_ws(k ? k : "", c, sizeof c);

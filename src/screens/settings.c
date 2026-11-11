@@ -138,8 +138,8 @@ static int recs_opts(void) {
   if (!tmdb_builtin()) { /* the key the picks need: pasted on a computer, from the phone on a TV, or from the Nuvio account by itself */
     int ck = tmdb_key_check_state() == TK_CHECKING, has = tmdb_has_key(), nv = tmdb_key_from_nuvio();
 #if SB_WINDOWED
-    const char *d = ck ? "Checking the key with TMDB\xe2\x80\xa6" : nv ? "In use, from your Nuvio account. OK to add your own key instead"
-                  : has ? "Added. OK to change it" : "Needed for picks. OK to add your key";
+    const char *d = ck ? "Checking the key with TMDB\xe2\x80\xa6" : nv ? "Using the key from your Nuvio account. OK to use your own instead (Settings \xe2\x80\xba Keys can remove it)"
+                  : has ? "Using your own key. OK to change it" : "Needed for picks. OK to add your key";
 #else
     const char *d = ck ? "Checking the key with TMDB\xe2\x80\xa6" : nv ? "In use, from your Nuvio account. Nothing to do. OK to use a different key from your phone"
                   : has ? "In use. OK to use a different key from your phone" : "Needed for picks. OK to add it from your phone";
@@ -164,15 +164,21 @@ static void recs_rows_again(void);
 static int keys_opts(void) {
   int n = 0; tmdbOn = tmdb_has_key(); traktOn = trakt_has_key();
   set_act(&keyS[n++], "__coll", "Collections", "Rows of tiles on Home. OK to import or remove them from your phone");
+  if (!tmdb_builtin()) { /* where the key comes from, said plainly, with each choice its own row: keep the Nuvio account's key,
+       remove it and add your own, or go back to the account's */
+    int nv = tmdbOn && tmdb_key_from_nuvio(), nvHas = acct_is_nuvio() && nv_has_tmdb_key();
 #if SB_WINDOWED
-  if (!tmdb_builtin()) { int nv = tmdbOn && tmdb_key_from_nuvio(); /* one clear row: what the key does, whether there is one, OK adds it */
-    set_act(&keyS[n++], "__tmdb", "TMDB key", nv ? "In use, from your Nuvio account: For You picks and titles in your language. OK to add your own key instead"
-                                              : tmdbOn ? "Added: For You picks and titles in your language. OK to change it"
-                                              : "Not added. Needed for For You picks and for titles in your language. OK to add it"); }
+#define ADD_HOW "paste"
 #else
-  if (!tmdb_builtin()) set_act(&keyS[n++], "__tmdb", "Titles and descriptions", tmdbOn ? "In the app\xe2\x80\x99s language, from TMDB. OK to change the key" : "Only in English. OK to add a TMDB key from your phone");
+#define ADD_HOW "add from your phone"
 #endif
-  if (tmdbOn && !tmdb_builtin()) set_act(&keyS[n++], "__tmdbOff", "Remove the TMDB key", "Titles and descriptions go back to English");
+    set_act(&keyS[n++], "__tmdb", "TMDB key", nv ? "Using the key from your Nuvio account, for For You picks and titles in your language. OK to " ADD_HOW " your own key instead"
+                                              : tmdbOn ? "Using your own key, for For You picks and titles in your language. OK to change it"
+                                              : "None. For You picks and titles in your language need one. OK to " ADD_HOW " your key");
+#undef ADD_HOW
+    if (nv) set_act(&keyS[n++], "__tmdbOff", "Stop using the Nuvio key", "For You stops and titles go back to English until you add your own key. It does not come back by itself");
+    else if (tmdbOn) set_act(&keyS[n++], "__tmdbOff", "Remove your TMDB key", "For You stops and titles go back to English until you add one again");
+    if (nvHas && !nv) set_act(&keyS[n++], "__tmdbNuvio", "Use the key from your Nuvio account", tmdbOn ? "Your Nuvio account has a TMDB key too. OK to use it instead of yours" : "Your Nuvio account has a TMDB key. OK to use it"); }
   if (!trakt_builtin()) set_act(&keyS[n++], "__trakt", "Ratings and reviews", traktOn ? "The rating, its spread and people\xe2\x80\x99s comments, from Trakt. OK to change the id" : "OK to add a Trakt client id from your phone");
   if (traktOn && !trakt_builtin()) set_act(&keyS[n++], "__traktOff", "Remove the Trakt id", "Ratings and comments from the other sources alone");
   return n;
@@ -372,7 +378,7 @@ static float right_w(const Setting *o, int focused) { /* what sits right of the 
 #define DS_PX 26     /* a setting's description: 26 px on 34 px lines, at most 3 lines */
 #define DS_LH 34.0f
 /* the words under a row: only About's rows and the best stream's (its connection measured) keep them */
-static int keep_ds(const Setting *o) { return (o >= supS && o < supS + sizeof supS / sizeof *supS) || !strcmp(o->k, "autoBest") || !strcmp(o->k, "bgPreview") || !strcmp(o->k, "__tmdbKey"); } /* (bgPreview: its warning about rate limits has to be read; the TMDB key: how to add it) */
+static int keep_ds(const Setting *o) { return (o >= supS && o < supS + sizeof supS / sizeof *supS) || !strcmp(o->k, "autoBest") || !strcmp(o->k, "bgPreview") || !strcmp(o->k, "__tmdbKey") || !strncmp(o->k, "__tmdb", 6); } /* (bgPreview: its warning about rate limits has to be read; the TMDB key: how to add it) */
 static int ds_lines(const Setting *o) { if (!o->ds[0] || !keep_ds(o)) return 0; int n = text_wrap_count(o->raw ? o->ds : T(o->ds), CLW - 48 - right_w(o, 0), 3, DS_PX, 400, 0); return n < 1 ? 1 : n; }
 static unsigned hash_s(const char *s, unsigned h) { while (*s) h = h * 31 + (unsigned char)*s++; return h; }
 /* what a row draws beside its words, measured once: again when the layout is redone, its value or the language
@@ -483,7 +489,8 @@ static int key(int k) {
       if (!strcmp(op->k, "__tmdb")) { qrcard_show_tmdb(on_tmdb_card, NULL); return 1; }
       if (!strcmp(op->k, "__recsNow")) { recs_refresh(); toast(T("Getting new picks"), 2000, NULL); return 1; }
       if (!strcmp(op->k, "__tmdbKey")) { qrcard_show_tmdb(on_tmdb_card, NULL); return 1; } /* the same card as Settings > Keys (a paste card on a computer, the code on a TV) */
-      if (!strcmp(op->k, "__tmdbOff")) { tmdb_key_clear(); relang(); toast(T("Titles and descriptions in English"), 2000, NULL); return 1; }
+      if (!strcmp(op->k, "__tmdbOff")) { tmdb_key_clear(); relang(); recs_rows_again(); toast(T("TMDB key removed"), 2000, NULL); return 1; }
+      if (!strcmp(op->k, "__tmdbNuvio")) { nv_use_tmdb_key(); relang(); recs_rows_again(); toast(T("Getting the key from your Nuvio account\xe2\x80\xa6"), 2000, NULL); return 1; }
       if (!strcmp(op->k, "__trakt")) { qrcard_show_trakt(on_trakt_card, NULL); return 1; }
       if (!strcmp(op->k, "__traktOff")) { trakt_key_clear(); relang(); toast(T("The Trakt id is gone"), 2000, NULL); return 1; }
       if (!strcmp(op->k, "__keys")) { settings_open_keys(); return 1; }
@@ -497,7 +504,7 @@ static void tick(float dt) {
   ab_tick();
   { static int ck; int c = tmdb_key_check_state(); if (c != ck) { int was = ck; ck = c; /* a pasted or Nuvio key checked: say how it went, the row follows */
       if (was == TK_CHECKING) toast(c == TK_KEPT ? T("TMDB key added: getting your picks") : c == TK_BAD ? T("TMDB did not accept that key") : T("TMDB did not answer: try again in a moment"), 2500, NULL);
-      recs_rows_again(); } }
+      recs_rows_again(); relang(); } } /* (Settings > Keys says where the key comes from) */
   if (usb_serial() != usbSeen) { usb_row(); play_layout(); S.dirty = 1; } /* a drive came or went, or its switch moved */
   if (update_serial() != aboutSeen) { for (int i = 0; i < ncat; i++) if (cats[i].opts == supS) { cats[i].n = about_opts(); if (S.cat == i && S.idx >= cats[i].n) S.idx = cats[i].n - 1; } S.dirty = 1; } /* the update moved on: its rows follow */
   if (S.dirty) layout();

@@ -388,13 +388,22 @@ static void on_addons(int st, const cJSON *j, void *ud) {
    anyone typing one. Only a few names come back: the rows hold other services' keys too, which are left alone */
 static void on_creds(int st, const cJSON *j, void *ud) {
   (void)ud; if (st != 200 || !cJSON_IsArray(j)) { fprintf(stderr, "[nuvio] saved keys: http %d\n", st); return; }
-  const cJSON *r; cJSON_ArrayForEach(r, j) { const char *pv = js_str(r, "provider", ""); if (strcmp(pv, "tmdb")) continue;
+  int has = 0; const cJSON *r; cJSON_ArrayForEach(r, j) { const char *pv = js_str(r, "provider", ""); if (!strcmp(pv, "tmdb") && js_str(js_obj(r, "credential_json"), "api_key", "")[0]) has = 1; }
+  if (strcmp(store_get("nvHasTmdb", ""), has ? "1" : "0")) store_set("nvHasTmdb", has ? "1" : "0"); /* (Settings > Keys offers it when another key is in use, or none) */
+  cJSON_ArrayForEach(r, j) { const char *pv = js_str(r, "provider", ""); if (strcmp(pv, "tmdb")) continue;
     const char *k = js_str(js_obj(r, "credential_json"), "api_key", ""); fprintf(stderr, "[nuvio] the account has %s TMDB key\n", k[0] ? "a" : "no");
     if (k[0] && tmdb_key_offer(k, 1) == TKO_CHECKING) fprintf(stderr, "[nuvio] its TMDB key is being checked\n"); }
 }
+static double credsAt;
 static void pull_creds(void) {
-  static double at; double now = SDL_GetTicks() / 1000.0; if (at && now - at < 600) return; at = now; /* (at most every 10 minutes) */
+  double now = SDL_GetTicks() / 1000.0; if (credsAt && now - credsAt < 600) return; credsAt = now; /* (at most every 10 minutes) */
   cJSON *p = cJSON_CreateObject(); cJSON_AddNumberToObject(p, "p_profile_id", nv_profile_current()); rpc("sync_pull_provider_credentials", p, on_creds, NULL);
+}
+int nv_has_tmdb_key(void) { return nv_signed_in() && !strcmp(store_get("nvHasTmdb", ""), "1"); }
+void nv_use_tmdb_key(void) { /* "Use the key from your Nuvio account": the user's own key goes, the account's is asked for at once */
+  if (!nv_signed_in() || !nv_profile_current()) return;
+  if (tmdb_has_key() && !tmdb_key_from_nuvio()) tmdb_key_clear();
+  store_remove("tmdbNoNuvio"); credsAt = 0; pull_creds();
 }
 void nv_sync_addons(void (*cb)(int, void *), void *ud) {
   if (!nv_signed_in() || !nv_profile_current() || !store_get("nvOwner", NULL)) { if (cb) cb(0, ud); return; }

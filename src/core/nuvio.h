@@ -43,5 +43,7 @@ void nv_sync_addons(void (*cb)(int changed, void *ud), void *ud);
 void nv_sync_library(void (*cb)(int changed, void *ud), void *ud);
 unsigned nv_lib_sync_age(void);          /* ms since the last library sync began (huge when none yet) */
 void nv_push_soon(void);                 /* a change here: synced a few seconds later */
+int  nv_has_tmdb_key(void);              /* the signed-in account keeps a TMDB key (seen at the last sync) */
+void nv_use_tmdb_key(void);              /* use that key here: the user's own one goes */
 void nv_tick(void);                      /* per frame, only with a Nuvio account */
 #endif
