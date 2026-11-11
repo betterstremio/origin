@@ -69,6 +69,15 @@ publish)
     d="$(gh api "repos/$SLUG/releases/tags/v$V" --jq ".assets[] | select(.name == \"$f\") | .digest")"
     [ "$d" = "sha256:$(sha256sum "$D/$f" | cut -c1-64)" ] && echo "ok $f" || echo "DIFFERS: $f ($d)"
   done
+  # the webOS manifest and Homebrew listing on the website: the app checks it first, so a release without it is not seen
+  # by TVs whose GitHub API allowance is used up. SITE=<clone of betterstremio/betterstremio.github.io>
+  SITE="${SITE:-$ROOT/../site-publish}"
+  if [ -d "$SITE/.git" ]; then
+    bash "$ROOT/tools/webos-feed.sh" "$V" "$NOTES" "$SITE"
+    git -C "$SITE" add webos
+    git -C "$SITE" -c user.name="${AUTHOR% <*}" -c user.email="$(sed 's/.*<\(.*\)>/\1/' <<<"$AUTHOR")" commit -q -m "webOS listing $V" || true
+    git -C "$SITE" -c credential.helper= -c credential.helper='!gh auth git-credential' push -q "https://github.com/${SITE_SLUG:-betterstremio/betterstremio.github.io}.git" HEAD:main && echo "site: webOS listing $V pushed"
+  else echo "NOTE: no site clone at $SITE: run tools/webos-feed.sh $V $NOTES <site> and push it, or TVs fall back to GitHub's API"; fi
   ;;
 *) die "usage: tools/release.sh build|publish X.Y.Z [NOTES.md]";;
 esac

@@ -32,6 +32,9 @@ float key_hint(float x, float y, int key, const char *label, uint32_t col, int a
 #define PKG_KIND_LEN (sizeof PKG_KIND - 1)
 
 #define UPD_GH "https://api.github.com/repos/betterstremio/origin/releases?per_page=5"   /* one tag per version, one file per platform: PKG_KIND picks ours */
+/* the website's manifest (tools/webos-feed.sh, written by every release) is asked first: GitHub's API allows 60 calls an
+   hour per address without an account, and a home's TV shares that with every other device there. It names only the
+   webOS IPK, so the other platforms go to the release list when it has nothing for them. */
 #define UPD_MAN "https://betterstremio.github.io/webos/api/apps/" SB_APP_ID "/manifest.json"
 typedef struct { char ver[24], url[512], sha[72]; char notes[5][256]; int nnotes; } Rel;
 static struct {
@@ -106,7 +109,7 @@ static int notes_from(const char *md, char out[5][256]) {
 }
 static void pill_show(void);
 static double nextAt; static int forceCheck, pillPend; /* the next check while the app stays open; a check that skips the 6-hour rest; a notice that waits for the film to end */
-static int reached; /* the release list or the listing answered: finding nothing for this package then means nothing newer */
+static int reached; /* the release list answered: finding nothing for this package then means nothing newer */
 static void done(const Rel *best, int manual) {
   char at[32]; snprintf(at, sizeof at, "%.0f", now_ms()); store_set("updAt", at);
   if (best && U.cur[0] && ver_cmp(best->ver, U.cur) > 0) {
@@ -121,9 +124,10 @@ static void done(const Rel *best, int manual) {
   }
   changed();
 }
+static void on_releases(int st, const unsigned char *body, size_t len, void *ud);
 static void on_manifest(int st, const unsigned char *body, size_t len, void *ud) {
   (void)len; int manual = (int)(size_t)ud; Rel r; memset(&r, 0, sizeof r); int ok = 0;
-  cJSON *m = st == 200 ? cJSON_Parse((const char *)body) : NULL; if (cJSON_IsObject(m)) reached = 1;
+  cJSON *m = st == 200 ? cJSON_Parse((const char *)body) : NULL;
   cJSON *v = cJSON_GetObjectItemCaseSensitive(m, "version"), *u = cJSON_GetObjectItemCaseSensitive(m, "ipkUrl"), *h = cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(m, "ipkHash"), "sha256");
   if (cJSON_IsString(v) && cJSON_IsString(u) && cJSON_IsString(h) && *v->valuestring && *u->valuestring && *h->valuestring) {
     size_t ul = strlen(u->valuestring);
@@ -134,7 +138,8 @@ static void on_manifest(int st, const unsigned char *body, size_t len, void *ud)
       else { cJSON *rn = cJSON_GetObjectItemCaseSensitive(m, "releaseNotes"); r.nnotes = notes_from(cJSON_IsString(rn) ? rn->valuestring : NULL, r.notes); } }
   }
   cJSON_Delete(m);
-  done(ok ? &r : NULL, manual);
+  if (ok) done(&r, manual);
+  else { const char *gh = getenv("SB_UPD_GH"); net_get_timeout(gh ? gh : UPD_GH, 15000, on_releases, ud); } /* no manifest, or none for this package: the release list */
 }
 static int is_hex64(const char *s) { for (int i = 0; i < 64; i++) if (!((s[i] >= '0' && s[i] <= '9') || (s[i] >= 'a' && s[i] <= 'f'))) return 0; return !s[64]; }
 static void on_releases(int st, const unsigned char *body, size_t len, void *ud) {
@@ -158,15 +163,18 @@ static void on_releases(int st, const unsigned char *body, size_t len, void *ud)
     }
   }
   cJSON_Delete(list);
-  if (has) done(&best, manual); else { const char *mf = getenv("SB_UPD_MAN"); net_get_timeout(mf ? mf : UPD_MAN, 15000, on_manifest, ud); } /* (SB_UPD_MAN: development, another manifest) */
+  done(has ? &best : NULL, manual);
 }
 void update_check(int manual) {
   read_current();
   if (U.state == UPD_CHECKING || U.state == UPD_INSTALLING) return;
   const char *gh = getenv("SB_UPD_GH"); /* development: another release list (a local server) */
   if (!manual && !forceCheck && !gh && now_ms() - atof(store_get("updAt", "0")) < 6 * 3600000.0 && !*store_get("updVer", "")) { U.state = UPD_IDLE; return; }
-  U.state = UPD_CHECKING; U.msg[0] = 0; changed();
-  net_get_timeout(gh ? gh : UPD_GH, 15000, on_releases, (void *)(size_t)manual);
+  U.state = UPD_CHECKING; U.msg[0] = 0; reached = 0; changed();
+  const char *mf = getenv("SB_UPD_MAN"); /* development: another manifest; SB_UPD_GH alone tests the release list by itself */
+  if (mf || (!gh && !strcmp(PKG_KIND, "_arm.ipk"))) /* (the manifest names only the webOS IPK) */
+    net_get_timeout(mf ? mf : UPD_MAN, 15000, on_manifest, (void *)(size_t)manual);
+  else net_get_timeout(gh ? gh : UPD_GH, 15000, on_releases, (void *)(size_t)manual);
 }
 
 /* ---- install ---- */
