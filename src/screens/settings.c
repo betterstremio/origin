@@ -41,6 +41,7 @@ static Tween supK; static int supWant; /* the support row: which code shows (0 t
 #include "ui/img.h"
 #include "core/usb.h"
 #include "core/recs.h"
+#include "core/recs_core.h"
 #include "core/nuvio.h"
 #include "screens/profiles.h"
 #include "core/sync.h"
@@ -123,8 +124,13 @@ static int lang_opts(void) {
 /* For You: recommendations on Home (core/recs.c); every row is a store key recs.c and Home watch, so a change applies at once */
 static const Opt PREV[] = { { "imdb", "Short clips" }, { "trailer", "Trailer" }, { "off", "Off" }, { "title", "The title itself" } }; /* (The title itself last: flicking through the values does not stop on its warning) */
 static const Opt HLAY[] = { { "cinematic", "Cinematic" }, { "classic", "Classic" } };
-static const Opt RLANG[] = { { "", "Automatic" }, { "hi,en", "Hindi and English" }, { "en", "English" }, { "hi", "Hindi" }, { "ta,en", "Tamil and English" }, { "te,en", "Telugu and English" },
-  { "ml,en", "Malayalam and English" }, { "pa,hi,en", "Punjabi, Hindi and English" }, { "es,en", "Spanish and English" }, { "fr,en", "French and English" }, { "ko,en", "Korean and English" }, { "ja,en", "Japanese and English" } };
+/* Main / Second language: every language the picks engine can name; the second list leaves out the main one */
+static void lang_choices(Setting *s, const char *first, const char *skip) {
+  int k = 0; snprintf(s->dynS[k], 64, "%s", ""); s->dyn[k].v = s->dynS[k]; s->dyn[k].lb = first; k++;
+  for (int i = 0; i < recs_lang_count() && k < 40; i++) { const char *c = recs_lang_code(i); if (skip && skip[0] && !strcmp(c, skip)) continue;
+    snprintf(s->dynS[k], 64, "%s", c); s->dyn[k].v = s->dynS[k]; s->dyn[k].lb = recs_lang_name(c); k++; }
+  s->opts = s->dyn; s->nopts = k;
+}
 static int recs_opts(void) {
   int n = 0; char st[200]; recs_status(st, sizeof st);
   set_s(&recsS[n++], "recsOn", "Recommendations", st, OO, 2, "true"); recsS[0].raw = 1;
@@ -143,7 +149,8 @@ static int recs_opts(void) {
     snprintf(s->dynS[k], 64, "%s", ""); s->dyn[k].v = s->dynS[k]; s->dyn[k].lb = "Automatic"; k++;
     for (int i = 0; i < recs_region_count() && k < 40; i++) { snprintf(s->dynS[k], 64, "%s", recs_region_code(i)); s->dyn[k].v = s->dynS[k]; s->dyn[k].lb = recs_region_name(recs_region_code(i)); k++; }
     s->opts = s->dyn; s->nopts = k; }
-  set_s(&recsS[n++], "recsLangs", "Languages", "Automatic: your region's, plus what you watch a lot", RLANG, (int)(sizeof RLANG / sizeof RLANG[0]), "");
+  { Setting *s = &recsS[n++]; set_s(s, "recsLang1", "Main language", "Most of your picks lean toward it. Automatic: your region's languages and what you watch most", NULL, 0, ""); lang_choices(s, "Automatic", NULL); }
+  { Setting *s = &recsS[n++]; set_s(s, "recsLang2", "Second language", "Shown too, a little less often than the main one", NULL, 0, ""); lang_choices(s, "None", store_get("recsLang1", "")); }
   set_s(&recsS[n++], "bgPreview", "Preview on focus", "Short clips and trailers come from IMDb and work with any addons. The title itself needs a self-hosted AIOStreams or another provider with no rate limit", PREV, 4,
         strcmp(store_get("bgTrailer", "true"), "false") ? "imdb" : "off");
   set_s(&recsS[n++], "recsHideCinema", "Hide films still in cinemas", "Leaves out films out less than 30 days ago", OO, 2, "false");
@@ -306,6 +313,7 @@ int settings_apply_pref(const char *k, const char *v) {
   if (!strcmp(k, "uiLang")) { store_set("uiLang", v); i18n_init(plat_asset_dir(), v); text_set_rtl(i18n_rtl()); text_gc(); board_invalidate(); /* the whole app in the phone's language, at once */
     if (SCR == SCR_SET) { int c = S.cat, i = S.idx, z = S.zone; enter(NULL); S.cat = c; S.idx = i; S.zone = z == 2 ? 1 : z; show_cat(c, 0); S.enterAt = app_now() - 10; } return 1; }
   store_set(k, v); S.dirty = 1; if (!strcmp(k, "netLogs")) net_logs_set(v);
+  if (!strcmp(k, "recsLang1")) { if (v[0] && !strcmp(store_get("recsLang2", ""), v)) store_set("recsLang2", ""); recs_rows_again(); }
   if (!strcmp(k, "bingeWatch")) store_set("enableNextVideo", v);
   if (!strcmp(k, "bgTrailer")) play_layout();
   if (!strcmp(k, "accent")) accent_apply();
@@ -332,6 +340,7 @@ static void set_val(Setting *o, const char *v, int dir) {
   if (!strcmp(o->k, "uiLang")) { if (strcmp(v, store_get("uiLang", "auto"))) { store_set("uiLang", v); i18n_init(plat_asset_dir(), v); text_set_rtl(i18n_rtl()); text_gc(); board_invalidate();
       int c = S.cat, i = S.idx, z = S.zone; enter(NULL); S.cat = c; S.idx = i; S.zone = z == 2 ? 1 : z; show_cat(c, 0); S.enterAt = app_now() - 10; } return; } /* the same place, in the new language */
   store_set(o->k, v); S.dirty = 1; if (!strcmp(o->k, "netLogs")) net_logs_set(v);
+  if (!strcmp(o->k, "recsLang1")) { if (v[0] && !strcmp(store_get("recsLang2", ""), v)) store_set("recsLang2", ""); recs_rows_again(); } /* the second list never offers the main one */
   if (!strcmp(o->k, "bgTrailer")) play_layout(); /* its volume row comes and goes with it, right under it */
   if (!strncmp(o->k, "adOn_", 5)) { board_invalidate(); cats[5].n = addon_opts(); return; } /* an addon on/off here: rows, metadata and streams follow */
   if (!strcmp(o->k, "bingeWatch")) store_set("enableNextVideo", v);

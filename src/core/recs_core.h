@@ -45,6 +45,7 @@ extern const RecWeights RECS_W;       /* see recs_core.c */
 
 typedef struct {
   char langs[8][4]; int nlangs;       /* the languages picked in Settings ("hi", "en") */
+  float langPick[8];                  /* per langs[i]: 1 main, 0.6 second, 0 not chosen by the user (Top picks gives a chosen one a floor) */
   const int *exclude; int nexclude;   /* TMDB ids (kind folded in: recs_key) already watched or dismissed */
   long today;                         /* days since 1970, for "fresh" */
   int allowAdult;
@@ -162,15 +163,22 @@ double recs_taste_kind(const RecTaste *t, char kind);          /* share of the h
 double recs_title_score(const RecTaste *t, const RecCand *c, long today);
 
 /* ---- C. which languages get rows (PLAN section 5) ---- */
-typedef struct { char code[4]; int strong; } RecLang;  /* "hi"; strong = full set of row kinds, else the weak set */
-/* explicitCsv: Settings > For You > Languages ("hi,en") or ""/NULL. regionCsv: the region's languages ("hi,en").
-   audio: the default audio language as 2 letters ("en") or ""/NULL. Rules:
-     - explicit list non-empty: exactly those, in that order, all strong, at most 3
+typedef struct { char code[4]; int strong; float pick; } RecLang;  /* "hi"; strong = full set of row kinds, else the weak set;
+                                                                    pick = the user chose it: 1 main, 0.6 second, 0 not chosen */
+/* explicitCsv: Settings > For You > Main and Second language ("hi,en", main first) or ""/NULL. regionCsv: the region's
+   languages ("hi,en"). audio: the default audio language as 2 letters ("en") or ""/NULL. Rules:
+     - explicit list non-empty: exactly those, in that order, all strong, at most 3; pick 1 for the first, 0.6 after
      - else strong = languages with >= 25% of the history (largest share first), then the audio language;
        weak = the region's languages not already in; the order is strong..., then weak...; at most 3.
    Weak languages get fewer row kinds: no "may have missed", no decade rows, fewer genre rows.
    Returns the count (0..3) written to out. */
 int recs_langs_allowed(const char *explicitCsv, const char *regionCsv, const char *audio, const RecTaste *t, RecLang out[RECS_MAX_LANGS]);
+/* a second language chosen while the main one is Automatic: added (or raised) with pick 0.6 and strong; when the list is
+   full it takes the place of the last language nobody chose. Returns the new count. */
+int recs_langs_add_pick(RecLang out[RECS_MAX_LANGS], int n, const char *code, float pick);
+/* the languages the engine can name (the Settings lists): count, and code i ("hi") */
+int recs_lang_count(void);
+const char *recs_lang_code(int i);
 
 /* ---- D. candidate rows ---- */
 typedef enum {
@@ -238,6 +246,7 @@ typedef struct {
   const int *bill; int nbill;            /* recs_key of the billboard's titles: counted as shown once, first-six */
   const int *exclude; int nexclude;      /* recs_key of watched / dismissed titles: never shown */
   int allowAdult; int minMovieAge;       /* as RecPrefs */
+  const RecLang *langs; int nlangs;      /* optional: the languages with pick > 0 lift their cards and keep their rows spread down the page */
 } RecPageCtx;
 /* Chooses and orders the rows. Rules:
    - cards that are excluded, adult (unless allowed), unreleased or in cinemas too recently are dropped (not
@@ -249,7 +258,9 @@ typedef struct {
    - slots (row index): 0 Top picks (RF_PERSONAL); a Because-you-watched row at 1 and every 4th after
      (3, 7, 11 is taken by trending, 15, 19 ...); charts at 2 and 5; RF_TREND at 11; any other slot goes to
      the greedy choice: affinity - 0.25 x (same family among the last 4 rows) - 0.8 x (share of its best six
-     cards already in a first six) + 0.05 for series
+     cards already in a first six) + 0.05 for series; but when a chosen language (pick > 0) has no row among the
+     last 3 (main) or 5 (second) rows, the slot goes to its best unused row instead
+   - cards of a chosen language score + 0.15 x pick when a row is ranked (a lift, not a filter)
    - at most maxRows rows; fewer if the candidates run out.
    Returns the number of rows. Cost: O(rows x cards), no per-card allocation. */
 int recs_page_build(const RecPageCtx *cx, const RecRowIn *in, int nin, RecPage *out);

@@ -59,10 +59,25 @@ const char *recs_region(void) {
   if (d && strlen(d + 1) >= 2) { cc[0] = (char)(d[1] & ~0x20); cc[1] = (char)(d[2] & ~0x20); cc[2] = 0; } else snprintf(cc, sizeof cc, "US");
   return cc;
 }
-void recs_set_region(const char *cc) { store_set("recsRegion", cc ? cc : ""); store_set("recsLangs", ""); recs_refresh(); }
+void recs_set_region(const char *cc) { store_set("recsRegion", cc ? cc : ""); store_set("recsLang1", ""); store_set("recsLang2", ""); recs_refresh(); }
 static const char *region_langs(const char *cc) { for (int i = 0; i < NREG; i++) if (!strcmp(REGIONS[i].cc, cc)) return REGIONS[i].langs; return "en"; }
-const char *recs_langs(void) { const char *l = store_get("recsLangs", ""); return l[0] ? l : region_langs(recs_region()); }
-void recs_set_langs(const char *csv) { store_set("recsLangs", csv ? csv : ""); recs_refresh(); }
+/* the old single "Languages" choice ("hi,en") becomes Main hi + Second en, once */
+void recs_langs_migrate(void) {
+  const char *o = store_get("recsLangs", ""); if (!o[0]) return;
+  char a[4] = "", b[4] = ""; int k = 0; const char *p = o;
+  while (*p && k < 2) { while (*p == ',' || *p == ' ') p++; int n = 0; char t[4]; while (*p && *p != ',' && *p != ' ') { if (n < 3) t[n++] = *p; p++; } t[n] = 0;
+    if (n >= 2) snprintf(k++ ? b : a, 4, "%s", t); }
+  if (!store_get("recsLang1", "")[0] && a[0]) { store_set("recsLang1", a); store_set("recsLang2", b); }
+  store_remove("recsLangs");
+}
+/* "main,second" as chosen; main "" = Automatic (the second, if any, is added to the automatic ones) */
+static void chosen_langs(char *out, size_t cap) {
+  const char *a = store_get("recsLang1", ""), *b = store_get("recsLang2", "");
+  if (!a[0]) { snprintf(out, cap, "%s", ""); return; }
+  snprintf(out, cap, "%.3s%s%.3s", a, b[0] && strcmp(a, b) ? "," : "", b[0] && strcmp(a, b) ? b : "");
+}
+const char *recs_langs(void) { static char l[16]; chosen_langs(l, sizeof l); return l[0] ? l : region_langs(recs_region()); }
+void recs_set_langs(const char *mainCode, const char *secondCode) { store_set("recsLang1", mainCode ? mainCode : ""); store_set("recsLang2", secondCode ? secondCode : ""); recs_refresh(); }
 /* the default audio language as 2 letters; "" when the setting is off, unset or not in the table */
 static void audio_code(char out[4]) {
   out[0] = 0; if (!strcmp(store_get("enableDefaultAudioTrack", "true"), "false")) return;
@@ -73,7 +88,7 @@ static unsigned fnv(const char *s) { unsigned h = 2166136261u; while (*s) h = (h
 /* what a page depends on: when it changes the page is made again (and a saved page for another one is not used) */
 static unsigned settings_sig(char *buf, size_t cap) {
   char au[4]; audio_code(au);
-  snprintf(buf, cap, "%s|%s|%s|%s|%d|%d|%s", recs_region(), store_get("recsLangs", ""), au, store_get("enableDefaultAudioTrack", "true"), recs_hide_cinema(), recs_on(), i18n_lang());
+  snprintf(buf, cap, "%s|%s,%s|%s|%s|%d|%d|%s", recs_region(), store_get("recsLang1", ""), store_get("recsLang2", ""), au, store_get("enableDefaultAudioTrack", "true"), recs_hide_cinema(), recs_on(), i18n_lang());
   if (acct_is_nuvio() && nv_profile_current()) { size_t l = strlen(buf); char s[160]; nv_scope(nv_profile_current(), s, sizeof s); snprintf(buf + l, cap - l, "|%s", s); } /* each profile its own page (a Stremio account: as it always was) */
   return fnv(buf);
 }
@@ -313,7 +328,7 @@ void recs_dismiss(const Item *it) {
 static unsigned loadWant; /* the saved page asked for last (another profile since: an older answer is dropped) */
 static int wbusy, wquiet, wlastOk, loadState;   /* set by W, read by M with atomics (loadState: 0 asked, 1 nothing usable, 2 page in) */
 typedef struct { char imdb[16]; char tk; double w, age; } GSeed;
-typedef struct { unsigned gen, sig; long today; char region[8], explicitL[48], regionL[48], audio[4]; int hideCinema, lowMem, nseeds, ndis, *dis; GSeed seeds[RECS_MAX_SEEDS]; } RunCfg;
+typedef struct { unsigned gen, sig; long today; char region[8], explicitL[48], regionL[48], audio[4], secondL[4]; int hideCinema, lowMem, nseeds, ndis, *dis; GSeed seeds[RECS_MAX_SEEDS]; } RunCfg;
 static struct { int requests, cached, fails, netfail; } st;
 typedef struct { const char *path, *key; long maxAge; } Req;
 typedef void (*Got)(int i, int status, const unsigned char *b, size_t n, void *ud);
@@ -434,6 +449,7 @@ static int run(RunCfg *c) {
   /* 3. taste, languages, candidate rows */
   recs_taste_build(D, nx, taste);
   nl = recs_langs_allowed(c->explicitL, c->regionL, c->audio, taste, L);
+  if (c->secondL[0]) nl = recs_langs_add_pick(L, nl, c->secondL, 0.6f);   /* main on Automatic, a second one chosen */
   { RecRowCtx cx = { .region = c->region, .today = c->today, .langs = L, .nlangs = nl, .taste = taste, .seeds = D, .nseeds = nx, .lowMem = c->lowMem, .tr = tr_cb };
     i18n_lock(); nd = recs_rows_build(&cx, rs.defs, RECS_PAGE_IN); i18n_unlock(); }
   /* 4. every def with a path, 3 at a time (M), the disk cache first */
@@ -445,7 +461,7 @@ static int run(RunCfg *c) {
   for (int d = 0; d < nd; d++) if (rs.defs[d].family == RF_BYW && rs.defs[d].seed >= 0 && rs.defs[d].seed < nx) { D[rs.defs[d].seed].own = rs.rc[d]; D[rs.defs[d].seed].nown = rs.rn[d]; }
   for (int k = 0; k < nx; k++) ex[nex++] = recs_key(D[k].tmdb, D[k].kind);
   for (int k = 0; k < c->ndis; k++) ex[nex++] = c->dis[k];
-  memset(&P, 0, sizeof P); for (int l = 0; l < nl; l++) memcpy(P.langs[P.nlangs++], L[l].code, 4);
+  memset(&P, 0, sizeof P); for (int l = 0; l < nl; l++) { P.langPick[P.nlangs] = L[l].pick; memcpy(P.langs[P.nlangs++], L[l].code, 4); }
   P.exclude = ex; P.nexclude = nex; P.today = c->today; P.minMovieAge = c->hideCinema ? 30 : 0;
   np = nx ? recs_top_picks(D, nx, taste, &P, 28, picks, 60) : 0;
   for (int d = 0; d < nd; d++) { RecRowIn *r = &in[d]; r->def = &rs.defs[d];
@@ -455,7 +471,7 @@ static int run(RunCfg *c) {
     else { r->cards = rs.rc[d]; r->n = rs.rn[d] < RECS_ROW_CARDS ? rs.rn[d] : RECS_ROW_CARDS; } }
   /* 6. the page: rows chosen and ordered by the builder, then the working copy with the ids we already have */
   { int bill[BILL]; nb = np < BILL ? np : BILL; for (int i = 0; i < nb; i++) bill[i] = recs_key(picks[i].tmdb, picks[i].kind);
-    RecPageCtx pc = { .taste = taste, .today = c->today, .maxRows = c->lowMem ? 20 : 36, .bill = bill, .nbill = nb, .exclude = ex, .nexclude = nex, .allowAdult = 0, .minMovieAge = P.minMovieAge };
+    RecPageCtx pc = { .taste = taste, .today = c->today, .maxRows = c->lowMem ? 20 : 36, .bill = bill, .nbill = nb, .exclude = ex, .nexclude = nex, .allowAdult = 0, .minMovieAge = P.minMovieAge, .langs = L, .nlangs = nl };
     recs_page_build(&pc, in, nd, pgb); }
   { PB *b = rs.pb; for (int i = 0; i < nb; i++) b->c[b->nc++].c = &picks[i]; b->nbill = nb;
     for (int r = 0; r < pgb->n && b->nr < RECS_PAGE_MAX; r++) { const RecPageRow *pr = &pgb->rows[r]; BRow *br = &b->r[b->nr++]; br->def = in[pr->in].def; br->first = b->nc; br->n = pr->n;
@@ -553,7 +569,7 @@ static void run_post(void) {
   qsort(gAll, (size_t)gN, sizeof gAll[0], cmp_seed);
   RunCfg *c = calloc(1, sizeof *c); if (!c) return;
   c->gen = gen_now(); c->sig = curSig; c->today = today_days(); snprintf(c->region, sizeof c->region, "%.7s", recs_region());
-  snprintf(c->explicitL, sizeof c->explicitL, "%.47s", store_get("recsLangs", "")); snprintf(c->regionL, sizeof c->regionL, "%.47s", region_langs(c->region));
+  chosen_langs(c->explicitL, sizeof c->explicitL); if (!c->explicitL[0]) snprintf(c->secondL, sizeof c->secondL, "%.3s", store_get("recsLang2", "")); snprintf(c->regionL, sizeof c->regionL, "%.47s", region_langs(c->region));
   audio_code(c->audio); c->hideCinema = recs_hide_cinema(); { int mb = plat_mem_total_mb(); c->lowMem = mb > 0 && mb < 1200; }
   c->nseeds = gN < RECS_MAX_SEEDS ? gN : RECS_MAX_SEEDS; memcpy(c->seeds, gAll, sizeof(GSeed) * (size_t)c->nseeds);
   const cJSON *dm = store_node("recsDismissed"), *d; int n = cJSON_IsArray(dm) ? cJSON_GetArraySize(dm) : 0, skip = n > 600 ? n - 600 : 0;
@@ -620,6 +636,7 @@ void recs_account_changed(void) {
   if (workerOn) msg_post_type(MG_DROP, NULL);
 }
 void recs_tick(void) {
+  { static int mig; if (!mig) { mig = 1; recs_langs_migrate(); } }
   { if (store_serial() != sigSer) { sigSer = store_serial(); char s2[200]; unsigned h = settings_sig(s2, sizeof s2);
       if (sigNow[0] && strcmp(s2, sigNow)) recs_refresh(); snprintf(sigNow, sizeof sigNow, "%s", s2); curSig = h; } } /* a setting changed (Settings writes the store): ask again */
   double now = app_now();

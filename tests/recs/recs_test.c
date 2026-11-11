@@ -643,11 +643,60 @@ static int home_real(const char *dir) {
   free(g_pool); return 0;
 }
 
+/* ---- Main and Second language (Settings > For You) ---- */
+static void t_picks(void) {
+  RecSeedX q[4]; RecTaste t; for (int i = 0; i < 4; i++) mkseed(&q[i], 1 + i, 'm', "E", i == 3 ? "ta" : "en", 18, 35, 1.0, 5);   /* 75% English, 25% Tamil... */
+  q[3].w = 0.05; recs_taste_build(q, 4, &t);                                                                                     /* ...made ~2% Tamil */
+  RecLang L[RECS_MAX_LANGS]; int n = recs_langs_allowed("ta,en", "en", "en", &t, L);
+  CHECK(n == 2 && !strcmp(L[0].code, "ta") && L[0].pick == 1.0f && !strcmp(L[1].code, "en") && L[1].pick > 0.59f && L[1].pick < 0.61f, "picks: main first with 1, second with 0.6");
+  n = recs_langs_allowed("", "hi,en,ur", "en", &t, L); int any = 0; for (int i = 0; i < n; i++) any += L[i].pick > 0;
+  CHECK(any == 0, "picks: Automatic chooses nothing (no lift)");
+  n = recs_langs_add_pick(L, n, "ko", 0.6f); int ko = -1; for (int i = 0; i < n; i++) if (!strcmp(L[i].code, "ko")) ko = i;
+  CHECK(n == 3 && ko >= 0 && L[ko].strong && L[ko].pick > 0.5f, "picks: a second language on top of Automatic takes the last unchosen place (%d)", n);
+  /* rows: Tamil chosen as main with almost no Tamil history ranks like a main language */
+  { RecLang P[2] = { { "ta", 1, 1.0f }, { "en", 1, 0.6f } }; RecRowCtx cx = { .region = "IN", .today = recs_days("2026-11-09"), .langs = P, .nlangs = 2, .taste = &t };
+    RecRowDef *d = malloc(sizeof(RecRowDef) * 160); int k = recs_rows_build(&cx, d, 160); double taMax = 0, enDec = 0; int ta = 0;
+    for (int i = 0; i < k; i++) { if (!strcmp(d[i].lang, "ta") && d[i].family == RF_LANG_GENRE) { ta++; if (d[i].affinity > taMax) taMax = d[i].affinity; }
+      if (!strcmp(d[i].lang, "en") && d[i].family == RF_DECADE) enDec++; }
+    CHECK(ta >= 6 && taMax >= 0.9, "picks: main-language genre rows are there, the best-fitting one near the top (%d rows, best %.2f)", ta, taMax);
+    double taNew = 0; for (int i = 0; i < k; i++) if (!strcmp(d[i].lang, "ta") && d[i].family == RF_NEW) taNew = d[i].affinity;
+    CHECK(taNew >= 0.8, "picks: New Tamil films ranks near the top (%.2f)", taNew);
+    CHECK(enDec == 0, "picks: the second language has no decade rows");
+    RecLang A[2] = { { "ta", 1, 0 }, { "en", 1, 0 } }; cx.langs = A; int k2 = recs_rows_build(&cx, d, 160); double old = 0;
+    for (int i = 0; i < k2; i++) if (!strcmp(d[i].lang, "ta") && d[i].family == RF_NEW) old = d[i].affinity;
+    CHECK(old < taNew - 0.3, "picks: without the choice the same row scores lower (%.2f vs %.2f)", old, taNew);
+    free(d); }
+  /* page: low-affinity Tamil rows get spread down the page when Tamil is the main language */
+  { page_fixture(0); for (int r = 9; r < 40; r++) { snprintf(g_defs[r].lang, 4, "%s", r % 6 == 0 ? "ta" : "en"); if (r % 6 == 0) g_defs[r].affinity = 0.1f; }
+    int bill[1] = { 0 }; RecPageCtx cx = { .taste = &t, .today = recs_days("2026-11-09"), .maxRows = 36, .bill = bill, .nbill = 0 };
+    static RecPage pg; int k = recs_page_build(&cx, g_in, NR, &pg), firstTa = -1;
+    for (int i = 0; i < k && firstTa < 0; i++) if (!strcmp(g_in[pg.rows[i].in].def->lang, "ta")) firstTa = i;
+    CHECK(firstTa < 0 || firstTa > 12, "picks: without a choice the Tamil rows sink (first at %d)", firstTa);
+    RecPage base = pg; RecLang Z[1] = { { "ta", 1, 0 } }; cx.langs = Z; cx.nlangs = 1; k = recs_page_build(&cx, g_in, NR, &pg);
+    CHECK(k == base.n && !memcmp(pg.rows, base.rows, sizeof pg.rows[0] * (size_t)k), "picks: a language nobody chose changes nothing");
+    RecLang M[1] = { { "ta", 1, 1.0f } }; cx.langs = M; k = recs_page_build(&cx, g_in, NR, &pg); firstTa = -1; int gap = 0, last = -1, nta = 0;
+    for (int i = 0; i < k; i++) if (!strcmp(g_in[pg.rows[i].in].def->lang, "ta")) { if (firstTa < 0) firstTa = i; if (last >= 0 && i - last > gap) gap = i - last; last = i; nta++; }
+    CHECK(firstTa >= 0 && firstTa <= 6, "picks: a main-language row within the first 6 rows (%d)", firstTa);
+    CHECK(nta >= 5 && gap <= 5, "picks: main-language rows spread down the page (%d rows, widest gap %d)", nta, gap); }
+  /* Top picks: a chosen language gets places early even with little history */
+  { static RecSeedX s[3]; static RecCand rc[3][20]; RecCand out[60];
+    for (int i = 0; i < 3; i++) { mkseed(&s[i], 10 + i, 'm', "S", "en", 18, 0, 1.0, 5);
+      for (int j = 0; j < 20; j++) mk(&rc[i][j], 1000 + i * 40 + j, 'm', "c", j >= 14 ? "ta" : "en", 18, 0, 7, 300, "2025-05-05");
+      s[i].recs = rc[i]; s[i].nrecs = 20; }
+    RecTaste te; recs_taste_build(s, 3, &te);
+    RecPrefs p = { .today = recs_days("2026-11-09") }; int m = recs_top_picks(s, 3, &te, &p, 28, out, 60), ta0 = 0, ta1 = 0;
+    for (int i = 0; i < 10 && i < m; i++) ta0 += !strcmp(out[i].lang, "ta");
+    snprintf(p.langs[0], 4, "ta"); p.langPick[0] = 1; p.nlangs = 1; m = recs_top_picks(s, 3, &te, &p, 28, out, 60);
+    for (int i = 0; i < 10 && i < m; i++) ta1 += !strcmp(out[i].lang, "ta");
+    CHECK(ta1 >= 3 && ta1 > ta0, "picks: Tamil in the first 10 Top picks (%d, was %d)", ta1, ta0); }
+}
+
 int main(int argc, char **argv) {
   if (argc > 2 && !strcmp(argv[1], "--real")) return real(argv[2]);
   if (argc > 2 && !strcmp(argv[1], "--home")) return home_real(argv[2]);
   synthetic();
   home_synthetic();
+  t_picks();
   printf("\n%s (%d failed)\n", fails ? "FAILED" : "all passed", fails);
   return fails ? 1 : 0;
 }

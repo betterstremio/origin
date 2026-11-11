@@ -309,11 +309,19 @@ static int csv_tok(const char **p, char out[4]) {         /* next 2-3 letter cod
 static int langs_add(RecLang *out, int n, const char *code, int strong) {
   for (int i = 0; i < n; i++) if (!strcmp(out[i].code, code)) { if (strong) out[i].strong = 1; return n; }
   if (n >= RECS_MAX_LANGS) return n;
-  snprintf(out[n].code, 4, "%s", code); out[n].strong = strong; return n + 1;
+  snprintf(out[n].code, 4, "%s", code); out[n].strong = strong; out[n].pick = 0; return n + 1;
+}
+int recs_langs_add_pick(RecLang out[RECS_MAX_LANGS], int n, const char *code, float pick) {
+  char c[4]; const char *p = code; if (!code || !csv_tok(&p, c)) return n;
+  for (int i = 0; i < n; i++) if (!strcmp(out[i].code, c)) { out[i].strong = 1; if (out[i].pick < pick) out[i].pick = pick; return n; }
+  int at = n < RECS_MAX_LANGS ? n++ : -1;
+  if (at < 0) for (int i = n - 1; i >= 0 && at < 0; i--) if (out[i].pick <= 0) at = i;   /* full: the last one nobody chose */
+  if (at < 0) return n;
+  snprintf(out[at].code, 4, "%s", c); out[at].strong = 1; out[at].pick = pick; return n;
 }
 int recs_langs_allowed(const char *ex, const char *region, const char *audio, const RecTaste *t, RecLang out[RECS_MAX_LANGS]) {
   int n = 0; char c[4];
-  if (ex) { const char *p = ex; while (csv_tok(&p, c)) n = langs_add(out, n, c, 1); if (n) return n; }
+  if (ex) { const char *p = ex; while (csv_tok(&p, c)) { int k = n; n = langs_add(out, n, c, 1); if (n > k) out[k].pick = k == 0 ? 1.0f : 0.6f; } if (n) return n; }
   if (t && t->wsum > 0) {                                  /* history: strong from 25%, largest first */
     int used[16] = { 0 };
     for (;;) {
@@ -334,6 +342,8 @@ static const struct { const char *code, *name; } LANG_NAMES[] = {
   { "fr", "French" }, { "de", "German" }, { "it", "Italian" }, { "pt", "Portuguese" }, { "ru", "Russian" }, { "tr", "Turkish" }, { "ar", "Arabic" },
   { "nl", "Dutch" }, { "pl", "Polish" }, { "th", "Thai" }, { "id", "Indonesian" }, { "sv", "Swedish" }, { "da", "Danish" }, { "no", "Norwegian" },
   { "fi", "Finnish" }, { "he", "Hebrew" }, { "fa", "Persian" }, { "cs", "Czech" }, { "el", "Greek" }, { "hu", "Hungarian" }, { "vi", "Vietnamese" } };
+int recs_lang_count(void) { return (int)(sizeof LANG_NAMES / sizeof LANG_NAMES[0]); }
+const char *recs_lang_code(int i) { return i >= 0 && i < recs_lang_count() ? LANG_NAMES[i].code : ""; }
 const char *recs_lang_name(const char *code) {
   if (code) for (size_t i = 0; i < sizeof LANG_NAMES / sizeof LANG_NAMES[0]; i++) if (!strcmp(LANG_NAMES[i].code, code)) return LANG_NAMES[i].name;
   return NULL;
@@ -534,7 +544,9 @@ int recs_rows_build(const RecRowCtx *cx, RecRowDef *out, int max) {
     const RecLang *L = &cx->langs[li]; const char *ln = recs_lang_name(L->code); if (!ln) continue;
     char lname[48]; snprintf(lname, sizeof lname, "%s", trs(b, ln));
     int en = !strcmp(L->code, "en"); double sh = recs_taste_lang(t, L->code);
-    int ngen = L->strong ? (cx->lowMem ? 3 : 4) : (cx->lowMem ? 1 : 2);
+    if (sh < L->pick) sh = L->pick;                                   /* a chosen language ranks as if it were most of the history */
+    int second = L->pick > 0 && L->pick < 1;                          /* the second language: a little less of everything */
+    int ngen = L->strong ? (second ? (cx->lowMem ? 2 : 3) : (cx->lowMem ? 3 : 4)) : (cx->lowMem ? 1 : 2);
     for (int kk = 0; kk < 2; kk++) {
       char kind = kk ? 't' : 'm'; int usedTv[NLG], nu = 0, done = 0;
       for (int q = 0; q < ng && done < ngen; q++) {
@@ -563,7 +575,7 @@ int recs_rows_build(const RecRowCtx *cx, RecRowDef *out, int max) {
       fmt_title(b, r->title, sizeof r->title, "New %s series", lname);
       snprintf(r->path, sizeof r->path, "/discover/tv?with_original_language=%s%s&sort_by=popularity.desc&first_air_date.gte=%s&first_air_date.lte=%s", L->code, excl(b), ago200, b->d0);
       snprintf(r->key, sizeof r->key, "nw|%s|t|%d", L->code, b->likesAnim); }
-    if (L->strong && !cx->lowMem) for (int dec = 2000; dec >= 1990; dec -= 10) {
+    if (L->strong && !second && !cx->lowMem) for (int dec = 2000; dec >= 1990; dec -= 10) {
       if (!(r = rd_new(b, RF_DECADE, 'm', 0, L->code, sh * 0.5 + 0.1 - (dec == 1990 ? 0.05 : 0), RECS_AGE_LIST))) break;
       fmt_title(b, r->title, sizeof r->title, dec == 2000 ? "%s films from the 2000s" : "%s films from the 1990s", lname);
       snprintf(r->path, sizeof r->path, "/discover/movie?with_original_language=%s%s&sort_by=popularity.desc&vote_count.gte=%d&primary_release_date.gte=%d-01-01&primary_release_date.lte=%d-12-31", L->code, excl(b), en ? 300 : 20, dec, dec + 9);
@@ -664,16 +676,20 @@ int recs_top_picks(const RecSeedX *s, int ns, const RecTaste *t, const RecPrefs 
   int m = recs_rank(rs, n, p, pool, pm);
   int w = window < m ? window : m; if (w > max) w = max; if (w < 0) w = 0;
   /* every language with under 5% of the history shares one "other" bucket (10% of the places) */
-  unsigned char used[RECS_MAX_CAND] = { 0 }; char lc[24][4]; double lshare[24]; int lcn[24] = { 0 }, nl = 0, o = 0;
+  unsigned char used[RECS_MAX_CAND] = { 0 }; char lc[24][4]; double lshare[24], lfloor[24] = { 0 }; int lcn[24] = { 0 }, nl = 0, o = 0;
   signed char bk[RECS_MAX_CAND];
   for (int i = 0; i < m; i++) {
-    double sh = recs_taste_lang(t, pool[i].lang); const char *code = sh < 0.05 ? "" : pool[i].lang; int k = 0;
+    double sh = recs_taste_lang(t, pool[i].lang), fl = 0;
+    for (int l = 0; l < p->nlangs; l++) if (p->langPick[l] > 0 && !strcmp(p->langs[l], pool[i].lang)) { fl = p->langPick[l] >= 1 ? 0.35 : 0.2; if (sh < fl) sh = fl; break; }   /* a chosen language: a floor */
+    const char *code = sh < 0.05 ? "" : pool[i].lang; int k = 0;
     while (k < nl && strcmp(lc[k], code)) k++;
-    if (k == nl) { if (nl < 24) { snprintf(lc[nl], 4, "%s", code); lshare[nl] = sh < 0.05 ? 0.1 : sh; nl++; } else k = nl - 1; }
+    if (k == nl) { if (nl < 24) { snprintf(lc[nl], 4, "%s", code); lshare[nl] = sh < 0.05 ? 0.1 : sh; lfloor[nl] = fl; nl++; } else k = nl - 1; }
     bk[i] = (signed char)k;
   }
   for (int pos = 0; pos < w; pos++) {
     int pick = -1;
+    for (int b = 0; b < nl && pick < 0; b++) if (lfloor[b] > 0 && lcn[b] < (int)(lfloor[b] * (pos + 1)))   /* a chosen language behind its floor: its best title now */
+      for (int i = 0; i < m && pick < 0; i++) if (!used[i] && bk[i] == b) pick = i;
     for (int i = 0; i < m && pick < 0; i++) if (!used[i] && lcn[(int)bk[i]] < (int)(lshare[(int)bk[i]] * (pos + 1)) + 1) pick = i;   /* quota grows with the position, so every prefix is balanced */
     if (pick < 0) for (int i = 0; i < m; i++) if (!used[i]) { pick = i; break; }
     if (pick < 0) break;
@@ -714,6 +730,7 @@ static void pg_prepare(PgScratch *S, const RecPageCtx *cx, const RecRowIn *r, in
     long d = days_fast(c->date);
     if (!rankRow) { if (!d || (cx->today && d > cx->today)) continue; if (c->kind == 'm' && cx->minMovieAge > 0 && cx->today && cx->today - d < cx->minMovieAge) continue; }
     double s = keep ? 0 : score_d(cx->taste, c, cx->today, d);
+    if (!keep) for (int l = 0; l < cx->nlangs; l++) if (cx->langs[l].pick > 0 && !strcmp(cx->langs[l].code, c->lang)) { s += 0.15 * cx->langs[l].pick; break; }
     int at = m++; while (at > 0 && sc[at - 1] < s) { sc[at] = sc[at - 1]; S->rank[i][at] = S->rank[i][at - 1]; at--; }   /* stable insertion: ties keep input order */
     sc[at] = s; S->rank[i][at] = (unsigned char)j;
   }
@@ -767,7 +784,18 @@ int recs_page_build(const RecPageCtx *cx, const RecRowIn *in, int nin, RecPage *
     int slot = (at == 2 || at == 5 || at == 11) && pc < np;
     if (slot) { while (pc < np && !placed) placed = pg_place(S, in, pinned[pc++], pg); if (placed) continue; }
     if ((at == 1 || at % 4 == 3) && bc < nb) { while (bc < nb && !placed) placed = pg_place(S, in, byw[bc++], pg); if (placed) continue; }
-    if (npool) {
+    if (npool) {   /* a chosen language with no row lately takes this slot (main within 3 rows, second within 5) */
+      int forced = -1;
+      for (int l = 0; l < cx->nlangs && forced < 0; l++) {
+        const RecLang *L = &cx->langs[l]; if (L->pick <= 0) continue;
+        int win = L->pick >= 1 ? 3 : 5, seen = 0;
+        for (int k = 0; k < win && k < pg->n && !seen; k++) seen = !strcmp(in[pg->rows[pg->n - 1 - k].in].def->lang, L->code);
+        if (seen || pg->n < 1) continue;
+        double bs = -1e9;
+        for (int q = 0; q < npool; q++) { int i = pool[q]; if (S->used[i] || strcmp(in[i].def->lang, L->code)) continue;
+          if (in[i].def->affinity > bs) { bs = in[i].def->affinity; forced = i; } }
+      }
+      if (forced >= 0 && pg_place(S, in, forced, pg)) continue;
       int fam[4] = { -1, -1, -1, -1 }; for (int k = 0; k < 4 && k < pg->n; k++) fam[k] = in[pg->rows[pg->n - 1 - k].in].def->family;
       int best = -1; double bs = -1e9;
       for (int q = 0; q < npool; q++) {

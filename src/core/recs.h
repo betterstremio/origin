@@ -33,8 +33,9 @@ int  recs_hide_cinema(void);             /* "Hide films still in cinemas": films
 void recs_set_hide_cinema(int on);
 const char *recs_region(void);            /* "IN": the TV's country unless chosen */
 void recs_set_region(const char *cc);
-const char *recs_langs(void);             /* "hi,en": the region's usual languages unless chosen */
-void recs_set_langs(const char *csv);
+const char *recs_langs(void);             /* "hi,en": Main and Second language as chosen, else the region's usual ones */
+void recs_set_langs(const char *mainCode, const char *secondCode);   /* "" main = Automatic, "" second = None */
+void recs_langs_migrate(void);            /* the old "Languages" choice into Main + Second (once; recs_tick calls it) */
 const char *recs_region_name(const char *cc);   /* "India" */
 void recs_status(char *out, size_t cap);  /* Settings' line: on/off, why not, how many picks, how fresh */
 int  recs_region_count(void);
