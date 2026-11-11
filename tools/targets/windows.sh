@@ -23,7 +23,7 @@ link_app() {
     -lws2_32 -liphlpapi -lcrypt32 -lbcrypt -lsetupapi -lwinmm -limm32 -lversion -loleaut32 -lole32 -lgdi32 -luser32 -lshell32 -ladvapi32 -lpsapi -luuid -ldwmapi \
     -static -static-libgcc -static-libstdc++ -mwindows -Wl,--gc-sections
   $X-strip --strip-unneeded -o "$O/Origin.exe" "$O/Origin.dbg.exe"
-  cp -u "$D/bin/libEGL.dll" "$D/bin/libGLESv2.dll" "$D/bin/libmpv-2.dll" "$O/"
+  cp -u "$D/bin/libEGL.dll" "$D/bin/libGLESv2.dll" "$D/bin/libmpv-2.dll" "$O/"; mkdir -p "$O/fallback"; cp -u "$D/bin/fallback/vulkan-1.dll" "$O/fallback/"
   if [ -f "$WB/engine/libsbengine.dll" ]; then cp -u "$WB/engine/libsbengine.dll" "$O/"; else echo "warning: no P2P engine (tools/build-engine.sh windows)"; fi
   ls -l "$O" | awk 'NR>1 {printf "  %-22s %6.1f MB\n", $NF, $5/1048576}'
 }

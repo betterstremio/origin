@@ -22,4 +22,6 @@ The Windows build adds (tools/windows/build-deps.sh fetches and pins them; they 
 - libmpv-2.dll: mpv and FFmpeg, unmodified, as built by github.com/shinchiro/mpv-winbuild-cmake (release 20261110, mpv
   git a61f6c3abd); GPL-3.0 as built (the text in torrent-engine-GPL-3.0.txt). Sources: mpv-SOURCE.txt.
 - libsbengine.dll: the torrent engine above, built for Windows with tools/engine/windows.patch as well.
+- fallback/vulkan-1.dll: the Khronos Vulkan loader 1.4.304 (github.com/KhronosGroup/Vulkan-Loader), unmodified,
+  Apache-2.0 (the same text as mbedtls-Apache-2.0.txt). Loaded only on a PC without a Vulkan loader of its own.
 The app itself is GPL-3.0.

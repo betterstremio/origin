@@ -75,6 +75,11 @@ static void *loader(void *a) {
   wchar_t p[MAX_PATH]; DWORD n = GetModuleFileNameW(NULL, p, MAX_PATH); wchar_t *s = n ? wcsrchr(p, L'\\') : NULL;
   if (s) wcscpy(s + 1, L"libmpv-2.dll");
   HMODULE dll = LoadLibraryExW(s ? p : L"libmpv-2.dll", NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
+  if (!dll && GetLastError() == ERROR_MOD_NOT_FOUND && s) { /* a library libmpv needs is not on this PC: the Vulkan loader, which GPU drivers
+      install (not Windows). Ours, from fallback\, only then: a PC with its own keeps that one */
+    wchar_t fb[MAX_PATH]; wcscpy(fb, p); wchar_t *e = wcsrchr(fb, L'\\'); if (e) { wcscpy(e + 1, L"fallback"); SetDllDirectoryW(fb); }
+    dll = LoadLibraryExW(p, NULL, LOAD_WITH_ALTERED_SEARCH_PATH); SetDllDirectoryW(NULL);
+    fprintf(stderr, "[video] libmpv needed a library this PC lacks: %s with the bundled Vulkan loader\n", dll ? "loaded" : "still not loaded"); }
   if (!dll) { fprintf(stderr, "[video] libmpv-2.dll missing beside the exe (error %lu)\n", GetLastError()); InterlockedExchange(&loaderState, -1); return NULL; }
 #define L(f, name) if (!(*(FARPROC *)&M.f = GetProcAddress(dll, name))) { fprintf(stderr, "[video] libmpv lacks %s\n", name); InterlockedExchange(&loaderState, -1); return NULL; }
   L(create, "mpv_create") L(initialize, "mpv_initialize") L(set_option_string, "mpv_set_option_string") L(set_option, "mpv_set_option")
@@ -101,6 +106,7 @@ static void *loader(void *a) {
   opt(h, "stream-lavf-o", "reconnect=1,reconnect_streamed=1,reconnect_on_network_error=1,reconnect_delay_max=7");
   opt(h, "hr-seek", "no"); /* seeks land on a keyframe: at once, not after decoding up to the exact second */
   opt(h, "audio-client-name", "Origin");
+  if (getenv("SB_WARP")) { opt(h, "d3d11-warp", "yes"); opt(h, "hwdec", "no"); } /* development: no GPU (plat_win.c) */
   if (getenv("SB_MUTE")) opt(h, "mute", "yes"); /* tests: no sound through the speakers */
   if (getenv("SB_MPV_OPTS")) { char b[1000]; snprintf(b, sizeof b, "%s", getenv("SB_MPV_OPTS")); /* development: "key=value;key=value" */
     for (char *t = strtok(b, ";"); t; t = strtok(NULL, ";")) { char *eq = strchr(t, '='); if (eq) { *eq = 0; opt(h, t, eq + 1); } } }
@@ -158,7 +164,11 @@ static void start_load(const char *u, double at) {
   apply_fold_down(); { pthread_t th; if (!pthread_create(&th, NULL, ask_device, NULL)) pthread_detach(th); } /* (a changed device: the next video, or this one in video_pump) */
   set_str("pause", "no"); V.on = 0; V.cur = V.to = 100; set_dbl("volume", 100);
   R.crop = 0; set_str("video-crop", "0x0+0+0"); lastCrop[0] = 0; /* (mpv keeps a crop across files: the last video's would not fit this one) */
-  const char *a[] = { "loadfile", u, "replace", "-1", o, NULL }; S.pendingStarts++; cmd(R_LOAD, a);
+  /* http and https through FFmpeg's own reader: this libmpv's built-in one stops for good when a connection drops
+     (a debrid link cutting out: "buffering" for ever), FFmpeg's reconnects at the same byte (stream-lavf-o above) */
+  char via[4300]; const char *lu = u;
+  if ((!strncmp(u, "http://", 7) || !strncmp(u, "https://", 8)) && !getenv("SB_CURLHTTP")) { /* (SB_CURLHTTP: the old reader, for comparisons) */ snprintf(via, sizeof via, "ffmpeg://%s", u); lu = via; }
+  const char *a[] = { "loadfile", lu, "replace", "-1", o, NULL }; S.pendingStarts++; cmd(R_LOAD, a);
 }
 void video_load(const char *u) { timed.on = 0; start_load(u, 0); }
 int video_load_at(const char *u, double sec) { timed.on = 0; start_load(u, sec); return 1; }

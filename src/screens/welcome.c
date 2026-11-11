@@ -1023,7 +1023,30 @@ static Screen card = { NULL, NULL, key, tick, draw, NULL, NULL, NULL };
 int welcome_is_open(void) { return W.open; }
 int welcome_covers(void) { return W.open && !W.closing && !W.in.on && app_overlay == &card; }
 
-/* whatsnew.json: { "version", "items": [ { "title", "text", "icon" } or "a line", ... ], "support": { "title", "message", "url" } } */
+/* whatsnew.json: { "version", "items": [ { "title", "text", "icon" } or "a line", ... ], "support": { "title", "message", "url" } }
+   An item may carry "needs": "cast" | "usb" | "dts" | "tv" (or a list of them: left out where the package lacks one) and
+   "title_<package>" / "text_<package>" (its words there; package: webos, android, windows) */
+static const char *wn_pkg(void) {
+#if SB_WINDOWED
+  return "windows";
+#elif defined(__ANDROID__)
+  return "android";
+#else
+  return "webos";
+#endif
+}
+static int wn_feature(const char *f) {
+  if (!strcmp(f, "cast")) return SB_HAS_CAST; if (!strcmp(f, "usb")) return SB_HAS_USB; if (!strcmp(f, "dts")) return SB_HAS_DTS;
+#if SB_WINDOWED
+  if (!strcmp(f, "tv")) return 0;
+#endif
+  return 1;
+}
+static int wn_has(const cJSON *n) {
+  if (cJSON_IsString(n)) return wn_feature(n->valuestring);
+  const cJSON *e; if (cJSON_IsArray(n)) cJSON_ArrayForEach(e, n) if (cJSON_IsString(e) && !wn_feature(e->valuestring)) return 0;
+  return 1;
+}
 /* the guide's titles: bundled with the app (assets/guide: their words, posters, backdrops and logos), the same at
    every start, never waiting on the network or a cache */
 static int guide_titles(Item *out, int max) {
@@ -1057,7 +1080,9 @@ static int load(void) {
   snprintf(W.ver, sizeof W.ver, "%s", js_str(j, "version", update_current()));
   const cJSON *it; cJSON_ArrayForEach(it, js_arr(j, "items")) { if (W.nnews >= MAXN) break; News *nw = &W.news[W.nnews]; memset(nw, 0, sizeof *nw);
     if (cJSON_IsString(it)) snprintf(nw->t, sizeof nw->t, "%s", it->valuestring); /* the older form: a line alone */
-    else if (cJSON_IsObject(it)) { snprintf(nw->t, sizeof nw->t, "%s", js_str(it, "title", "")); snprintf(nw->x, sizeof nw->x, "%s", js_str(it, "text", "")); snprintf(nw->icn, sizeof nw->icn, "%s", js_str(it, "icon", "g_spark")); }
+    else if (cJSON_IsObject(it)) { if (!wn_has(cJSON_GetObjectItemCaseSensitive(it, "needs"))) continue; /* (a feature this package leaves out) */
+      char tk[24], xk[24]; snprintf(tk, sizeof tk, "title_%s", wn_pkg()); snprintf(xk, sizeof xk, "text_%s", wn_pkg());
+      snprintf(nw->t, sizeof nw->t, "%s", js_str(it, tk, js_str(it, "title", ""))); snprintf(nw->x, sizeof nw->x, "%s", js_str(it, xk, js_str(it, "text", ""))); snprintf(nw->icn, sizeof nw->icn, "%s", js_str(it, "icon", "g_spark")); }
     nw->ic = icon_exists(nw->icn) ? nw->icn : "g_spark";
     if (nw->t[0]) W.nnews++; }
   const cJSON *s = js_obj(j, "support"); snprintf(W.url, sizeof W.url, "%s", js_str(s, "url", "")); snprintf(W.gh, sizeof W.gh, "%s", js_str(s, "github", ""));

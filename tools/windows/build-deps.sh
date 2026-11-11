@@ -5,6 +5,9 @@
 #   ships; Electron 44 builds ANGLE into its exe and has no separate DLLs)
 #   libmpv (libmpv-2.dll and its header): shinchiro's build, loaded at run time by video_win.c, not linked. The stock
 #   build (about 116 MB) stands in until a smaller one is built
+#   vulkan-1.dll: the Khronos Vulkan loader, which libmpv-2.dll links. GPU drivers install it, Windows does not: on a PC
+#   without one (a VM, Remote Desktop, the basic display driver) libmpv would not load. Shipped in fallback/, used only
+#   when the PC has none (video_win.c); mpv draws with Direct3D 11 there and never calls Vulkan
 # Output: $WB/deps/{include,lib,bin}. Sources are pinned and checked (needs 7z: apt install p7zip-full).
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/../paths.sh"
@@ -20,6 +23,9 @@ fetch https://zlib.net/fossils/zlib-$ZLIB_V.tar.gz 9a93b2b7dfdac77ceba5a558a580e
 fetch https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-$MBED_V/mbedtls-$MBED_V.tar.bz2 8b54fb9bcf4d5a7078028e0520acddefb7900b3e66fec7f7175bb5b7d85ccdca mbedtls.tbz
 fetch https://curl.se/download/curl-$CURL_V.tar.xz db59cf0d671ca6e7f5c2c5ec177084a33a79e04c97e71cf183a5cdea235054eb curl.txz
 fetch https://github.com/electron/electron/releases/download/v$ELECTRON_V/electron-v$ELECTRON_V-win32-x64.zip 98efbd2d1c7bd44150c0aa800cd9ac5fefcefd2d44fd94958a95d6744d86c6de electron.zip
+VK_V=1.4.304
+fetch https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/v$VK_V.tar.gz 5e1a06b3f27e7581b55d1dea176fd97ee0a2f299406db2f437c1d2f297ceba5b vulkan-headers-$VK_V.tgz
+fetch https://github.com/KhronosGroup/Vulkan-Loader/archive/refs/tags/v$VK_V.tar.gz 368d8281604a3f4dee038bfcc55c44e305031ec67f6e3fdd50cdeb83586c99f9 vulkan-loader-$VK_V.tgz
 MPV_V=20261110; MPV_F=mpv-dev-x86_64-$MPV_V-git-a61f6c3abd.7z
 fetch https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/$MPV_V/$MPV_F f07b97a72f2394a7798d6e1d36d952bbfd63577e25cef051f716751ea5dc9688 mpv-dev.7z
 for p in sdl.tgz:SDL2-$SDL_V zlib.tgz:zlib-$ZLIB_V mbedtls.tbz:mbedtls-$MBED_V curl.txz:curl-$CURL_V; do
@@ -67,6 +73,15 @@ fi
 if [ ! -f "$O/bin/libmpv-2.dll" ]; then echo "== libmpv ($MPV_V)"
   rm -rf "$WB/b/mpv"; mkdir -p "$WB/b/mpv"; (cd "$WB/b/mpv" && 7z x -y "$SRC/mpv-dev.7z" >/dev/null)
   mkdir -p "$O/include/mpv"; cp "$WB/b/mpv/include/mpv/client.h" "$O/include/mpv/"; cp "$WB/b/mpv/libmpv-2.dll" "$O/bin/"
+fi
+if [ ! -f "$O/bin/fallback/vulkan-1.dll" ]; then echo "== Vulkan loader ($VK_V)"
+  for r in Headers Loader; do [ -d "$SRC/Vulkan-$r-$VK_V" ] || tar -xf "$SRC/vulkan-${r,,}-$VK_V.tgz" -C "$SRC"; done
+  cmake -S "$SRC/Vulkan-Headers-$VK_V" -B "$WB/b/vkh" -G Ninja -DCMAKE_INSTALL_PREFIX="$WB/b/vkh/out" >/dev/null && cmake --install "$WB/b/vkh" >/dev/null
+  cmake -S "$SRC/Vulkan-Loader-$VK_V" -B "$WB/b/vkl" -G Ninja -DCMAKE_TOOLCHAIN_FILE="$TC" -DCMAKE_BUILD_TYPE=Release -DVULKAN_HEADERS_INSTALL_DIR="$WB/b/vkh/out" \
+    -DUSE_GAS=ON -DBUILD_TESTS=OFF -DENABLE_WERROR=OFF -DCMAKE_SHARED_LINKER_FLAGS="-static-libgcc -static-libstdc++ -Wl,-Bstatic -lwinpthread -Wl,-Bdynamic" >/dev/null
+  cmake --build "$WB/b/vkl" >/dev/null
+  mkdir -p "$O/bin/fallback"; cp "$(find "$WB/b/vkl" -name 'vulkan-1.dll' | head -1)" "$O/bin/fallback/"; $X-strip "$O/bin/fallback/vulkan-1.dll"
+  cp "$SRC/Vulkan-Loader-$VK_V/LICENSE.txt" "$O/bin/fallback/LICENSE-vulkan-loader.txt"
 fi
 ls "$O/lib" "$O/bin" | tr '\n' ' '; echo
 echo DEPS_OK

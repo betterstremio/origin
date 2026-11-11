@@ -35,7 +35,7 @@ static void slashes(char *p) { for (; *p; p++) if (*p == '\\') *p = '/'; }
    (applog.c), and everything writes to stderr: point fds 1 and 2 at NUL first, then the log takes over fd 2. */
 static void std_streams(void) {
   HANDLE e = GetStdHandle(STD_ERROR_HANDLE);
-  if (e && e != INVALID_HANDLE_VALUE) { _setmode(2, _O_BINARY); return; } /* started from a console or redirected: keep it */
+  if (e && e != INVALID_HANDLE_VALUE) { _setmode(2, _O_BINARY); setvbuf(stderr, NULL, _IONBF, 0); return; } /* (sent to a file, stderr would be fully buffered: the last lines lost when the app is ended) */ /* started from a console or redirected: keep it */
   /* Here fds 0-2 are closed and the C library's stdout and stderr are bound to none (fd -2). freopen binds a stream to
      the lowest free fd, so fill 0 and 1 first: stderr then lands on fd 2, the one the kept log takes over. Without
      this stderr went to another fd and the kept log stayed empty. */
@@ -126,6 +126,20 @@ void plat_pre_init(const char *appId) {
 }
 void *plat_win_hwnd(void) { return top; }
 static void find_hwnd(SDL_Window *w) { SDL_SysWMinfo wi; SDL_VERSION(&wi.version); if (!top && SDL_GetWindowWMInfo(w, &wi)) top = wi.info.win.window; }
+/* While the border or title bar is dragged, Windows runs its own message loop and the app's stops: the picture would
+   freeze until the button is let go. The window's messages are seen here first: from the start of a drag to its end a
+   timer, and each new size, draw a frame through the app's callback (main.c). */
+static WNDPROC sdlProc; static void (*liveDraw)(void); static int inDrag, dragFrames; enum { LIVE_TIMER = 0x51D };
+static void live_now(void) { if (inDrag && liveDraw) { liveDraw(); dragFrames++; } }
+static LRESULT CALLBACK live_proc(HWND h, UINT m, WPARAM a, LPARAM b) {
+  if (m == WM_ENTERSIZEMOVE) { inDrag = 1; dragFrames = 0; SetTimer(h, LIVE_TIMER, USER_TIMER_MINIMUM, NULL); }
+  else if (m == WM_EXITSIZEMOVE) { inDrag = 0; KillTimer(h, LIVE_TIMER); fprintf(stderr, "[window] %d frames drawn while the window was dragged\n", dragFrames); }
+  else if (m == WM_TIMER && a == LIVE_TIMER) { live_now(); return 0; }
+  LRESULT r = CallWindowProcW(sdlProc, h, m, a, b);
+  if (m == WM_SIZE) live_now(); /* (after SDL has heard of the size) */
+  return r;
+}
+void plat_live_draw(void (*fn)(void)) { liveDraw = fn; if (top && !sdlProc) sdlProc = (WNDPROC)SetWindowLongPtrW(top, GWLP_WNDPROC, (LONG_PTR)live_proc); }
 void plat_post_window(SDL_Window *w) {
   find_hwnd(w); sw = w;
   SDL_SetWindowMinimumSize(w, 640, 360);
@@ -199,6 +213,13 @@ int plat_lifecycle(const SDL_Event *e) {
   if (e->type == SDL_WINDOWEVENT && (e->window.event == SDL_WINDOWEVENT_MOVED || e->window.event == SDL_WINDOWEVENT_SIZE_CHANGED || e->window.event == SDL_WINDOWEVENT_MAXIMIZED || e->window.event == SDL_WINDOWEVENT_RESTORED)) save_geom();
   if (e->type == SDL_WINDOWEVENT) { if (e->window.event == SDL_WINDOWEVENT_RESTORED) return 1; if (e->window.event == SDL_WINDOWEVENT_MINIMIZED) return -1; }
   return 0;
+}
+/* Windows keeps the country apart from the format locale (Settings > Time & language > Region): an "en-US" format in
+   Ireland is common, and the picks' region (Top 10, where titles stream) follows the country */
+const char *plat_country(void) {
+  static char cc[4]; static int done; if (done) return cc[0] ? cc : NULL; done = 1;
+  wchar_t g[16]; if (GetUserDefaultGeoName(g, 16) > 0 && g[0] && g[1] && !g[2]) { cc[0] = (char)towupper(g[0]); cc[1] = (char)towupper(g[1]); cc[2] = 0; } /* (a two-letter code: never a UN M.49 number such as "001") */
+  return cc[0] ? cc : NULL;
 }
 const char *plat_ui_locale(void) {
   if (!locale[0]) { wchar_t w[LOCALE_NAME_MAX_LENGTH]; if (GetUserDefaultLocaleName(w, LOCALE_NAME_MAX_LENGTH)) utf8(w, locale, sizeof locale); }
@@ -281,7 +302,8 @@ void *plat_gl_create(SDL_Window *w) {
 #undef L
   *(void **)&E.GetPlatformDisplayEXT = E.GetProcAddress("eglGetPlatformDisplayEXT");
   if (!E.GetPlatformDisplayEXT) { fprintf(stderr, "[gl] eglGetPlatformDisplayEXT missing\n"); return NULL; }
-  const EGLint da[] = { EGL_PLATFORM_ANGLE_TYPE_ANGLE, EGL_PLATFORM_ANGLE_TYPE_D3D11_ANGLE, EGL_NONE_ };
+  int warp = getenv("SB_WARP") != NULL; /* development: Direct3D's software renderer, as a PC with no usable GPU driver has */
+  const EGLint da[] = { EGL_PLATFORM_ANGLE_TYPE_ANGLE, EGL_PLATFORM_ANGLE_TYPE_D3D11_ANGLE, warp ? 0x3209 : EGL_NONE_, 0x320B /* WARP device */, EGL_NONE_ };
   dpy = E.GetPlatformDisplayEXT(EGL_PLATFORM_ANGLE_ANGLE, NULL, da); EGLint ma, mi;
   if (!dpy || !E.Initialize(dpy, &ma, &mi)) { fprintf(stderr, "[gl] Direct3D 11 display failed: %x\n", E.GetError()); return NULL; }
   const EGLint ca[] = { 0x3024, 8, 0x3023, 8, 0x3022, 8, 0x3021, 8, 0x3025, 0, 0x3026, 0, 0x3040, 4 /* ES2 */, 0x3033, 4 /* window */, EGL_NONE_ };

@@ -9,12 +9,14 @@
     {
       "icon": "wn_best",
       "title": "The best stream, picked for you",
-      "text": "Tested on your TV, one press to play."
+      "text": "Tested on your TV, one press to play.",
+      "text_windows": "Tested on this PC, one press to play."
     },
     {
       "icon": "wn_cast",
       "title": "Cast from your phone",
-      "text": "Your TV shows up on your phone. Launch the app, play and control it directly."
+      "text": "Your TV shows up on your phone. Launch the app, play and control it directly.",
+      "needs": "cast"
     },
     {
       "icon": "wn_people",
@@ -29,7 +31,9 @@
     {
       "icon": "wn_av",
       "title": "Picture and sound",
-      "text": "Dolby Vision, DTS converted on the TV, USB for P2P."
+      "text": "Dolby Vision, DTS converted on the TV, USB for P2P.",
+      "text_windows": "Dolby Vision and HDR in the right colours on any monitor. DTS and TrueHD play as they are.",
+      "text_android": "Dolby Vision, on TVs that show it."
     }
   ],
   "support": {

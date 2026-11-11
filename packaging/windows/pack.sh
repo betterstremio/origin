@@ -10,6 +10,7 @@ V="$(tr -d '[:space:]' < "$ROOT/VERSION")"; O="$BUILD_ROOT/windows/out"; P="$BUI
 [ -f "$WB/engine/libsbengine.dll" ] || { echo "no P2P engine: tools/build-engine.sh windows"; exit 1; }
 rm -rf "$P"; mkdir -p "$S" "$OUT"
 cp "$O/Origin.exe" "$O/libEGL.dll" "$O/libGLESv2.dll" "$O/libmpv-2.dll" "$WB/engine/libsbengine.dll" "$S/"
+mkdir -p "$S/fallback"; cp "$O/fallback/vulkan-1.dll" "$S/fallback/"   # (used only on a PC without a Vulkan loader of its own)
 cp -r "$ROOT/assets" "$S/assets"
 cp -r "$ROOT/third_party/licenses" "$S/licenses"; rm -rf "$S/licenses/dovi"; cp "$WB/deps/bin/LICENSES.chromium.html.gz" "$S/licenses/"
 cp "$ROOT/LICENSE" "$S/licenses/Origin-GPL-3.0.txt"

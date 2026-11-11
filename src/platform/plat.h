@@ -64,5 +64,7 @@ void plat_gl_destroy(void *ctx);
 #if SB_WINDOWED
 void plat_fullscreen_toggle(void);   /* a desktop window: fullscreen (borderless, the monitor's own mode) and back */
 int plat_fullscreen_on(void);        /* ... and whether it is now */
+void plat_live_draw(void (*fn)(void)); /* a frame drawn by fn while the window's border is dragged (the app's loop waits then) */
+const char *plat_country(void);     /* the country the user set in the system (two letters, "IE"), or NULL: the locale's is used */
 #endif
 #endif

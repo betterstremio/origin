@@ -208,10 +208,26 @@ static void to_layout(SDL_Window *win, int mx, int my, float *x, float *y) {
 #if SB_WINDOWED
 /* a desktop: the swap waits for the monitor, at most 120 frames a second (a 240 Hz one draws every second refresh), and the
    pacer is told that rate, so motion steps evenly; again when the window moves to another monitor */
+/* Nothing pressed for 2 s and no film open: at most 60 frames a second (a 240 Hz monitor: every 4th refresh), which
+   halves what an idle Home costs on a fast monitor; the next key, click or move brings the full rate back that frame.
+   Motion keeps its speed: the pacer hears of the rate */
+static int dHz = 60, dK = 1, dIdle;
+static int idle_k(void) { int k = (dHz + 59) / 60; if (k < dK) k = dK; return k > 4 ? 4 : k; }
+static void desktop_apply(void) { int k = dIdle ? idle_k() : dK; GL_INTERVAL(k); pace_set_hz(dHz / k); }
+/* one frame while the window's border is dragged (plat_live_draw: Windows' own loop runs then, not this one): the new
+   size, a tick and the drawing, as the loop below does them */
+static SDL_Window *liveWin;
+static void live_frame(void) {
+  static Uint32 t0; Uint32 now = SDL_GetTicks(); float dt = t0 ? (now - t0) / 1000.0f : 0.016f; t0 = now; if (dt > 0.05f) dt = 0.05f;
+  int dw, dh; GL_SIZE(liveWin, &dw, &dh); if (dw <= 0 || dh <= 0) return; gfx_resize(dw, dh);
+  text_frame_begin(); app_tick(dt); splash_tick(dt);
+  gfx_begin(player_live() ? RGBA(0, 0, 0, 0) : PAGE); app_draw(); splash_draw(); app_clock_top(); gfx_end();
+  GL_SWAP(liveWin);
+}
 static void desktop_rate(SDL_Window *win) {
   SDL_DisplayMode m; int hz = 0; if (!SDL_GetCurrentDisplayMode(SDL_GetWindowDisplayIndex(win), &m)) hz = m.refresh_rate;
-  if (hz < 24) hz = 60; int k = (hz + 119) / 120; GL_INTERVAL(k); pace_set_hz(hz / k);
-  fprintf(stderr, "[pace] monitor %d Hz: the app at %d frames a second\n", hz, hz / k);
+  if (hz < 24) hz = 60; dHz = hz; dK = (hz + 119) / 120; desktop_apply();
+  fprintf(stderr, "[pace] monitor %d Hz: the app at %d frames a second, %d when idle\n", hz, hz / dK, hz / idle_k());
 }
 static Uint32 ptrMovedAt; static int curHid; /* the cursor hidden over a film that has the mouse still */
 #endif
@@ -273,6 +289,7 @@ int main(int argc, char **argv) {
 #endif
   plat_post_window(win);
 #if SB_WINDOWED
+  liveWin = win; plat_live_draw(live_frame);
   if (plat_text_input()) SDL_StartTextInput(); else SDL_StopTextInput(); /* a keyboard types anywhere: the screens decide what text means */
 #else
   SDL_StopTextInput();
@@ -351,6 +368,8 @@ int main(int argc, char **argv) {
     if (plat_text_input() && !SDL_IsTextInputActive()) SDL_StartTextInput(); /* (the sign-in page stops it when a field closes) */
     if (!curHid && player_open() && SDL_GetTicks() - ptrMovedAt > 2500) { curHid = 1; SDL_ShowCursor(SDL_DISABLE); app_pointer_system(0); fprintf(stderr, "[window] cursor hidden over the film\n"); } /* a film: the cursor goes after 2.5 s still */
     else if (curHid && !player_open()) { curHid = 0; SDL_ShowCursor(SDL_ENABLE); }
+    if (vsyncOn) { static int off = -1; if (off < 0) off = getenv("SB_IDLE_OFF") != NULL; /* (development: the old full rate, for comparisons) */
+      int idle = !off && app_idle() > 2 && !player_open(); if (idle != dIdle) { dIdle = idle; desktop_apply(); } }
 #endif
     Uint32 now = SDL_GetTicks(); float dt = (now - last) / 1000.0f; last = now;
     { float pp = (float)pace_period() / 1000.0f; if (pp <= 0) pp = 1 / 60.0f; /* motion on the 60 Hz clock: an on-time frame is one period (no millisecond jitter); a slow one moves it 3 periods at most (no jump) */

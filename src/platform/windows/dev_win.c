@@ -8,6 +8,7 @@
 /* Development: SB_POST="300:key F11,320:type abc,340:move 640 360,360:click 640 360,380:rclick 640 360,400:dbl 640 360,
    420:wheel -120 640 360,440:altenter" posts real Windows input messages to this window at those frames (window pixels),
    so tests go through SDL, the key map and the mouse mapping as a person's input would, without moving their mouse */
+int win_screen_shot(void *hwnd, const char *path);
 void win_dev_input(void *hwnd, int frame) {
   static const char *spec; static int init; if (!init) { init = 1; spec = getenv("SB_POST"); } if (!spec || !hwnd) return;
   HWND w = hwnd; const char *p = spec;
@@ -21,6 +22,16 @@ void win_dev_input(void *hwnd, int frame) {
       else if (sscanf(a, "wheel %d %d %d", &d, &x, &y) == 3) { POINT s = { x, y }; ClientToScreen(w, &s); PostMessageW(w, WM_MOUSEWHEEL, MAKEWPARAM(0, (short)d), MAKELPARAM(s.x, s.y)); }
       else if (sscanf(a, "place %d %d %d %d", &x, &y, &d, &d2) == 4) { RECT r = { 0, 0, d, d2 }; AdjustWindowRectEx(&r, (DWORD)GetWindowLongW(w, GWL_STYLE), FALSE, (DWORD)GetWindowLongW(w, GWL_EXSTYLE));
         SetWindowPos(w, NULL, x, y, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE); } /* "place X Y W H": the window moved and resized (client W x H) */
+      else if (sscanf(a, "drag %d %d", &d, &d2) == 2) { /* "drag W H": a border drag to client W x H, as Windows runs one: its
+          own loop (the app's waits), the size in 20 steps; SB_DRAG_SHOT: the screen half way */
+        RECT c; GetClientRect(w, &c); int w0 = c.right, h0 = c.bottom; RECT wr; GetWindowRect(w, &wr);
+        SendMessageW(w, WM_ENTERSIZEMOVE, 0, 0);
+        for (int i = 1; i <= 20; i++) { RECT r = { 0, 0, w0 + (d - w0) * i / 20, h0 + (d2 - h0) * i / 20 };
+          AdjustWindowRectEx(&r, (DWORD)GetWindowLongW(w, GWL_STYLE), FALSE, (DWORD)GetWindowLongW(w, GWL_EXSTYLE));
+          SetWindowPos(w, NULL, wr.left, wr.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
+          DWORD until = GetTickCount() + 30; MSG m; while (GetTickCount() < until) { while (PeekMessageW(&m, NULL, 0, 0, PM_REMOVE)) { TranslateMessage(&m); DispatchMessageW(&m); } Sleep(1); }
+          if (i == 10 && getenv("SB_DRAG_SHOT")) win_screen_shot(w, getenv("SB_DRAG_SHOT")); }
+        SendMessageW(w, WM_EXITSIZEMOVE, 0, 0); }
       else if (!strncmp(a, "type ", 5)) { for (const char *t = a + 5; *t; t++) PostMessageW(w, WM_CHAR, (WPARAM)(unsigned char)*t, 1); }
       else if (!strcmp(a, "altenter")) { UINT sa = MapVirtualKeyW(VK_MENU, MAPVK_VK_TO_VSC), sr = MapVirtualKeyW(VK_RETURN, MAPVK_VK_TO_VSC); /* Alt down, Enter, Alt up: SDL takes the modifier from the keys before */
         PostMessageW(w, WM_SYSKEYDOWN, VK_MENU, 1 | (sa << 16) | (1 << 29)); PostMessageW(w, WM_SYSKEYDOWN, VK_RETURN, 1 | (sr << 16) | (1 << 29));

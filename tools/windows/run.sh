@@ -19,6 +19,8 @@ json.dump(j, open(p, "w", encoding="utf-8"))
 PY
 W="$(cygpath -m "$STAGE")"
 export SB_DATA="$(cygpath -m "$DATA")" SB_TOPMOST=1 SB_WINDOW="${SB_WINDOW:-1280x720}"
+[ -z "${NOTOP:-}" ] || unset SB_TOPMOST
+[ -n "${IDLE:-}" ] || export SB_IDLE_OFF=1   # SB_POST counts frames: the full rate throughout (IDLE=1: the idle rate, as people get it)   # NOTOP=1: a normal window (long runs that capture nothing stay out of the way)
 [ -n "${SB_SOUND:-}" ] || export SB_MUTE=1   # videos silent unless SB_SOUND=1
 if [ -n "$FRAME" ]; then export SB_SHOT="$W/$NAME.png" SB_SHOT_FRAME="$FRAME" SB_SHOT_EXIT=1; fi
 # SCREEN=N: also the composed screen (video included) at frame N, to <stage>/NAME-screen.png
@@ -27,7 +29,8 @@ cd "$STAGE"
 if [ -n "${DETACHED:-}" ]; then
   # as Explorer starts it: no console and no stderr, so only the kept log (data/applog.log) holds the output
   : > "$DATA/applog.log"
-  PID=$(powershell -NoProfile -Command "(Start-Process -PassThru -FilePath '$(cygpath -w "$STAGE/Origin.exe")' -WorkingDirectory '$(cygpath -w "$STAGE")').Id" | tr -d '')
+  PID=$(powershell -NoProfile -Command "(Start-Process -PassThru -FilePath '$(cygpath -w "$STAGE/Origin.exe")' -WorkingDirectory '$(cygpath -w "$STAGE")').Id" | tr -d '
+')
   for i in $(seq 1 "${TIMEOUT:-90}"); do sleep 1; powershell -NoProfile -Command "if (Get-Process -Id $PID -EA SilentlyContinue) { exit 0 } else { exit 1 }" || break; done
   powershell -NoProfile -Command "Stop-Process -Id $PID -Force -EA SilentlyContinue"; rc=0
   cp "$DATA/applog.log" "$NAME.log"

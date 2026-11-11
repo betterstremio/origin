@@ -52,6 +52,9 @@ void recs_set_hide_cinema(int on) { store_set("recsHideCinema", on ? "true" : "f
 const char *recs_region(void) {
   const char *r = store_get("recsRegion", ""); if (r[0]) return r;
   static char cc[4]; if (cc[0]) return cc;
+#if SB_WINDOWED
+  { const char *c = plat_country(); if (c) { snprintf(cc, sizeof cc, "%s", c); return cc; } } /* the system's country first */
+#endif
   const char *loc = plat_ui_locale(); const char *d = loc ? strpbrk(loc, "-_") : NULL; /* "en-IN" */
   if (d && strlen(d + 1) >= 2) { cc[0] = (char)(d[1] & ~0x20); cc[1] = (char)(d[2] & ~0x20); cc[2] = 0; } else snprintf(cc, sizeof cc, "US");
   return cc;
