@@ -22,5 +22,6 @@ link_app() {
     -static -static-libgcc -static-libstdc++ -mwindows -Wl,--gc-sections
   $X-strip --strip-unneeded -o "$O/Origin.exe" "$O/Origin.dbg.exe"
   cp -u "$D/bin/libEGL.dll" "$D/bin/libGLESv2.dll" "$D/bin/libmpv-2.dll" "$O/"
+  if [ -f "$WB/engine/libsbengine.dll" ]; then cp -u "$WB/engine/libsbengine.dll" "$O/"; else echo "warning: no P2P engine (tools/build-engine.sh windows)"; fi
   ls -l "$O" | awk 'NR>1 {printf "  %-22s %6.1f MB\n", $NF, $5/1048576}'
 }

@@ -3,6 +3,9 @@
 #include "core/p2p.h"
 #include "core/sbengine.h"
 #include "core/store.h"
+#ifndef SB_P2P_DISK_ONLY
+#define SB_P2P_DISK_ONLY 0 /* (target.h: 1 where the window lives on the data folder's disk, as segment files) */
+#endif
 #include "core/i18n.h"
 #include "core/usb.h"
 #include <SDL2/SDL.h>
@@ -180,6 +183,16 @@ static void choose_profile(Prof *P) {
       fprintf(stderr, "[p2p] window in usb %s (%s%s), %ld MB free, %ld MB now, up to %ld MB\n", P->root, d.fs, P->seg ? ", 16 MB segment files" : "", uf, P->window, P->budget);
       return; }
     fprintf(stderr, "[p2p] usb %s not usable now (%ld MB free)\n", d.mnt, uf); }
+#if SB_P2P_DISK_ONLY
+  /* a desktop: the window in the app's data folder on its disk, kept as 16 MB segment files (the engine cannot free bytes
+     inside a file there); no RAM-backed folder */
+  { char dr[1024]; flash_root(dr, sizeof dr); int ok = usable_dir(dr); long f = ok ? free_mb(dr) : -1, res = flash_reserve(), bud = f < 0 ? -1 : f - res;
+    P->loc = LOC_DISK; snprintf(P->root, sizeof P->root, "%s", dr); P->budget = bud < W_FLOOR ? W_FLOOR : bud; P->reserve = res; P->seg = SEG_MB;
+    P->flashShort = !ok || bud < W_GOOD; P->target = want_window(0); P->window = clamp_in(P, P->target, P->budget); P->lowStorage = P->flashShort || P->window < P->target;
+    fprintf(stderr, "[p2p] profile: RAM %d MB (free %d), %d CPU(s), %s | window in %s, 16 MB segment files, %ld MB free, keeps %ld, %ld MB now, up to %ld MB%s\n",
+      P->memTotal, P->memFree, P->cpus, P->tier == 0 ? "small" : P->tier == 1 ? "medium" : "large", P->root, f, res, P->window, P->budget < P->wmax ? P->budget : P->wmax, P->lowStorage ? " (low storage)" : "");
+    return; }
+#endif
   /* the candidates */
   char fr[1024], tr[1024], sr[1024]; flash_root(fr, sizeof fr); tmp_root(tr, sizeof tr, 0); tmp_root(sr, sizeof sr, 1);
   int fOk = usable_dir(fr); long fFree = fOk ? free_mb(fr) : -1, fRes = flash_reserve(), fBud = fFree < 0 ? -1 : fFree - fRes;
@@ -258,8 +271,11 @@ static void *engine_stop(void *a) { (void)a; E->stop(); rm_tree(cacheDir); rmdir
 /* left-overs of a run that did not end well (a crash, the TV switched off): in RAM they would hold memory until the
    TV restarts. Swept once at start, on a thread */
 static void *sweep(void *a) { (void)a; plat_thread_background(15);
-  char p[1024]; flash_root(p, sizeof p); rm_tree(p); tmp_root(p, sizeof p, 0); rm_tree(p); rmdir(p); tmp_root(p, sizeof p, 1); rm_tree(p); rmdir(p);
-  for (int i = 0; i < 2; i++) { struct stat st; const char *old = i ? "/dev/shm/sb-engine" : "/tmp/sb-engine"; /* the shared name earlier versions used, when it is ours */
+  char p[1024]; flash_root(p, sizeof p); rm_tree(p);
+#if !SB_P2P_DISK_ONLY
+  tmp_root(p, sizeof p, 0); rm_tree(p); rmdir(p); tmp_root(p, sizeof p, 1); rm_tree(p); rmdir(p);
+#endif
+  for (int i = 0; i < 2 && !SB_P2P_DISK_ONLY; i++) { struct stat st; const char *old = i ? "/dev/shm/sb-engine" : "/tmp/sb-engine"; /* the shared name earlier versions used, when it is ours */
     if (!lstat(old, &st) && S_ISDIR(st.st_mode) && st.st_uid == geteuid()) { rm_tree(old); rmdir(old); } }
   __atomic_store_n(&cleaning, 0, __ATOMIC_RELEASE); return NULL; }
 /* ---- the window changes place while the engine runs: the USB drive went or was switched off (at once, even mid-film:

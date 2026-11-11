@@ -18,7 +18,8 @@
 #define SB_PLAT_INSTALLER 1      /* plat_install_start / plat_install_poll: the installer downloaded and run silently */
 #define SB_CRASH_TO_SYSTEM 1     /* a crash is logged, then handed to the system (Windows Error Reporting) */
 #define SB_CAPS_FROM_ENV 1       /* what the display and decoders can do arrives in SB_TVCAPS (plat_pre_init sets it) */
-#define SB_REMOTE_GUIDE 0        /* the first-start tour leaves out the remote's keys (user, 2026-11-10) */
+#define SB_P2P_DISK_ONLY 1       /* the P2P window in the data folder as 16 MB segment files (no hole punching here, no RAM-backed /tmp) */
+#define SB_REMOTE_GUIDE 0       /* the first-start tour leaves out the remote's keys (user, 2026-11-10) */
 #define SB_FONT_DIR "C:/Windows/Fonts"
 #define SB_FONTS_EXACT 1
 #define SB_FONT_TABLE "fonts_win.h"  /* the exact list of system fonts to use, by file name */

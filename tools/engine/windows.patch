@@ -1,0 +1,53 @@
+Windows only, applied after engine.patch by tools/build-engine.sh windows:
+- a folder's time set with CreateFileW (mingw's std::filesystem::last_write_time fails on folders: Permission denied)
+- the streaming window on Windows too, kept as segment files (the window store's storage is libtorrent's portable one)
+--- a/src/cache/disk_cache_manager.cpp
++++ b/src/cache/disk_cache_manager.cpp
+@@ -240,11 +240,28 @@
+     if (status.type() != std::filesystem::file_type::directory) {
+         throw std::runtime_error("disk cache entry is not a real directory");
+     }
++#if defined(_WIN32)
++    // mingw's libstdc++ opens the path without FILE_FLAG_BACKUP_SEMANTICS, which a folder needs (Permission denied): its
++    // time is set here directly
++    {
++        const HANDLE handle = ::CreateFileW(path.c_str(), FILE_WRITE_ATTRIBUTES,
++            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
++        FILETIME now;
++        ::GetSystemTimeAsFileTime(&now);
++        if (handle == INVALID_HANDLE_VALUE || !::SetFileTime(handle, nullptr, nullptr, &now)) {
++            error = std::error_code(static_cast<int>(::GetLastError()), std::system_category());
++        }
++        if (handle != INVALID_HANDLE_VALUE) {
++            ::CloseHandle(handle);
++        }
++    }
++#else
+     std::filesystem::last_write_time(
+         path,
+         std::filesystem::file_time_type::clock::now(),
+         error
+     );
++#endif
+     if (error) {
+         throw std::system_error(error, "touch disk cache entry");
+     }
+--- a/src/torrent/libtorrent_backend.cpp
++++ b/src/torrent/libtorrent_backend.cpp
+@@ -181,6 +181,8 @@
+     SessionBootstrap bootstrap{lt::session_params(make_settings(config)), {}};
+ #if !defined(_WIN32)
+     bootstrap.params.disk_io_constructor = lt::posix_disk_io_constructor;
++#endif
++    // Windows too: libtorrent's portable storage under the window; the window frees whole segment files there (no holes)
+     if (config.streaming_window_bytes > 0) {
+         // streaming window (#334): posix storage that can free played pieces
+         auto store = std::make_shared<storage::StreamingWindowStore>();
+@@ -194,7 +196,6 @@
+             return storage::make_window_disk_io(io, settings, counters, store);
+         };
+     }
+-#endif
+     try {
+         const auto state = storage::read_bounded_file(
+             state_root(config) / "session.dht",
