@@ -226,12 +226,13 @@ static void build(void) {
   set_s(&subsS[3], "subsOutlineColor", "Outline", "", OUTL, 2, "#000000");
   set_s(&subsS[4], "subsBgStyle", "Background", "", BGS, 3, "0");
   set_s(&subsS[5], "subsAssStyle", "Styled subtitles", "Signs, fonts and effects as the film\xe2\x80\x99s own ASS / SSA subtitles draw them", ASSO, 2, "styled");
-  set_s(&audS[0], "enableDefaultAudioTrack", "Auto audio track", "Pick the audio language below when a film has several", OO, 2, "true");
-  set_s(&audS[1], "defaultAudioTrack", "Default audio language", "", LANG_OPTS + 1, 17, "eng");
-  set_s(&audS[2], "dtsMode", "DTS sound", "Auto finds out what this TV plays. Convert if you are not sure. Off leaves it to the TV", DTSM, 3, "auto");
-  set_s(&audS[3], "uiSound", "Interface sounds", "A soft click as you move between titles", OO, 2, "false");
-  set_s(&audS[4], "uiSoundVol", "Interface sound level", "Of the TV\xe2\x80\x99s volume", SVOL, 10, "30");
-  set_s(&audS[5], "introSound", "Startup sound", "A short sound with the logo when the app opens", OO, 2, "true");
+  int naud = 0; /* (DTS: only where the app converts it; the startup sound: only where the package has one) */
+  set_s(&audS[naud++], "enableDefaultAudioTrack", "Auto audio track", "Pick the audio language below when a film has several", OO, 2, "true");
+  set_s(&audS[naud++], "defaultAudioTrack", "Default audio language", "", LANG_OPTS + 1, 17, "eng");
+  if (SB_HAS_DTS) set_s(&audS[naud++], "dtsMode", "DTS sound", "Auto finds out what this TV plays. Convert if you are not sure. Off leaves it to the TV", DTSM, 3, "auto");
+  set_s(&audS[naud++], "uiSound", "Interface sounds", "A soft click as you move between titles", OO, 2, "false");
+  set_s(&audS[naud++], "uiSoundVol", "Interface sound level", "Of the TV\xe2\x80\x99s volume", SVOL, 10, "30");
+  if (sound_has_intro()) set_s(&audS[naud++], "introSound", "Startup sound", "A short sound with the logo when the app opens", OO, 2, "true");
   set_s(&lookS[0], "accent", "Accent colour", "Dynamic: the colours of the title you open", ACCENT_OPTS, 20, "logo"); /* first, right under its picture */
   set_s(&lookS[1], "ssDelay", "Screensaver", "After a while without a key, the titles of the moment fill the screen", SS_OPTS, 5, "5");
   /* language names are shown in their own language, never translated */
@@ -252,7 +253,7 @@ static void build(void) {
   Cat c[NCAT] = {
     { "Watch", "Playback", "set_play", "Seek step, next episode, picture size", NULL, playS, 6, 0 }, /* (the count: play_layout) */
     { "Watch", "Subtitles", "set_subs", "Language, size, colour, background", "subs", subsS, 6, 0 },
-    { "Watch", "Audio", "set_aud", "Default audio language, DTS, interface sounds", NULL, audS, 6, 0 },
+    { "Watch", "Audio", "set_aud", "Default audio language, DTS, interface sounds", NULL, audS, naud, 0 },
     { "Watch", "For You", "g_spark", "Recommendations on Home, region, languages", NULL, recsS, nr, 0 },
     { "Screens", "Appearance", "set_look", "Accent colour", "look", lookS, 2, 0 },
     { "Screens", "Language", "set_lang", "The language of the app", NULL, langS, nl, 0 },

@@ -18,7 +18,8 @@ g() {   # git for this checkout, also from WSL when the worktree's link is a Win
   if git -C "$ROOT" rev-parse >/dev/null 2>&1; then git -C "$ROOT" "$@"
   else git --git-dir="$(sed -n 's/^gitdir: //p' "$ROOT/.git" | sed -E 's#^([A-Za-z]):#/mnt/\L\1#')" --work-tree="$ROOT" "$@"; fi
 }
-FILES=("${APPID}_${V}_arm.ipk" "${APPID}_${V}_arm.ipk.sha256" "${APPID}_${V}_android-arm64.apk" "${APPID}_${V}_android-armv7.apk" "${APPID}_${V}_android.apk")
+FILES=("${APPID}_${V}_arm.ipk" "${APPID}_${V}_arm.ipk.sha256" "${APPID}_${V}_android-arm64.apk" "${APPID}_${V}_android-armv7.apk" "${APPID}_${V}_android.apk"
+       "${APPID}_${V}_windows_setup.exe" "${APPID}_${V}_windows_setup.exe.sha256" "${APPID}_${V}_windows_portable.zip")
 
 case "$CMD" in
 build)
@@ -32,6 +33,7 @@ build)
   OUT="$D" bash "$ROOT/packaging/webos/pack.sh" --clean
   bash "$ROOT/tools/android/build-apk.sh" --clean
   for k in android-arm64 android-armv7 android; do cp "$BUILD_ROOT/android/apk/${APPID}_${V}_$k.apk" "$D/"; done
+  OUT="$D" bash "$ROOT/packaging/windows/pack.sh" --clean   # (setup, its .sha256, the portable zip)
   want="$(tr -d '[:space:]' < "$ROOT/packaging/android/release-cert.sha256")"
   for f in "$D"/*.apk; do
     got="$("${ANDROID_HOME:-$HOME/android-sdk}/build-tools/35.0.0/apksigner" verify --print-certs "$f" | grep -m1 'SHA-256' | sed 's/.*: //')"
@@ -48,6 +50,11 @@ publish)
   [ "$(cat "$D/COMMIT" 2>/dev/null)" = "$(g rev-parse HEAD)" ] || die "dist/$V was not built from this commit: run build again"
   [ -z "$(g status --porcelain)" ] || die "uncommitted changes"
   [ "$(sha256sum "$D/${FILES[0]}" | cut -c1-64)" = "$(cut -c1-64 "$D/${FILES[1]}")" ] || die "the IPK does not match its .sha256"
+  [ "$(sha256sum "$D/${FILES[5]}" | cut -c1-64)" = "$(cut -c1-64 "$D/${FILES[6]}")" ] || die "the Windows setup does not match its .sha256"
+  # unsigned Windows files: Defender's machine-learning rules once took a build for a trojan, so nothing goes out
+  # that Defender flags (rebuild, or report the false positive to Microsoft first)
+  case "$(uname -s)" in MINGW*|MSYS*) bash "$ROOT/tools/windows/test/avscan.sh" "$D/${FILES[5]}" "$D/${FILES[7]}" || die "Defender flags a Windows file";;
+    *) die "publish from Git Bash on Windows: the Windows files need a Defender scan first";; esac
   g fetch -q "https://github.com/$SLUG.git" main
   g merge-base --is-ancestor FETCH_HEAD HEAD || die "main on GitHub has commits that are not in this branch: merge them first"
   g log FETCH_HEAD..HEAD --format='%an <%ae>%n%cn <%ce>' | grep -qvxF "$AUTHOR" && die "a commit is not by $AUTHOR"

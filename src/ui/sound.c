@@ -100,8 +100,14 @@ static int run(void *u) {
   return 0;
 }
 static void thread_up(void) { if (!started) { started = 1; wake = SDL_CreateSemaphore(0); SDL_Thread *t = SDL_CreateThread(run, "sound", NULL); if (t) SDL_DetachThread(t); else started = -1; } }
+/* the start-up music ships only when it may (2.1.3 leaves it out until its rights are settled): without the file there
+   is no music and no setting for it */
+int sound_has_intro(void) {
+  static int has = -1; if (has < 0) { char p[1200]; snprintf(p, sizeof p, "%s/sounds/intro.wav", plat_asset_dir()); FILE *f = fopen(p, "rb"); has = f != NULL; if (f) fclose(f); }
+  return has;
+}
 void sound_intro(void) {
-  if (!strcmp(store_get("introSound", "true"), "false")) return;
+  if (!sound_has_intro() || !strcmp(store_get("introSound", "true"), "false")) return;
   thread_up(); if (started < 0) return;
   SDL_AtomicSet(&introWant, 1); SDL_SemPost(wake);
 }
