@@ -138,8 +138,8 @@ static int recs_opts(void) {
   if (!tmdb_builtin()) { /* the key the picks need: pasted on a computer, from the phone on a TV, or from the Nuvio account by itself */
     int ck = tmdb_key_check_state() == TK_CHECKING, has = tmdb_has_key(), nv = tmdb_key_from_nuvio();
 #if SB_WINDOWED
-    const char *d = ck ? "Checking the key with TMDB\xe2\x80\xa6" : nv ? "In use, from your Nuvio account. Nothing to do. To use a different key, copy it, then press OK here"
-                  : has ? "In use. To use a different key, copy it, then press OK here" : "Needed for picks. Copy your key from themoviedb.org (Settings, API), then press OK here to paste it";
+    const char *d = ck ? "Checking the key with TMDB\xe2\x80\xa6" : nv ? "In use, from your Nuvio account. OK to add your own key instead"
+                  : has ? "Added. OK to change it" : "Needed for picks. OK to add your key";
 #else
     const char *d = ck ? "Checking the key with TMDB\xe2\x80\xa6" : nv ? "In use, from your Nuvio account. Nothing to do. OK to use a different key from your phone"
                   : has ? "In use. OK to use a different key from your phone" : "Needed for picks. OK to add it from your phone";
@@ -165,7 +165,10 @@ static int keys_opts(void) {
   int n = 0; tmdbOn = tmdb_has_key(); traktOn = trakt_has_key();
   set_act(&keyS[n++], "__coll", "Collections", "Rows of tiles on Home. OK to import or remove them from your phone");
 #if SB_WINDOWED
-  if (!tmdb_builtin()) set_act(&keyS[n++], "__tmdb", "Titles and descriptions", tmdbOn ? "In the app\xe2\x80\x99s language, from TMDB. OK to change the key" : "Only in English. OK to paste a TMDB key");
+  if (!tmdb_builtin()) { int nv = tmdbOn && tmdb_key_from_nuvio(); /* one clear row: what the key does, whether there is one, OK adds it */
+    set_act(&keyS[n++], "__tmdb", "TMDB key", nv ? "In use, from your Nuvio account: For You picks and titles in your language. OK to add your own key instead"
+                                              : tmdbOn ? "Added: For You picks and titles in your language. OK to change it"
+                                              : "Not added. Needed for For You picks and for titles in your language. OK to add it"); }
 #else
   if (!tmdb_builtin()) set_act(&keyS[n++], "__tmdb", "Titles and descriptions", tmdbOn ? "In the app\xe2\x80\x99s language, from TMDB. OK to change the key" : "Only in English. OK to add a TMDB key from your phone");
 #endif
@@ -178,7 +181,8 @@ static void recs_rows_again(void) { for (int i = 0; i < ncat; i++) if (cats[i].o
 static void relang(void) { cats[4].n = lang_opts(); if (S.cat == 4 && S.idx >= cats[4].n) S.idx = cats[4].n - 1; for (int i = 0; i < ncat; i++) if (cats[i].opts == keyS) { cats[i].n = keys_opts(); if (S.cat == i && S.idx >= cats[i].n) S.idx = cats[i].n - 1; } S.dirty = 1; }
 static unsigned collGen0; static int coll_done(void *ud) { (void)ud; return board_col_gen() != collGen0; }
 static void coll_card(void) { char url[600]; httpd_url("/collections", url, sizeof url); collGen0 = board_col_gen(); QrCardOpts o; memset(&o, 0, sizeof o); o.title = T("Collections"); o.sub = T("Scan with your phone, then pick or paste your export"); o.url = url; o.check = coll_done; o.doneTitle = T("Collections updated"); o.doneSub = T("They are on Discover now"); o.doneHold = 1.6f; qrcard_show(&o); }
-static void on_tmdb_card(int on, void *ud) { (void)ud; if (on == tmdbOn) return; relang(); if (on) toast(T("Titles and descriptions in your language"), 2000, NULL); }
+static void on_tmdb_card(int on, void *ud) { (void)ud; recs_rows_again(); if (on) recs_refresh(); /* (a key replacing another: the picks again with it) */
+  if (on == tmdbOn) { relang(); return; } relang(); if (on) toast(T("Titles and descriptions in your language"), 2000, NULL); }
 static void on_trakt_card(int on, void *ud) { (void)ud; if (on == traktOn) return; relang(); if (on) toast(T("Ratings and comments now come from Trakt too"), 2000, NULL); }
 /* About: the update rows (as the update stands now) and Share logs */
 static unsigned aboutSeen;
@@ -478,16 +482,7 @@ static int key(int k) {
     if (op->action) { if (!strcmp(op->k, "__coll")) { coll_card(); return 1; }
       if (!strcmp(op->k, "__tmdb")) { qrcard_show_tmdb(on_tmdb_card, NULL); return 1; }
       if (!strcmp(op->k, "__recsNow")) { recs_refresh(); toast(T("Getting new picks"), 2000, NULL); return 1; }
-      if (!strcmp(op->k, "__tmdbKey")) {
-#if SB_WINDOWED
-        char *c = getenv("SB_CLIPBOARD") ? SDL_strdup(getenv("SB_CLIPBOARD")) : SDL_GetClipboardText(); int r = tmdb_key_offer(c ? c : "", 0); SDL_free(c); /* (what was copied is never logged; SB_CLIPBOARD stands in for it in tests) */
-        if (r == TKO_CHECKING) { toast(T("Checking the key with TMDB\xe2\x80\xa6"), 2000, NULL); recs_rows_again(); }
-        else if (r == TKO_SAME) toast(T("That key is already in use"), 2500, NULL);
-        else qrcard_show_tmdb(on_tmdb_card, NULL); /* (no key on the clipboard: the card says how, with a paste button and the link to get one) */
-#else
-        qrcard_show_tmdb(on_tmdb_card, NULL);
-#endif
-        return 1; }
+      if (!strcmp(op->k, "__tmdbKey")) { qrcard_show_tmdb(on_tmdb_card, NULL); return 1; } /* the same card as Settings > Keys (a paste card on a computer, the code on a TV) */
       if (!strcmp(op->k, "__tmdbOff")) { tmdb_key_clear(); relang(); toast(T("Titles and descriptions in English"), 2000, NULL); return 1; }
       if (!strcmp(op->k, "__trakt")) { qrcard_show_trakt(on_trakt_card, NULL); return 1; }
       if (!strcmp(op->k, "__traktOff")) { trakt_key_clear(); relang(); toast(T("The Trakt id is gone"), 2000, NULL); return 1; }

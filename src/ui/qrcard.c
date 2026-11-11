@@ -159,7 +159,8 @@ void qrcard_show_tmdb(void (*onClose)(int hasKey, void *ud), void *ud) {
   QrCardOpts o; memset(&o, 0, sizeof o);
   o.title = T("Titles and descriptions"); o.sub = T("Scan with your phone and paste your TMDB key. Get one at themoviedb.org"); o.url = url;
 #if SB_WINDOWED
-  o.sub = T("Copy your TMDB key (the API Key, or the longer Read Access Token), then paste it here"); o.paste = tmdb_paste; o.link = "https://www.themoviedb.org/settings/api";
+  o.title = T("TMDB key"); o.sub = T("Copy your TMDB key (the API Key, or the longer Read Access Token), then paste it here"); o.paste = tmdb_paste; o.link = "https://www.themoviedb.org/settings/api";
+  o.doneSub = T("For You picks and titles in your language now use it");
 #endif
   o.check = tmdb_check; o.doneTitle = T("Key saved"); o.doneSub = T("Titles and descriptions now come in your language"); o.doneHold = 1.6f;
   o.onClose = tmdb_closed;
