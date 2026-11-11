@@ -6,7 +6,7 @@
 
 <h1 align="center">Origin</h1>
 
-<p align="center">A native app for your Stremio and Nuvio accounts and their addons, written in C, for LG webOS TVs, Android TV, Google TV and Fire TV.<br>Formerly Better Stremio.</p>
+<p align="center">A native app for your Stremio and Nuvio accounts and their addons, written in C, for LG webOS TVs, Android TV, Google TV, Fire TV and Windows PCs.<br>Formerly Better Stremio.</p>
 
 <p align="center"><a href="https://github.com/betterstremio/origin/releases">Releases</a> · <a href="https://betterstremio.github.io/">Website</a></p>
 
@@ -55,8 +55,10 @@ Settings > For You > Preview on focus also offers The title itself: the film, pa
 
 **Only on Android:** DTS and TrueHD play where the device decodes them or passes them to a receiver.
 
+**Only on Windows:** a mouse and keyboard (type on Home to search, F11 or the button at the top right for fullscreen), and DTS and TrueHD played by the app itself. 5.1 and 7.1 sound is folded down to stereo for headphones without clipping.
+
 ## Set up For You
-Recommendations need your own free [TMDB](https://www.themoviedb.org/settings/api) API key, added in Settings > Keys. Trakt is optional and adds ratings and reviews, also with your own client id. No keys are built into the app.
+Recommendations need your own free [TMDB](https://www.themoviedb.org/settings/api) API key. If you sign in with Nuvio and saved a TMDB key in Nuvio's TMDB settings, the app uses that one. Otherwise add it under Settings > For You > TMDB key: on a TV from your phone, on Windows by copying the key and pressing OK on that row. Trakt is optional and adds ratings and reviews, also with your own client id. No keys are built into the app.
 
 Settings > For You has the rest: recommendations on or off, Home layout, region, languages, what previews play, hiding films still in cinemas, pausing history, and a refresh.
 
@@ -70,16 +72,26 @@ Download the `.ipk` from [Releases](https://github.com/betterstremio/origin/rele
 ### Android TV, Google TV and Fire TV
 Android 7.0 or later, on ARM (64-bit or 32-bit). Phones are not supported.
 
-1. Download `tv.stremioorigin.app_<version>_android.apk` from [Releases](https://github.com/betterstremio/origin/releases).
+1. Download the APK from [Releases](https://github.com/betterstremio/origin/releases): `_android-arm64.apk` for most devices, `_android-armv7.apk` for Fire TV sticks and older boxes. `_android.apk` holds both and works anywhere.
 2. Allow installs from the app you open it with. Android asks the first time. The Downloader app can fetch the APK from the release link and install it. On Fire TV, first turn on Settings > My Fire TV > Developer options > Install unknown apps for Downloader.
 3. Open the app, choose Stremio or Nuvio at the top, and sign in by scanning the code with your phone, or with your email.
 
+### Windows
+Windows 10 or 11, 64-bit.
+
+1. Download `tv.stremioorigin.app_<version>_windows_setup.exe` from [Releases](https://github.com/betterstremio/origin/releases) and run it. It installs for your user only, without an administrator prompt, and adds Origin to the Start menu. Or take `tv.stremioorigin.app_<version>_windows_portable.zip`, extract it to any folder and run `Origin.exe` from there.
+2. The files are not code-signed, so SmartScreen says the publisher is unknown. Choose More info, then Run anyway. To check the download, compare its SHA-256 with the `.sha256` file next to it in the release.
+3. Every Windows file is scanned with Microsoft Defender before it is published. If Defender still stops it on your PC, please say so in [Issues](https://github.com/betterstremio/origin/issues).
+4. Sign in as on a TV. Settings and sign-in are kept in `%LOCALAPPDATA%\tv.stremioorigin.app`. Uninstalling from Windows Settings > Apps leaves them in place.
+
 ### Updates
-Settings > About shows a new version when there is one. The app downloads it and checks its SHA-256 before installing.
+Settings > About shows a new version when there is one. The app downloads it and checks its SHA-256 before installing. On Windows it closes, installs the new version and opens again.
 
 ## Status
 - **webOS:** tested on an LG C1 (webOS 6.5) and on webOS 4.4.
 - **Android:** the automated tests pass on the Google TV emulator (Android 14), and the 32-bit ARM build through Android's ARM translation. Not yet tested on a real TV box or Fire TV stick, and For You and previews have not been tried with real addons on Android.
+
+- **Windows:** tested on one PC (Windows 11, NVIDIA RTX 5080, 4K at 240 Hz) and on Windows' software renderer. Not yet tried on Intel or AMD graphics or across two monitors.
 
 Reports are welcome, with your device and system version: [Issues](https://github.com/betterstremio/origin/issues).
 
@@ -102,6 +114,11 @@ tools/android/build-deps.sh                    # Android: SDL2, Mbed TLS, curl f
 tools/build-engine.sh android-arm64-v8a        # the P2P engine (also android-armeabi-v7a, android-x86)
 tools/android/build-apk.sh                     # the release APKs: one per CPU type, and one with both
 tools/android/build-apk.sh --dev               # a test build with x86 for the emulator
+
+tools/windows/build-deps.sh                    # Windows: SDL2, Mbed TLS, curl, ANGLE, libmpv, the Vulkan loader
+tools/build-engine.sh windows                  # the P2P engine as libsbengine.dll
+tools/build.sh windows                         # Origin.exe (mingw-w64)
+packaging/windows/pack.sh                      # the Windows setup (NSIS) and portable zip
 
 tools/release.sh build X.Y.Z                   # every package from empty folders, into dist/X.Y.Z
 ```
