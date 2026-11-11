@@ -63,5 +63,6 @@ void plat_gl_destroy(void *ctx);
 #endif
 #if SB_WINDOWED
 void plat_fullscreen_toggle(void);   /* a desktop window: fullscreen (borderless, the monitor's own mode) and back */
+int plat_fullscreen_on(void);        /* ... and whether it is now */
 #endif
 #endif

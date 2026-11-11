@@ -12,4 +12,14 @@ The Android build adds (tools/android/build-deps.sh fetches and pins them; they 
 - curl 8.11.0 (curl licence, MIT-style, curl-MIT-like.txt): libcurl.so.
 - Mbed TLS 3.6.2 (Apache-2.0, mbedtls-Apache-2.0.txt): inside libcurl.so.
 - AndroidX Media3 1.5.0 / ExoPlayer and AndroidX Annotation (Apache-2.0, the same text as mbedtls-Apache-2.0.txt): the video player.
+The Windows build adds (tools/windows/build-deps.sh fetches and pins them; they are not in third_party/):
+- SDL 2.30.9 (sdl2-zlib.txt), curl 8.11.0 (curl-MIT-like.txt), Mbed TLS 3.6.2 (mbedtls-Apache-2.0.txt) and zlib 1.3.1
+  (zlib licence, zlib-zlib.txt): linked into Origin.exe.
+- The mingw-w64 runtime and winpthreads, linked into Origin.exe and libsbengine.dll (ZPL-2.1 and others, each file
+  named in mingw-w64-runtime-copyright.txt).
+- ANGLE (libEGL.dll, libGLESv2.dll), unmodified, as shipped in Electron 43.8.3: BSD-3-Clause, with the licences of
+  the Chromium code inside it in LICENSES.chromium.html.gz (gzip; any browser opens the unpacked file).
+- libmpv-2.dll: mpv and FFmpeg, unmodified, as built by github.com/shinchiro/mpv-winbuild-cmake (release 20261110, mpv
+  git a61f6c3abd); GPL-3.0 as built (the text in torrent-engine-GPL-3.0.txt). Sources: mpv-SOURCE.txt.
+- libsbengine.dll: the torrent engine above, built for Windows with tools/engine/windows.patch as well.
 The app itself is GPL-3.0.

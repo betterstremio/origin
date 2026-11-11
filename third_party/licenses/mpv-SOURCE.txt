@@ -1,0 +1,11 @@
+libmpv-2.dll in the Windows package is the unmodified "mpv-dev-x86_64-20261110-git-a61f6c3abd" build of
+github.com/shinchiro/mpv-winbuild-cmake, release 20261110 (SHA-256 of the archive:
+f07b97a72f2394a7798d6e1d36d952bbfd63577e25cef051f716751ea5dc9688, pinned in tools/windows/build-deps.sh).
+
+It contains mpv (github.com/mpv-player/mpv, git a61f6c3abd), FFmpeg and the libraries that build links in. Built with
+their GPL parts on, it is distributed under the GNU General Public License version 3 (the text in
+torrent-engine-GPL-3.0.txt).
+
+The complete corresponding source: mpv at that commit, and the build recipe with the exact versions of every library in
+it at github.com/shinchiro/mpv-winbuild-cmake (the commit tagged 20261110). On request, the maintainers of this app
+will provide a copy of that source for at least three years from the release that shipped this file.

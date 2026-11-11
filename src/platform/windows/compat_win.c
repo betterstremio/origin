@@ -134,7 +134,9 @@ int munmap(void *addr, size_t len) { (void)len; return UnmapViewOfFile(addr) ? 0
 
 /* ---- signals ---- */
 static struct sigaction acts[32];
+void win_crash_hook(int sig); /* (plat_win.c: the crash report, from where the fault happened) */
 static void trampoline(int sig) {
+  if (sig == SIGSEGV || sig == SIGILL || sig == SIGFPE || sig == SIGABRT) win_crash_hook(sig);
   struct sigaction a = acts[sig & 31];
   if ((a.sa_flags & SA_SIGINFO) && a.sa_sigaction) a.sa_sigaction(sig, NULL, NULL);
   else if (a.sa_handler && a.sa_handler != SIG_IGN && a.sa_handler != SIG_DFL) a.sa_handler(sig);

@@ -15,7 +15,9 @@ DEP_INC="-I$D/include"
 webp_skip() { case "$1" in *_neon*) return 0;; esac; return 1; }
 
 link_app() {
-  $X-windres -I"$ROOT/packaging/windows" "$ROOT/packaging/windows/origin.rc" -O coff -o "$B/origin_res.o"
+  [ "$B/origin.ico" -nt "$ROOT/assets/icon.png" ] || python3 -c "import sys; from PIL import Image; Image.open(sys.argv[1]).convert('RGBA').save(sys.argv[2], sizes=[(16,16),(24,24),(32,32),(48,48),(64,64),(128,128),(256,256)])" "$ROOT/assets/icon.png" "$B/origin.ico"
+  local v; v="$(tr -d '[:space:]' < "$ROOT/VERSION")"; IFS=. read -r va vb vc <<<"$v"
+  $X-windres -I"$ROOT/packaging/windows" -I"$B" -DVER_A="$va" -DVER_B="$vb" -DVER_C="$vc" -DVER_STR="\\\"$v\\\"" "$ROOT/packaging/windows/origin.rc" -O coff -o "$B/origin_res.o"
   $CXX $OPT -o "$O/Origin.dbg.exe" "${OBJS[@]}" "$B/origin_res.o" "$B/tp/libass.a" "$B/tp/libtp.a" -L"$D/lib" \
     -lSDL2 -lcurl -lmbedtls -lmbedx509 -lmbedcrypto -leverest -lp256m -lz "$D/lib/libGLESv2.dll.a" \
     -lws2_32 -liphlpapi -lcrypt32 -lbcrypt -lsetupapi -lwinmm -limm32 -lversion -loleaut32 -lole32 -lgdi32 -luser32 -lshell32 -ladvapi32 -lpsapi -luuid -ldwmapi \

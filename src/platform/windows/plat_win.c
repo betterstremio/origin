@@ -17,6 +17,9 @@
 #include <io.h>
 #include <fcntl.h>
 #include <stdint.h>
+#include <pthread.h>
+#include <curl/curl.h>
+int win_sha256_file(const wchar_t *path, char hex[65]); /* (sha_win.c) */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -33,24 +36,30 @@ static void slashes(char *p) { for (; *p; p++) if (*p == '\\') *p = '/'; }
 static void std_streams(void) {
   HANDLE e = GetStdHandle(STD_ERROR_HANDLE);
   if (e && e != INVALID_HANDLE_VALUE) { _setmode(2, _O_BINARY); return; } /* started from a console or redirected: keep it */
-  int nul = _open("NUL", _O_WRONLY | _O_BINARY); if (nul < 0) return;
-  if (nul != 1) _dup2(nul, 1); if (nul != 2) _dup2(nul, 2); if (nul > 2) _close(nul);
+  /* Here fds 0-2 are closed and the C library's stdout and stderr are bound to none (fd -2). freopen binds a stream to
+     the lowest free fd, so fill 0 and 1 first: stderr then lands on fd 2, the one the kept log takes over. Without
+     this stderr went to another fd and the kept log stayed empty. */
+  int fd; while ((fd = _open("NUL", _O_RDWR | _O_BINARY)) >= 0 && fd < 2) {}
+  if (fd >= 2) _close(fd); /* (fd 2 itself, opened here, is closed again so stderr can take it) */
+  if (_fileno(stdout) != 1) { FILE *f = freopen("NUL", "wb", stdout); (void)f; }
   if (_fileno(stderr) != 2) { FILE *f = freopen("NUL", "wb", stderr); (void)f; }
+  if (_fileno(stderr) != 2) { int n = _open("NUL", _O_WRONLY | _O_BINARY); if (n >= 0) { _dup2(n, 2); _close(n); } } /* (last resort: fd 2 at least exists) */
+  setvbuf(stderr, NULL, _IONBF, 0); /* reopened on a file it is fully buffered, and Windows has no line buffering: unbuffered, as a console's is */
 }
 
 /* A crash: the exception, then where, as module+offset for each frame of the unwound stack (resolve the exe's with
    addr2line -e Origin.dbg.exe 0x140000000+offset), written straight to the first stderr and to <data>/crash.log, then
    handed on (the C library's handler, which raises SIGSEGV for applog.c, then Windows Error Reporting). */
-static HANDLE crashErr; static wchar_t crashPath[1100]; static LPTOP_LEVEL_EXCEPTION_FILTER prevFilter;
+static HANDLE crashErr; static wchar_t crashPath[1100], crashLog[1100]; static LPTOP_LEVEL_EXCEPTION_FILTER prevFilter;
 static int where(char *b, int cap, DWORD64 pc) {
   HMODULE m = NULL; wchar_t mn[MAX_PATH] = L"?";
   if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCWSTR)(uintptr_t)pc, &m)) GetModuleFileNameW(m, mn, MAX_PATH);
   const wchar_t *s = wcsrchr(mn, L'\\'); return snprintf(b, (size_t)cap, " %ls+0x%llx", s ? s + 1 : mn, (unsigned long long)(pc - (DWORD64)(uintptr_t)m));
 }
-static LONG WINAPI on_fault(EXCEPTION_POINTERS *x) {
-  static volatile LONG once; if (InterlockedExchange(&once, 1)) return EXCEPTION_CONTINUE_SEARCH;
-  char b[1600]; int n = snprintf(b, sizeof b, "[crash] exception %08lx thread %lu at", (unsigned long)x->ExceptionRecord->ExceptionCode, (unsigned long)GetCurrentThreadId());
-  CONTEXT c = *x->ContextRecord;
+static void crash_write(const CONTEXT *ctx, unsigned long code) {
+  static volatile LONG once; if (InterlockedExchange(&once, 1)) return;
+  char b[1600]; int n = snprintf(b, sizeof b, "[crash] exception %08lx thread %lu at", code, (unsigned long)GetCurrentThreadId());
+  CONTEXT c = *ctx;
   for (int i = 0; i < 16 && c.Rip && n < (int)sizeof b - 80; i++) {
     n += where(b + n, (int)sizeof b - n, c.Rip);
     DWORD64 base; PRUNTIME_FUNCTION f = RtlLookupFunctionEntry(c.Rip, &base, NULL);
@@ -58,8 +67,23 @@ static LONG WINAPI on_fault(EXCEPTION_POINTERS *x) {
     void *hd; DWORD64 fr; RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, c.Rip, f, &c, &hd, &fr, NULL); }
   b[n++] = '\n'; DWORD w;
   if (crashErr && crashErr != INVALID_HANDLE_VALUE) WriteFile(crashErr, b, (DWORD)n, &w, NULL);
-  HANDLE h = CreateFileW(crashPath, FILE_APPEND_DATA, FILE_SHARE_READ, NULL, OPEN_ALWAYS, 0, NULL);
-  if (h != INVALID_HANDLE_VALUE) { WriteFile(h, b, (DWORD)n, &w, NULL); CloseHandle(h); }
+  for (int k = 0; k < 2; k++) { /* crash.log, and the kept log (Share logs sends it) */
+    HANDLE h = CreateFileW(k ? crashLog : crashPath, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS, 0, NULL);
+    if (h != INVALID_HANDLE_VALUE) { WriteFile(h, b, (DWORD)n, &w, NULL); CloseHandle(h); } }
+}
+/* mingw's runtime turns a fault in the exe into SIGSEGV (and the like) before Windows' last-chance filter: the vectored
+   handler only notes where it happened (a fault caught on purpose costs a copy, nothing more), and the signal, raised
+   only when nobody caught it, writes the report from that note (compat_win.c calls win_crash_hook) */
+static __thread CONTEXT faultCtx; static __thread unsigned long faultCode; static __thread int faultSeen;
+static LONG WINAPI note_fault(EXCEPTION_POINTERS *x) {
+  DWORD c = x->ExceptionRecord->ExceptionCode;
+  if (c == EXCEPTION_ACCESS_VIOLATION || c == EXCEPTION_ILLEGAL_INSTRUCTION || c == EXCEPTION_INT_DIVIDE_BY_ZERO || c == EXCEPTION_PRIV_INSTRUCTION ||
+      c == EXCEPTION_IN_PAGE_ERROR || c == EXCEPTION_STACK_OVERFLOW || c == EXCEPTION_ARRAY_BOUNDS_EXCEEDED) { faultCtx = *x->ContextRecord; faultCode = c; faultSeen = 1; }
+  return EXCEPTION_CONTINUE_SEARCH;
+}
+void win_crash_hook(int sig) { CONTEXT c; if (faultSeen) crash_write(&faultCtx, faultCode); else { RtlCaptureContext(&c); crash_write(&c, 0xC0000000ul | (unsigned)sig); } }
+static LONG WINAPI on_fault(EXCEPTION_POINTERS *x) { /* a fault nobody turned into a signal (a library's own thread) */
+  crash_write(x->ContextRecord, x->ExceptionRecord->ExceptionCode);
   return prevFilter ? prevFilter(x) : EXCEPTION_CONTINUE_SEARCH;
 }
 
@@ -67,7 +91,7 @@ void plat_pre_init(const char *appId) {
   _fmode = _O_BINARY; /* files read and written byte for byte, never with line ends translated */
   SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2); /* (the manifest says so too) */
   std_streams();
-  crashErr = GetStdHandle(STD_ERROR_HANDLE); prevFilter = SetUnhandledExceptionFilter(on_fault);
+  crashErr = GetStdHandle(STD_ERROR_HANDLE); prevFilter = SetUnhandledExceptionFilter(on_fault); AddVectoredExceptionHandler(1, note_fault);
   WSADATA wd; WSAStartup(MAKEWORD(2, 2), &wd);
   SDL_SetMainReady();
   SDL_SetHint(SDL_HINT_VIDEO_ALLOW_SCREENSAVER, "1"); /* a desktop's monitor may sleep while nothing plays */
@@ -81,7 +105,14 @@ void plat_pre_init(const char *appId) {
   else { PWSTR la = NULL; char p[900] = "."; if (SHGetKnownFolderPath(&FOLDERID_LocalAppData, 0, NULL, &la) == S_OK) utf8(la, p, sizeof p); CoTaskMemFree(la); slashes(p);
     snprintf(dataDir, sizeof dataDir, "%s/%s", p, appId); }
   mkdir(dataDir, 0755);
-  { char cp[1100]; snprintf(cp, sizeof cp, "%s/crash.log", dataDir); MultiByteToWideChar(CP_UTF8, 0, cp, -1, crashPath, 1100); }
+  { char cp[1100]; snprintf(cp, sizeof cp, "%s/crash.log", dataDir); MultiByteToWideChar(CP_UTF8, 0, cp, -1, crashPath, 1100);
+    snprintf(cp, sizeof cp, "%s/applog.log", dataDir); MultiByteToWideChar(CP_UTF8, 0, cp, -1, crashLog, 1100); }
+  { /* one app per data folder (two would write over each other's settings): a second start brings the first to the front */
+    unsigned hsh = 2166136261u; for (const char *c = dataDir; *c; c++) hsh = (hsh ^ (unsigned char)*c) * 16777619u;
+    wchar_t mn[64]; _snwprintf(mn, 64, L"Local\\OriginApp-%08x", hsh); mn[63] = 0;
+    HANDLE m = CreateMutexW(NULL, TRUE, mn);
+    if (m && GetLastError() == ERROR_ALREADY_EXISTS) { HWND o = FindWindowW(L"SDL_app", L"Origin"); if (o) { ShowWindow(o, IsIconic(o) ? SW_RESTORE : SW_SHOW); SetForegroundWindow(o); }
+      fprintf(stderr, "[start] already running for %s: brought to the front\n", dataDir); exit(0); } }
   applog_start(dataDir);
   { /* what the screen and decoders can do, for choosing streams (best.c): mpv decodes everything in software if it
        must, so only the screen limits the size; HDR is tone-mapped to SDR for now */
@@ -129,6 +160,7 @@ static void save_geom(void) {
   if (G.w < 640 || G.h < 360) return;
   char b[96]; snprintf(b, sizeof b, "%d %d %d %d %d %d", G.x, G.y, G.w, G.h, G.max, G.full); const char *o = store_get("winGeom", ""); if (strcmp(o, b)) store_set("winGeom", b);
 }
+int plat_fullscreen_on(void) { return sw && (SDL_GetWindowFlags(sw) & SDL_WINDOW_FULLSCREEN_DESKTOP) == SDL_WINDOW_FULLSCREEN_DESKTOP; }
 void plat_fullscreen_toggle(void) {
   if (!sw) return; int full = (SDL_GetWindowFlags(sw) & SDL_WINDOW_FULLSCREEN_DESKTOP) == SDL_WINDOW_FULLSCREEN_DESKTOP;
   SDL_SetWindowFullscreen(sw, full ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP); fprintf(stderr, "[window] %s\n", full ? "windowed" : "fullscreen"); save_geom();
@@ -180,9 +212,48 @@ int plat_luna_send(const char *uri, const char *payload) { (void)uri; (void)payl
 int plat_panel_lines(void) { return GetSystemMetrics(SM_CYSCREEN); }
 int plat_color_keys(void) { return 1; } /* F1-F4 stand in for them */
 int plat_random(void *buf, int n) { return n >= 0 && BCryptGenRandom(NULL, buf, (ULONG)n, BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0; }
-/* the installer, downloaded and run silently: phase 5 of the Windows plan; until then Settings says the update failed */
-int plat_install_start(const char *url, const char *sha256, const char *version) { (void)url; (void)sha256; fprintf(stderr, "[update] %s: installing is not built yet on Windows\n", version); return 0; }
-int plat_install_poll(char *msg, int cap) { snprintf(msg, (size_t)cap, "not built yet"); return -1; }
+/* ---- updates: the release's setup file, downloaded on a thread into %TEMP%, its SHA-256 checked against the one
+   GitHub lists, then run silently (/S) with /RELAUNCH; the app closes so the files can be replaced, and the installer
+   opens the new version when it is done ---- */
+static struct { char url[600], sha[72], ver[24]; wchar_t path[MAX_PATH]; volatile LONG st; int pct; char why[160]; int quit; } UP; /* st: 0 working, 1 handed over, -1 failed */
+static int up_progress(void *ud, curl_off_t total, curl_off_t now, curl_off_t ut, curl_off_t un) { (void)ud; (void)ut; (void)un; if (total > 0) UP.pct = (int)(now * 100 / total); return 0; }
+static size_t up_write(char *p, size_t s, size_t n, void *ud) { return fwrite(p, s, n, ud); }
+static void *up_thread(void *a) {
+  (void)a; plat_thread_background(5);
+  wchar_t tmp[MAX_PATH]; GetTempPathW(MAX_PATH, tmp); wchar_t wv[24]; MultiByteToWideChar(CP_UTF8, 0, UP.ver, -1, wv, 24);
+  _snwprintf(UP.path, MAX_PATH, L"%lsOrigin-setup-%ls.exe", tmp, wv); UP.path[MAX_PATH - 1] = 0;
+  FILE *f = _wfopen(UP.path, L"wb"); if (!f) { snprintf(UP.why, sizeof UP.why, "cannot write the download"); InterlockedExchange(&UP.st, -1); return NULL; }
+  CURL *c = curl_easy_init(); char ca[1100]; snprintf(ca, sizeof ca, "%s/cacert.pem", assetDir); long code = 0;
+  curl_easy_setopt(c, CURLOPT_URL, UP.url); curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L); curl_easy_setopt(c, CURLOPT_CAINFO, ca);
+  curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, up_write); curl_easy_setopt(c, CURLOPT_WRITEDATA, f); curl_easy_setopt(c, CURLOPT_NOPROGRESS, 0L);
+  curl_easy_setopt(c, CURLOPT_XFERINFOFUNCTION, up_progress); curl_easy_setopt(c, CURLOPT_USERAGENT, "StremioOrigin (Windows; native)");
+  curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 20L); curl_easy_setopt(c, CURLOPT_LOW_SPEED_LIMIT, 1024L); curl_easy_setopt(c, CURLOPT_LOW_SPEED_TIME, 60L);
+  CURLcode r = curl_easy_perform(c); curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code); curl_easy_cleanup(c); fclose(f);
+  if (r != CURLE_OK || code != 200) { snprintf(UP.why, sizeof UP.why, "download failed (%s, http %ld)", curl_easy_strerror(r), code); _wremove(UP.path); InterlockedExchange(&UP.st, -1); return NULL; }
+  /* the file as GitHub listed it, or nothing runs */
+  char hex[65] = "";
+  if (!win_sha256_file(UP.path, hex) || _stricmp(hex, UP.sha)) { snprintf(UP.why, sizeof UP.why, "the download does not match its checksum"); fprintf(stderr, "[update] checksum %s, expected %s\n", hex, UP.sha); _wremove(UP.path); InterlockedExchange(&UP.st, -1); return NULL; }
+  wchar_t cmd[MAX_PATH + 40]; _snwprintf(cmd, MAX_PATH + 40, L"\"%ls\" /S /RELAUNCH", UP.path); cmd[MAX_PATH + 39] = 0;
+  STARTUPINFOW si = { sizeof si }; PROCESS_INFORMATION pi;
+  if (!CreateProcessW(UP.path, cmd, NULL, NULL, FALSE, DETACHED_PROCESS, NULL, NULL, &si, &pi)) { snprintf(UP.why, sizeof UP.why, "the installer did not start (error %lu)", GetLastError()); InterlockedExchange(&UP.st, -1); return NULL; }
+  CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
+  fprintf(stderr, "[update] %s checked and handed to the installer\n", UP.ver); InterlockedExchange(&UP.st, 1); return NULL;
+}
+int plat_install_start(const char *url, const char *sha256, const char *version) {
+  if (!url || !url[0] || !sha256 || strlen(sha256) != 64) return 0;
+  memset(&UP, 0, sizeof UP); snprintf(UP.url, sizeof UP.url, "%s", url); snprintf(UP.sha, sizeof UP.sha, "%s", sha256); snprintf(UP.ver, sizeof UP.ver, "%s", version ? version : "new");
+  pthread_t t; if (pthread_create(&t, NULL, up_thread, NULL)) return 0; pthread_detach(t);
+  fprintf(stderr, "[update] downloading %s\n", UP.url); return 1;
+}
+int plat_install_poll(char *msg, int cap) {
+  LONG st = UP.st;
+  if (st < 0) { snprintf(msg, (size_t)cap, "%s", UP.why); return -1; }
+  if (st == 1) { snprintf(msg, (size_t)cap, "Installing: Origin opens again in a moment");
+    if (!UP.quit) { UP.quit = 1; SDL_Event q; memset(&q, 0, sizeof q); q.type = SDL_QUIT; SDL_PushEvent(&q); } /* (the installer waits for the app to close) */
+    return 1; }
+  if (UP.pct > 0) snprintf(msg, (size_t)cap, "Downloading… %d%%", UP.pct); else msg[0] = 0;
+  return 0;
+}
 
 /* ---- the GL surface: ANGLE on Direct3D 11, as a DirectComposition layer ----
    EGL is looked up at run time from libEGL.dll beside the exe (only the names used here; the GLES2 calls are linked). */
