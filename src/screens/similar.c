@@ -91,13 +91,13 @@ static void logos_ahead(void) { static double at0; double now = app_now(); if (n
 static void tick(float dt) {
   logos_ahead();
   timer_tick(&G.ring.pop, dt); tween_tick(&G.gridY, dt); timer_tick(&G.fade, dt); nudge_tick(&G.nudge, dt);
-  int row = G.idx / COLS; float y = row > 1 ? (row - 1) * ROWH : 0; tween_to(&G.gridY, -y, 0.3f, EASE_OUT);
+  int row = G.idx / COLS; float y = row > 1 ? (row - 1) * ROWH : 0; if (!app_scroll_hold()) tween_to(&G.gridY, -y, 0.3f, EASE_OUT); /* (a desktop's hover: the grid stays put) */
   /* the ring jumps to the card and lands with a small pop (never glides across the others) */
   if (G.items.n) { int rtl = app_rtl(); float cx = 48 + 14 + (G.idx % COLS) * (CARD_W + CARD_GAP), cy = 16 + row * ROWH; if (rtl) cx = SB_W - cx - CARD_W;
     if (!G.ring.shown || G.ring.x != cx || G.ring.y != cy) { static double last; int pop = !G.ring.shown || focus_pops(&last); G.ring.x = cx; G.ring.y = cy; G.ring.shown = 1; if (pop) timer_start(&G.ring.pop, 0.2f); else G.ring.pop.on = 0; } } /* held: it jumps, lit */
 }
 static int origin(float *x, float *y) { if (topNav.active || G.idx >= G.items.n) return 0; int row = G.idx / COLS; float cx = 48 + 14 + (G.idx % COLS) * (CARD_W + CARD_GAP); if (app_rtl()) cx = SB_W - cx - CARD_W; *x = cx + CARD_W / 2; *y = 120 + 104 + G.gridY.v + 16 + row * ROWH + CARD_H / 2; return 1; }
-static void sim_focus(int i, int b) { (void)b; int was = topNav.active; topNav.active = 0; if (was || G.idx != i) G.idx = i; }
+static void sim_focus(int i, int b) { (void)b; int was = topNav.active; topnav_leave(); if (was || G.idx != i) G.idx = i; }
 static void draw(void) {
   int rtl = app_rtl();
   text_draw(G.title, rtl ? SB_W - 48 : 48, 120, 44, 800, WHITE_A(255), -0.8f, SB_W - 96, rtl ? ALIGN_RIGHT : ALIGN_LEFT);

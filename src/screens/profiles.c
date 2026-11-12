@@ -18,6 +18,7 @@
 #include <strings.h>
 #include <stdio.h>
 #include <string.h>
+#include "platform/plat.h"
 
 #define MAXP 8
 static struct { int open, was, mode, idx, pinMode, addMode, pad, busy; char addName[24]; Osk osk; double at, outAt; char pin[12], err[96]; NvProfile pinFor; float foc[MAXP]; } P;
@@ -61,6 +62,9 @@ static int key(int k) {
   if (P.addMode) {
     if (P.busy) return 1;
     if (k == K_BACK && !P.addName[0]) { P.addMode = 0; P.err[0] = 0; osk_close(&P.osk); return 1; }
+#if SB_WINDOWED
+    if (k == K_OK && plat_text_input() && !app_ptr_pressing()) { P.err[0] = 0; add_submit(); return 1; } /* a keyboard's Enter: done (a click types the key under it) */
+#endif
     P.err[0] = 0; if (osk_key(&P.osk, k, P.addName, 21) == 2) add_submit();
     return 1; }
   if (P.pinMode) {
@@ -128,7 +132,12 @@ static void draw(void) {
   }
   gfx_opacity_pop();
 }
-static Screen overlay = { NULL, NULL, key, tick, draw, NULL, NULL, NULL };
+/* a keyboard types the new profile's name (Backspace comes as "\b") */
+static void text_in(const char *u) { if (!P.open || !u) return; if (!strcmp(u, "\b") && (!P.addMode || !P.addName[0])) { key(K_BACK); return; } /* Backspace with nothing to delete: Back */
+  if (!P.addMode || P.busy) return; size_t n = strlen(P.addName);
+  if (!strcmp(u, "\b")) { if (n) { n--; while (n && (P.addName[n] & 0xc0) == 0x80) n--; P.addName[n] = 0; } P.err[0] = 0; return; }
+  if ((unsigned char)u[0] < ' ') return; size_t m = strlen(u); if (n + m >= 21) return; memcpy(P.addName + n, u, m + 1); P.osk.shift = 0; P.err[0] = 0; }
+static Screen overlay = { NULL, NULL, key, tick, draw, NULL, NULL, text_in };
 void profiles_at_start(void) { if (!acct_is_nuvio() || !sb_signed_in()) return; if ((nv_profile_count() > 1 && strcmp(store_get("askProfile", "true"), "false")) || current_locked()) profiles_open(PF_START); }
 void profiles_open(int mode) {
   fprintf(stderr, "[profiles] open, mode %d\n", mode); P.open = 1; P.was = 1; P.mode = mode; P.pinMode = 0; P.addMode = 0; P.osk.open = 0; P.osk.a.v = 0; P.busy = 0; P.err[0] = 0; P.idx = 0; P.at = app_now();

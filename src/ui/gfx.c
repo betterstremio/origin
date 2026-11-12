@@ -555,6 +555,7 @@ void gfx_clip_push(float x, float y, float w, float h) {
     c.x = ax; c.y = ay; c.w = bx - ax; c.h = by - ay; }
   if (nclip < 16) clips[nclip] = curClip; nclip++; curClip = c; apply_clip();
 }
+int gfx_clip_get(float *x, float *y, float *w, float *h) { if (!nclip) return 0; *x = curClip.x; *y = curClip.y; *w = curClip.w; *h = curClip.h; return 1; }
 void gfx_clip_pop(void) { if (!nclip) return; nclip--; if (nclip < 16) curClip = clips[nclip]; apply_clip(); }
 void gfx_opacity_push(float k) { if (nopac < 16) opac[nopac] = curOpac; nopac++; curOpac *= k; }
 void gfx_opacity_pop(void) { if (!nopac) return; nopac--; if (nopac < 16) curOpac = opac[nopac]; }

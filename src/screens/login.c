@@ -147,7 +147,8 @@ static void blob(float cx, float cy, uint32_t c, float peak) {
   float R = 550; gfx_alpha_tex(gfx_radial_tex(), cx - R, cy - R, 2 * R, 2 * R, col_alpha(c, peak * 0.55f)); /* a soft disc from a small texture: one cheap quad */
 }
 static void sw_act(int v, int b) { (void)b; set_service(v); }
-static void zone_focus(int z, int b) { (void)b; if (L.zone != z) { if (L.editing) { L.editing = 0; SDL_StopTextInput(); osk_close(&L.osk); } L.zone = z; } }
+static void zone_focus(int z, int b) { (void)b; if (L.zone != z) { if (L.editing && app_scroll_hold()) return; /* a desktop: the pointer passing over the other field leaves the typing alone (a click moves it) */
+    if (L.editing) { L.editing = 0; SDL_StopTextInput(); osk_close(&L.osk); } L.zone = z; } }
 static double glowT0 = -1; /* the glows' own clock: kept past signing in, the start screen carries them on */
 void login_glows_draw(void) {
   if (glowT0 < 0) glowT0 = app_now(); float t = (float)(app_now() - glowT0);

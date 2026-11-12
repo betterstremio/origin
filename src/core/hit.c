@@ -10,7 +10,22 @@ int hit_count(void) { return n; }
 void hit_trim(int to) { if (to >= 0 && to < n) n = to; }
 static void add(float x, float y, float w, float h, HitFn focus, HitFn act, int a, int b, int shield, int nav) {
   if (n >= MAXHIT) return; float x0 = x, y0 = y, x1 = x + w, y1 = y + h; gfx_xform_point(&x0, &y0); gfx_xform_point(&x1, &y1);
-  Hit *t = &hits[n++]; t->x = x0; t->y = y0; t->w = x1 - x0; t->h = y1 - y0; t->focus = focus; t->act = act; t->a = a; t->b = b; t->shield = shield; t->nav = nav;
+  int peek = 0;
+#if SB_WINDOWED
+  /* a desktop window: what the clip hides cannot be pointed at, and a part-hidden one is only peeking */
+  if (!shield) { const float E = 4; float cx, cy, cw, ch;
+    if (!gfx_mirrored() && gfx_clip_get(&cx, &cy, &cw, &ch)) {
+      if (x0 < cx - E || y0 < cy - E || x1 > cx + cw + E || y1 > cy + ch + E) peek = 1;
+      if (x0 < cx) x0 = cx; if (y0 < cy) y0 = cy; if (x1 > cx + cw) x1 = cx + cw; if (y1 > cy + ch) y1 = cy + ch;
+      if (x1 <= x0 || y1 <= y0) return; }
+    if (x0 < -E || y0 < -E || x1 > SB_W + E || y1 > SB_H + E) peek = 1; }
+#endif
+  Hit *t = &hits[n++]; t->x = x0; t->y = y0; t->w = x1 - x0; t->h = y1 - y0; t->focus = focus; t->act = act; t->a = a; t->b = b; t->shield = shield; t->nav = nav; t->peek = peek;
+}
+void hit_peek_last(void) {
+#if SB_WINDOWED
+  if (n > 0) hits[n - 1].peek = 1;
+#endif
 }
 void hit_add(float x, float y, float w, float h, HitFn focus, HitFn act, int a, int b) { add(x, y, w, h, focus, act, a, b, 0, 0); }
 void hit_add_nav(float x, float y, float w, float h, HitFn focus, HitFn act, int a, int b) { add(x, y, w, h, focus, act, a, b, 0, 1); }

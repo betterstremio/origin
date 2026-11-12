@@ -162,6 +162,11 @@ static void run_script(const char *script, int frame) {
     if (f == frame && !strncmp(c + 1, "move ", 5)) { float x, y; if (sscanf(c + 6, "%f %f", &x, &y) == 2) app_pointer_move(x, y); continue; } /* "300:move 400 600", "320:click 400 600", "340:wheel -1" */
     if (f == frame && !strncmp(c + 1, "click ", 6)) { float x, y; if (sscanf(c + 7, "%f %f", &x, &y) == 2) { app_pointer_button(1, x, y); app_pointer_button(0, x, y); } continue; }
     if (f == frame && !strncmp(c + 1, "wheel ", 6)) { app_pointer_wheel(0, (float)atof(c + 7)); continue; }
+    if (f == frame && !strncmp(c + 1, "text ", 5)) { app_text(c + 6); continue; } /* "400:text abc": typed on a keyboard */
+    if (f == frame && !strncmp(c + 1, "hwheel ", 7)) { app_pointer_wheel((float)atof(c + 8), 0); continue; } /* "360:hwheel 1": sideways (right) */
+    if (f == frame && !strncmp(c + 1, "rclick ", 7)) { float x, y; if (sscanf(c + 8, "%f %f", &x, &y) == 2 && !app_pointer_menu(x, y)) { app_key(K_BACK, 1, 0); app_key(K_BACK, 0, 0); } continue; }
+    if (f == frame && !strncmp(c + 1, "press ", 6)) { float x, y; if (sscanf(c + 7, "%f %f", &x, &y) == 2) app_pointer_button(1, x, y); continue; } /* "press"/"release": a drag in between with "move" */
+    if (f == frame && !strncmp(c + 1, "release ", 8)) { float x, y; if (sscanf(c + 9, "%f %f", &x, &y) == 2) app_pointer_button(0, x, y); continue; }
     if (f == frame) { int k = script_key(c + 1); if (k) { app_key(k, 1, 0); app_key(k, 0, 0); } }
     else if (f + 40 == frame && !strncmp(c + 1, "hold", 4)) { app_key(K_OK, 0, 0); }
     else if (f == frame + 0 && 0) {}
@@ -334,7 +339,11 @@ int main(int argc, char **argv) {
     while (SDL_PollEvent(&e)) {
       if (getenv("SB_EVLOG") || frame < 120) if (e.type == SDL_QUIT || e.type == SDL_KEYDOWN || e.type == SDL_KEYUP || e.type == SDL_WINDOWEVENT) fprintf(stderr, "[ev] type=%d%s sc=%d sym=%d win=%d\n", e.type, e.type == SDL_QUIT ? " QUIT" : "", e.type == SDL_KEYDOWN || e.type == SDL_KEYUP ? e.key.keysym.scancode : 0, e.type == SDL_KEYDOWN || e.type == SDL_KEYUP ? e.key.keysym.sym : 0, e.type == SDL_WINDOWEVENT ? e.window.event : 0);
       if (e.type == SDL_QUIT) { fprintf(stderr, "[exit] SDL_QUIT\n"); app_quit(); }
-      else if (e.type == SDL_KEYDOWN || e.type == SDL_KEYUP) { int k = plat_map_key(&e.key);
+      else if (e.type == SDL_KEYDOWN || e.type == SDL_KEYUP) {
+#if SB_WINDOWED
+        if (e.key.keysym.sym == SDLK_APPLICATION || (e.key.keysym.sym == SDLK_F10 && (e.key.keysym.mod & KMOD_SHIFT))) { if (e.type == SDL_KEYDOWN && !e.key.repeat) app_menu_key(); continue; } /* the menu key, Shift+F10: the card's menu */
+#endif
+        int k = plat_map_key(&e.key);
 #if !SB_WINDOWED
         if (k == K_BACK && e.key.keysym.sym == SDLK_ESCAPE && e.type == SDL_KEYDOWN && SCR == SCR_LOGIN) app_quit(); /* (a desktop window has its own close button) */
 #endif
@@ -354,11 +363,20 @@ int main(int argc, char **argv) {
           if ((video_state() == VID_PAUSED) != pausedBefore) { app_key(K_PLAYPAUSE, 1, 0); app_key(K_PLAYPAUSE, 0, 0); }
           plat_fullscreen_toggle(); eatUp = 1; continue; }
         if (e.button.button == SDL_BUTTON_LEFT && e.type == SDL_MOUSEBUTTONUP && eatUp) { eatUp = 0; continue; }
-        if ((e.button.button == SDL_BUTTON_RIGHT || e.button.button == SDL_BUTTON_X1) && e.type == SDL_MOUSEBUTTONDOWN) { app_key(K_BACK, 1, 0); app_key(K_BACK, 0, 0); } /* right button and the mouse's back button: Back */
+        if (e.button.button == SDL_BUTTON_RIGHT && e.type == SDL_MOUSEBUTTONDOWN && app_pointer_menu(x, y)) continue; /* right button: the card's menu there ... */
+        if ((e.button.button == SDL_BUTTON_RIGHT || e.button.button == SDL_BUTTON_X1) && e.type == SDL_MOUSEBUTTONDOWN) { app_key(K_BACK, 1, 0); app_key(K_BACK, 0, 0); } /* ... else Back, as the mouse's back button */
 #endif
         if (e.button.button == SDL_BUTTON_LEFT) app_pointer_button(e.type == SDL_MOUSEBUTTONDOWN, x, y);
       }
-      else if (e.type == SDL_MOUSEWHEEL) app_pointer_wheel((float)e.wheel.x, (float)e.wheel.y);
+      else if (e.type == SDL_MOUSEWHEEL) {
+#if SB_WINDOWED
+        float wx = e.wheel.preciseX, wy = e.wheel.preciseY; if (e.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) { wx = -wx; wy = -wy; }
+        if ((SDL_GetModState() & KMOD_SHIFT) && !wx) { wx = -wy; wy = 0; } /* Shift+wheel: sideways (down = right) */
+        app_pointer_wheel(wx, wy);
+#else
+        app_pointer_wheel((float)e.wheel.x, (float)e.wheel.y);
+#endif
+      }
       else if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) { GL_SIZE(win, &dw, &dh); gfx_resize(dw, dh); }
 #if SB_WINDOWED
       else if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_DISPLAY_CHANGED && vsyncOn) desktop_rate(win);

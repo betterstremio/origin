@@ -372,6 +372,7 @@ static void topnav_paint(void) {
 }
 static Scr chipScr(int i) { return i == NAV_SEARCH ? SCR_SEARCH : i == NAV_SET ? SCR_SET : i == NAV_DISC ? SCR_DISC : i == NAV_HOME ? SCR_HOME : SCR_LIB; }
 void topnav_focus(void) { topNav.active = 1; topnav_paint(); }
+void topnav_leave(void) { if (!topNav.active) return; topNav.active = 0; topnav_paint(); } /* the pointer went into the page: the bar's pill lets go too */
 void topnav_switch(int i) {
   i = i < 0 ? 0 : i > 4 ? 4 : i;
   if (i == topNav.idx && (app_is_board(SCR) || SCR == SCR_SEARCH || SCR == SCR_SET)) return;
@@ -792,10 +793,26 @@ static void key_core(int k, int down, int repeat);
 #define PTR_ARROW_WIN 0.35
 #define PTR_ARROW_DIST 32
 #define PTR_ARROW_PAUSE 0.3
-static struct { int on; float x, y; Hit hv; int hasHv; float hx, hy; double movedAt; int down, downAct; Hit act; double okKeyAt, clickAt, wheelAt; int eatUp, eatOk, arrowHid; double arrowAt; int anchor; float ax, ay; double tremAt; int dirty; } PTR;
+static struct { int on; float x, y; Hit hv; int hasHv; float hx, hy; double movedAt; int down, downAct; Hit act; double okKeyAt, clickAt, wheelAt; int eatUp, eatOk, arrowHid; double arrowAt; int anchor; float ax, ay; double tremAt; int dirty, hold; float wacc, waccX; Hit over; int hasOver; } PTR;
+/* a desktop window: the focus the pointer gave by hovering holds the page still (the screens keep their scroll where it
+   was) until a key, the wheel or a click moves it; on a TV the page follows the pointer as it follows the arrows */
+int app_scroll_hold(void) {
+#if SB_WINDOWED
+  return PTR.hold;
+#else
+  return 0;
+#endif
+}
+int app_ptr_pressing(void) { return PTR.down == 1; } /* the OK being handled is the pointer's button */
+int app_ptr_over(float x, float y, float w, float h) { return PTR.on && PTR.x >= x && PTR.x < x + w && PTR.y >= y && PTR.y < y + h; }
+int app_ptr_hovers(void (*focus)(int, int), int a) { return PTR.hasOver && PTR.over.focus == focus && PTR.over.a == a; } /* (last frame's rectangles) */
 static void ptr_show(void) { int was = PTR.arrowHid; PTR.arrowHid = 0; if (was) plat_cursor_visible(1); if (PTR.on) return; PTR.on = 1; PTR.hasHv = 0; }
 static void ptr_hide(void) { if (!PTR.on) return; PTR.on = 0; PTR.hasHv = 0; }
-static int ptr_tremor(double now) { if (!PTR.arrowHid) return 0; if (now - PTR.arrowAt < PTR_ARROW_WIN) return 1;
+static int ptr_tremor(double now) { if (!PTR.arrowHid) return 0;
+#if SB_WINDOWED
+  (void)now; return 0; /* a desktop's mouse does not tremble in a hand: any move brings it back */
+#endif
+  if (now - PTR.arrowAt < PTR_ARROW_WIN) return 1;
   if (!PTR.anchor || now - PTR.tremAt > PTR_ARROW_PAUSE) { PTR.anchor = 1; PTR.ax = PTR.x; PTR.ay = PTR.y; } PTR.tremAt = now; float dx = PTR.x - PTR.ax, dy = PTR.y - PTR.ay; return dx * dx + dy * dy < PTR_ARROW_DIST * PTR_ARROW_DIST; }
 static void ptr_nav_back(void) { if (topNav.want >= 0) return; Scr cur = tab_scr(); for (int j = 2; j < 5; j++) if (chipScr(j) == cur && topNav.idx != j) { topNav.idx = j; topnav_paint(); } }
 static void ptr_keep(const Hit *h) { PTR.hv = *h; PTR.hasHv = 1; PTR.hx = h->x + h->w / 2; PTR.hy = h->y + h->h / 2; }
@@ -810,6 +827,10 @@ static void ptr_frame(void) { if (!PTR.on || !PTR.dirty) return; PTR.dirty = 0; 
   if (topNav.active && !(d && d->nav)) ptr_nav_back();
   if (!d || !d->focus || (PTR.hasHv && hit_same(d, &PTR.hv))) return;
   if (PTR.movedAt && now - PTR.movedAt < PTR_SETTLE) { PTR.dirty = 1; return; } /* the page is still moving under the pointer */
+#if SB_WINDOWED
+  if (d->peek) return; /* only peeking: a click brings it in */
+  PTR.hold = 1; curKey = K_RIGHT; idle_touch(); curKey = 0; /* a new element under the pointer: as an arrow's step for the trailers and the card's clock, not every twitch of the mouse */
+#endif
   d->focus(d->a, d->b); ptr_keep(d); }
 /* a desktop window: the fullscreen button in the top-right corner, the bar's glass circle (hover lights it, a click
    switches, F11 / Alt+Enter / a double click on a film do the same). Its right edge at right, centred on cy; the room
@@ -832,27 +853,71 @@ float app_fs_button(float right, float cy) {
   (void)right; (void)cy; return 0;
 #endif
 }
-void app_pointer_move(float x, float y) { if (x == PTR.x && y == PTR.y) return; PTR.x = x; PTR.y = y; if (ptr_tremor(NOW)) return; ptr_show(); idle_touch_by("pointer moved"); PTR.dirty = 1; }
+void app_pointer_move(float x, float y) { if (x == PTR.x && y == PTR.y) return; PTR.x = x; PTR.y = y; if (ptr_tremor(NOW)) return; ptr_show();
+#if SB_WINDOWED
+  lastIn = NOW; /* awake (the frame rate, the screensaver), but the card under it keeps opening: only a new element counts as a move (ptr_frame) */
+#else
+  idle_touch_by("pointer moved");
+#endif
+  PTR.dirty = 1; }
 void app_pointer_button(int down, float x, float y) {
   double now = NOW; PTR.x = x; PTR.y = y;
   if (saver_on()) return; /* the screensaver covers the page: nothing under it is pressed */
   if (down) { ptr_show(); idle_touch();
     if (PTR.okKeyAt && now - PTR.okKeyAt < PTR_DEDUPE) { PTR.eatUp = 1; return; } /* the OK key of this same press came first */
     PTR.clickAt = now;
+#if SB_WINDOWED
+    if (player_open()) { const Hit *f = hit_at(x, y); if (f && f->act == fs_act) { PTR.down = 3; PTR.act = *f; return; } } /* over a film: its corner's fullscreen button is the window's, not the player's */
+#endif
     if (player_open()) { extern void player_ptr(int type, float x, float y); PTR.down = 2; player_ptr(1, x, y); return; }
     const Hit *d = hit_at(x, y); if (!d) return;
     if (d->act) { PTR.down = 3; PTR.act = *d; return; }
     if (d->shield || !d->focus) return;
+    PTR.hold = 0;
+#if SB_WINDOWED
+    if (d->peek) { d->focus(d->a, d->b); ptr_keep(d); PTR.down = 4; return; } /* peeking: the click brings it into view, the next one opens it */
+#endif
     d->focus(d->a, d->b); ptr_keep(d); PTR.down = 1; key_core(K_OK, 1, 0); /* OK pressed (held: the card's menu) */
     return; }
   if (PTR.eatUp) { PTR.eatUp = 0; return; }
   int dn = PTR.down; PTR.down = 0; if (!dn) return;
   if (dn == 2) { extern void player_ptr(int type, float x, float y); player_ptr(2, x, y); return; }
   if (dn == 1) { key_core(K_OK, 0, 0); return; }
+  if (dn == 4) return;
   const Hit *d = hit_at(x, y); if (d && hit_same(d, &PTR.act)) PTR.act.act(PTR.act.a, PTR.act.b); /* released on it: its own action */
 }
 /* the wheel = the Up/Down arrows (Left/Right for a sideways wheel), one per notch; it leaves the pointer out */
-void app_pointer_wheel(float dx, float dy) { double now = NOW; if (saver_on()) return; if (now - PTR.wheelAt < PTR_WHEEL || (!dx && !dy)) return; PTR.wheelAt = now; idle_touch(); int k = dy > 0 ? K_UP : dy < 0 ? K_DOWN : dx > 0 ? K_RIGHT : K_LEFT; key_core(app_mirror_key(k), 1, 0); key_core(k, 0, 0); }
+static void wheel_step(int k) { idle_touch(); key_core(app_mirror_key(k), 1, 0); key_core(k, 0, 0); }
+void app_pointer_wheel(float dx, float dy) { double now = NOW; if (saver_on()) return;
+#if SB_WINDOWED
+  /* a desktop: a wheel's notch is 1, a touchpad sends small parts of one: they add up, a step for each whole one
+     (at most 3 from one event); a pause or a turn the other way starts again. Over a film it is the volume */
+  if (!dx && !dy) return; lastIn = now;
+  if (player_open()) { extern void player_wheel(float dy); player_wheel(dy); return; }
+  if (now - PTR.wheelAt > 0.4) PTR.wacc = PTR.waccX = 0; PTR.wheelAt = now;
+  if ((dy > 0) != (PTR.wacc > 0) && PTR.wacc) PTR.wacc = 0; if ((dx > 0) != (PTR.waccX > 0) && PTR.waccX) PTR.waccX = 0;
+  PTR.wacc += dy; PTR.waccX += dx;
+  for (int i = 0; i < 3 && fabsf(PTR.wacc) >= 0.999f; i++) { int up = PTR.wacc > 0; PTR.wacc += up ? -1 : 1; wheel_step(up ? K_UP : K_DOWN); }
+  for (int i = 0; i < 3 && fabsf(PTR.waccX) >= 0.999f; i++) { int rt = PTR.waccX > 0; PTR.waccX += rt ? -1 : 1; wheel_step(rt ? K_RIGHT : K_LEFT); }
+  if (fabsf(PTR.wacc) >= 1) PTR.wacc = 0; if (fabsf(PTR.waccX) >= 1) PTR.waccX = 0;
+#else
+  if (now - PTR.wheelAt < PTR_WHEEL || (!dx && !dy)) return; PTR.wheelAt = now; wheel_step(dy > 0 ? K_UP : dy < 0 ? K_DOWN : dx > 0 ? K_RIGHT : K_LEFT);
+#endif
+}
+/* a desktop's right button: the menu of the card under it (as holding OK on it), or Back where there is none */
+int app_pointer_menu(float x, float y) {
+  if (saver_on() || player_open()) return 0; PTR.x = x; PTR.y = y; Screen *sc = app_overlay ? app_overlay : screens[SCR];
+  const Hit *d = hit_at(x, y); if (!d || d->shield || !d->focus || d->nav || !sc || topNav.active) return 0;
+  PTR.hold = 0; d->focus(d->a, d->b); ptr_keep(d); idle_touch();
+  if (sc->menu && sc->menu()) { sound_play(SND_HOLD); return 1; }
+  if (app_overlay) return 1; /* a sheet's row with nothing held: nothing (Back would close the sheet) */
+  const Item *fi = sc->focused ? sc->focused() : NULL; if (!fi || !app_card_menu_hook) return 0;
+  orbs_pulse(ORB_HOLD, 1); sound_play(SND_HOLD); app_card_menu_hook(fi); return 1;
+}
+/* the keyboard's menu key (or Shift+F10): the focused card's menu */
+void app_menu_key(void) { Screen *sc = app_overlay ? app_overlay : screens[SCR]; if (saver_on() || player_open() || topNav.active || !sc) return; idle_touch();
+  if (sc->menu && sc->menu()) { sound_play(SND_HOLD); return; } if (app_overlay || !sc->focused) return;
+  const Item *fi = sc->focused(); if (fi && app_card_menu_hook) { orbs_pulse(ORB_HOLD, 1); app_card_menu_hook(fi); } }
 void app_pointer_system(int show) { if (!show) { ptr_hide(); return; } if (PTR.arrowHid) { if (NOW - PTR.arrowAt < PTR_ARROW_WIN) plat_cursor_visible(0); return; } ptr_show(); } /* (the TV showing it again right after an arrow: only the remote stirring) */
 static int text_taker(void) { return (app_overlay && app_overlay->text) || (!app_overlay && screens[SCR] && screens[SCR]->text); }
 void app_key(int k, int down, int repeat) {
@@ -879,7 +944,7 @@ static int okDown; /* OK is down (a key or the pointer's button) */
 int app_ok_down(void) { return okDown; }
 float app_hold_k(double at) { float x = (float)((NOW - at) * 1000 - 220) / (HOLD_MS - 220); return x < 0 ? 0 : x > 1 ? 1 : x; }
 static void key_core(int k, int down, int repeat) {
-  if (down) keyHeld = repeat != 0;
+  if (down) { keyHeld = repeat != 0; if (k != K_CURSOR_SHOW && k != K_CURSOR_HIDE) PTR.hold = 0; } /* a key moves the focus: the page follows it again */
   if (k == K_OK) okDown = down;
   if (player_open()) { if (!(k == K_OK && repeat && down)) player_key(k, down); return; }
   if (!down) { if (k == K_OK) ok_up(); return; }
@@ -1050,6 +1115,7 @@ void app_draw_under(void) {
 }
 void app_draw(void) {
   occOn = occNOn; occX = occNX; occY = occNY; occW = occNW; occH = occNH; occNOn = 0; /* (last frame's still panel) */
+  { const Hit *o = PTR.on && !player_open() ? hit_at(PTR.x, PTR.y) : NULL; PTR.hasOver = o != NULL; if (o) PTR.over = *o; } /* what is under the pointer, before this frame's rectangles replace last frame's */
   hit_begin(); sx_frame_begin(); sx_layer(0);
   /* the player fades in over the page and, leaving, fades off it onto the page: the page is drawn under it only
      while it does not cover it all (the video plane itself never fades: the art and the controls above it do) */

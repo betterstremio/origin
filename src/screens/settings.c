@@ -746,8 +746,9 @@ static void preview_about(float x, float y, float w) {
 void settings_open_usb(void) { for (int i = 0; i < ncat; i++) if (cats[i].opts == playS) { int c = S.cat; S.cat = i; S.zone = 1; S.idx = iUsb; if (S.idx >= cats[i].n) S.idx = cats[i].n - 1; show_cat(i, i >= c ? 1 : -1); return; } }
 void settings_open_keys(void) { for (int i = 0; i < ncat; i++) if (cats[i].opts == keyS) { int c = S.cat; S.cat = i; S.zone = 1; S.idx = 0; show_cat(i, i >= c ? 1 : -1); return; } }
 void settings_open_about(void) { for (int i = 0; i < ncat; i++) if (cats[i].opts == supS) { int c = S.cat; S.cat = i; S.zone = 1; S.idx = 0; show_cat(i, i >= c ? 1 : -1); return; } }
-static void cat_focus(int i, int b) { (void)b; int w = topNav.active; topNav.active = 0; if (S.cat != i) { int c = S.cat; S.cat = i; S.idx = 0; if (!cats[i].out) show_cat(i, i > c ? 1 : -1); w = 1; } if (w || S.zone != 0) S.zone = 0; }
-static void opt_focus(int i, int b) { (void)b; int w = topNav.active; topNav.active = 0; if (S.cat != S.shown) return; if (w || S.zone != 1 || S.idx != i) { S.zone = 1; S.idx = i; } }
+static void cat_focus(int i, int b) { (void)b; if (app_scroll_hold()) { topnav_leave(); return; } /* a desktop: pointing at a section only lights it (below); a click opens it */
+  int w = topNav.active; topnav_leave(); if (S.cat != i) { int c = S.cat; S.cat = i; S.idx = 0; if (!cats[i].out) show_cat(i, i > c ? 1 : -1); w = 1; } if (w || S.zone != 0) S.zone = 0; }
+static void opt_focus(int i, int b) { (void)b; int w = topNav.active; topnav_leave(); if (S.cat != S.shown) return; if (w || S.zone != 1 || S.idx != i) { S.zone = 1; S.idx = i; } }
 static void pick_focus(int i, int b) { (void)b; if (S.pick != i) S.pick = i; }
 static void pick_outside(int a, int b) { (void)a; (void)b; close_pick(); }
 /* text centred on a CSS line box of height L */
@@ -828,6 +829,9 @@ static void draw(void) {
     float d = et - stag(S.catK[i]), e = d < 0.3f ? ease_apply(EASE_SNAP, d / 0.3f) : 1; if (e <= 0.001f) continue;
     int f = S.zone == 0 && i == S.cat, cur = i == S.cat && !f; float y = S.catY[i] + 10 * (1 - e), nx = f ? nudge_x(&S.nudge) : 0, ny = f ? nudge_y(&S.nudge) : 0;
     if (S.zone != 2) hit_add(cx, S.catY[i], CATW, 64, cat_focus, NULL, i, 0);
+#if SB_WINDOWED
+    if (S.zone != 2 && i != S.cat && app_ptr_hovers(cat_focus, i)) gfx_rrect(cx, S.catY[i], CATW, 64, 18, WHITE_A(16)); /* under the pointer: a faint glass, the click opens it */
+#endif
     uint32_t tc = c->out ? (f ? WHITE_A(255) : RGB(0xef, 0x8f, 0x8a)) : f ? ACC_FG : cur ? WHITE_A(255) : WHITE_A(204);
     uint32_t ic = c->out ? tc : f ? ACC_FG : cur ? ACC3 : WHITE_A(140);
     gfx_opacity_push(e);

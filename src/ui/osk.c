@@ -6,6 +6,7 @@
 #include "ui/icon.h"
 #include <stdio.h>
 #include <string.h>
+#include "core/hit.h"
 
 /* 10 keys a row, QWERTY: digits, the letters, the address symbols at the ends; a last row of Shift, Space, Backspace, Done */
 static const char *ROWS[4] = { "1234567890", "qwertyuiop", "asdfghjkl@", "zxcvbnm._-" };
@@ -16,6 +17,9 @@ static const char *ROWS[4] = { "1234567890", "qwertyuiop", "asdfghjkl@", "zxcvbn
 static float key_w(int r, int c) { if (r < 4) return KW; return c == 1 ? 3 * KW + 2 * GAP : c == 3 ? 2 * KW + GAP : KW * 1.5f + GAP / 2; }
 static float key_x(int r, int c) { if (r < 4) return c * (KW + GAP); float x = 0; for (int i = 0; i < c; i++) x += key_w(r, i) + GAP; return x; }
 static int ncols(int r) { return r < 4 ? COLS : 4; }
+/* the pointer: a key under it takes the ring, a click types it (OK) */
+static Osk *hitK;
+static void key_focus(int r, int c) { if (hitK && hitK->open) { hitK->r = r; hitK->c = c; } }
 void osk_open(Osk *k) { k->open = 1; k->r = 0; k->c = 0; tween_to(&k->a, 1, 0.25f, EASE_OUT); k->shown = 0; }
 void osk_close(Osk *k) { k->open = 0; tween_to(&k->a, 0, 0.2f, EASE_OUT); }
 float osk_height(void) { return 5 * (KH + GAP) - GAP; }
@@ -42,7 +46,9 @@ void osk_draw(Osk *k, float x, float y, float w) {
   float tx = x + key_x(k->r, k->c), ty = y + k->r * (KH + GAP), tw = key_w(k->r, k->c);
   if (!k->shown) { tween_set(&k->fx, tx); tween_set(&k->fy, ty); tween_set(&k->fw, tw); k->shown = 1; } else { tween_to(&k->fx, tx, 0.14f, EASE_OUT); tween_to(&k->fy, ty, 0.14f, EASE_OUT); tween_to(&k->fw, tw, 0.14f, EASE_OUT); }
   gfx_offset_push(nudge_x(&k->nudge), nudge_y(&k->nudge)); gfx_rrect(k->fx.v, k->fy.v, k->fw.v, KH, 14, ACC); gfx_offset_pop();
+  hitK = k;
   for (int r = 0; r < 5; r++) for (int c = 0; c < ncols(r); c++) { float kx = x + key_x(r, c), ky = y + r * (KH + GAP), kw = key_w(r, c); int f = r == k->r && c == k->c; float nx = f ? nudge_x(&k->nudge) : 0, ny = f ? nudge_y(&k->nudge) : 0;
+    if (k->open && a > 0.99f) hit_add(kx, ky, kw, KH, key_focus, NULL, r, c);
     if (!f) gfx_rrect(kx, ky, kw, KH, 14, WHITE_A(r == 4 && c == 0 && k->shift ? 46 : 15)); uint32_t fg = f ? ACC_FG : WHITE_A(219);
     if (r < 4) { char s[2] = { ROWS[r][c], 0 }; if (k->shift && s[0] >= 'a' && s[0] <= 'z') s[0] -= 32; text_draw(s, kx + kw / 2 + nx, ky + (KH - text_line_height(26)) / 2 + ny, 26, 700, fg, 0, 0, ALIGN_CENTER); }
     else if (c == 0) text_draw(k->shift ? "ABC" : "abc", kx + kw / 2 + nx, ky + (KH - text_line_height(22)) / 2 + ny, 22, 700, fg, 0.5f, 0, ALIGN_CENTER);

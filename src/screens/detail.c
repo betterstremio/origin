@@ -1,5 +1,9 @@
 /* The title page: cover art, logo, meta, the facts, the synopsis and the faces, the buttons, seasons and episodes.
    Buttons + seasons + episodes are one block that slides up over the synopsis as you go down. */
+#ifndef SB_WINDOWED
+#define SB_WINDOWED 0 /* target.h: 1 on a desktop window */
+#endif
+#define HOLD_STREAMS (SB_WINDOWED ? "Right-click for streams" : "Hold for streams")
 #include "screens/detail.h"
 #include "screens/cwmenu.h"
 #include "screens/streams.h"
@@ -153,7 +157,7 @@ static void play_best_vid(const char *vid) { player_choose_best(D.p.it.type, ID(
 static int play_target(char *vid, size_t cap) {
   snprintf(vid, cap, "%s", film_vid()); if (!is_series()) return 1; const cJSON *st = js_obj(lib_get(ID()), "state");
   const char *v = D.eps && D.epIdx < D.neps ? js_str(D.eps[D.epIdx], "id", NULL) : NULL; if (!v || !*v) v = js_str(st, "video_id", NULL); if (!v || !*v) v = first_unwatched(); if (!v) return 0; snprintf(vid, cap, "%s", v); return 1; }
-static float hold_w(void) { static float w; static unsigned lg; if (!w || lg != i18n_gen()) { lg = i18n_gen(); w = text_width(T("Hold for streams"), 26, 600, 0); } return w; }
+static float hold_w(void) { static float w; static unsigned lg; if (!w || lg != i18n_gen()) { lg = i18n_gen(); w = text_width(T(HOLD_STREAMS), 26, 600, 0); } return w; }
 static void play_best(void) {
   char vid[80]; cJSON *lb = lib_get(ID()); const cJSON *st = js_obj(lb, "state");
   if (!play_target(vid, sizeof vid)) return;
@@ -350,8 +354,9 @@ static void ep_ring(void) {
   if (on != D.epRingOn) { D.epRingOn = on; tween_to(&D.epRingA, on ? 1 : 0, 0.2f, EASE_IN_OUT); if (on) tween_set(&D.epRingA, 1); }
 }
 static void paint(void) {
-  collapse(D.zone == 2 ? 2 : D.zone == 1 ? 1 : 0, 0);
-  if (D.zone == 2) { float x = (D.epIdx > 1 ? D.epIdx - 1 : 0) * EP_W; tween_to(&D.epsX, -x, 0.26f, EASE_OUT); } /* the focused card sits second, the previous one stays in view */
+  if (!app_scroll_hold() || D.col < 0) { /* (a desktop's hover: the page stays as it is; a key, the wheel or a click moves it) */
+    collapse(D.zone == 2 ? 2 : D.zone == 1 ? 1 : 0, 0);
+    if (D.zone == 2) { float x = (D.epIdx > 1 ? D.epIdx - 1 : 0) * EP_W; tween_to(&D.epsX, -x, 0.26f, EASE_OUT); } } /* the focused card sits second, the previous one stays in view */
   ep_ring();
   int pr = D.zone == 3; tween_to(&D.pRingA, pr ? 1 : 0, 0.16f, EASE_IN_OUT); if (pr && D.pRingA.v < 0.01f) tween_set(&D.pRingA, 1);
   bg_follow();
@@ -524,7 +529,7 @@ static void tick(float dt) {
   { int rk = D.zone == 2 ? D.seasonIdx * 10000 + D.epIdx + 1 : 0; if (rk != D.epRestKey) { D.epRestKey = rk; D.epRestAt = app_now(); } }
 }
 /* ---- drawing ---- */
-static void ptr_off(void) { if (topNav.active) { topNav.active = 0; } }
+static void ptr_off(void) { topnav_leave(); }
 static void ppl_focus(int i, int b) { (void)b; ptr_off(); if (D.col >= 1) return; if (D.zone != 3 || D.pIdx != i) { flush_season(); if (D.zone != 3) { D.pRingEnter = 1; timer_start(&D.pRingPop, 0.2f); } D.zone = 3; D.pIdx = i; paint(); } }
 static void btn_focus(int i, int b) { (void)b; ptr_off(); if (D.col >= 2) return; if (D.zone != 0 || D.btnIdx != i) { flush_season(); D.btnIdx = i; D.zone = 0; paint(); } }
 static void season_focus(int i, int b) { (void)b; ptr_off(); if (D.zone != 1 || D.seasonIdx != i) { D.zone = 1; paint(); } (void)i; }
@@ -550,12 +555,12 @@ static void draw_btns(float lx, int rtl) {
     uint32_t fg = b->f ? ACC_FG : WHITE_A(255);
     icon_draw(icon, rtl ? x + BD - 21 - 34 + fo : x + 21 + fo, 21 + fy, 34, fg);
     if (b->la.v > 0.001f) { float hk = b->kind == B_PLAY ? D.lblA.v : 0; gfx_opacity_push(b->la.v * (1 - hk)); text_draw(lbl, rtl ? x + BD - 66 + fo : x + 66 + fo, (BD - text_line_height(26)) / 2 + fy, 26, 600, fg, 0, 0, rtl ? ALIGN_RIGHT : ALIGN_LEFT); gfx_opacity_pop();
-      if (hk > 0.001f) { gfx_opacity_push(b->la.v * hk); text_draw(T("Hold for streams"), rtl ? x + BD - 66 + fo : x + 66 + fo, (BD - text_line_height(26)) / 2 + fy, 26, 600, fg, 0, 0, rtl ? ALIGN_RIGHT : ALIGN_LEFT); gfx_opacity_pop(); } } }
+      if (hk > 0.001f) { gfx_opacity_push(b->la.v * hk); text_draw(T(HOLD_STREAMS), rtl ? x + BD - 66 + fo : x + 66 + fo, (BD - text_line_height(26)) / 2 + fy, 26, 600, fg, 0, 0, rtl ? ALIGN_RIGHT : ALIGN_LEFT); gfx_opacity_pop(); } } }
   /* resting on Play with the best stream on: how to reach every stream, after the row */
   { int on = D.zone == 0 && (revpanel_page_k() <= 0 || revpanel_page_btns()) && D.btnIdx < D.nbtn && D.btn[D.btnIdx].kind == B_PLAY && best_on() && !D.playHold && D.hk.v < 0.01f && app_now() - D.btn[D.btnIdx].fAt > 1.2;
     tween_to(&D.hintA, on ? 1 : 0, on ? 0.4f : 0.2f, EASE_IN_OUT); tween_tick(&D.hintA, app_dt()); /* in slowly, away quickly, never cut */
     if (D.hintA.v > 0.002f) { const Btn *lb = &D.btn[D.nbtn - 1]; float end = lb->x.v + (lb->f ? BD + DC.btnW[lb->kind] + 26 : BD) + 28;
-      gfx_opacity_push(D.hintA.v); gfx_offset_push((rtl ? 1 : -1) * 10 * (1 - D.hintA.v), 0); key_hint(rtl ? lx - end : lx + end, BD / 2, K_OK, T("Hold for streams"), WHITE_A(170), rtl); gfx_offset_pop(); gfx_opacity_pop(); } }
+      gfx_opacity_push(D.hintA.v); gfx_offset_push((rtl ? 1 : -1) * 10 * (1 - D.hintA.v), 0); key_hint(rtl ? lx - end : lx + end, BD / 2, K_OK, T(HOLD_STREAMS), WHITE_A(170), rtl); gfx_offset_pop(); gfx_opacity_pop(); } }
 }
 /* a film's page: Down for its reviews, at the foot in the middle (where the streams' peek was): a soft shade, the
    word spaced out, a thin chevron breathing downwards under it */
@@ -604,7 +609,7 @@ static void draw_ep(int i, float x, float y) {
    it fades and rises in softly, then breathes very gently and a faint sheen crosses it now and then, for as long as it shows */
 static void ep_hint(float x, float y, int rtl) {
   double t = app_now() - D.epRestAt - 1; if (t <= 0) return; /* (a second on it: Down shows its reviews) */ float a = (float)(t / 0.5); a = a > 1 ? 1 : 1 - (1 - a) * (1 - a) * (1 - a);
-  static char tx[2][96]; static float tw[2]; static unsigned lg; if (lg != i18n_gen() || !tx[0][0]) { lg = i18n_gen(); snprintf(tx[0], sizeof tx[0], "%s", T("Episode reviews")); snprintf(tx[1], sizeof tx[1], "%s", T("Hold for streams"));
+  static char tx[2][96]; static float tw[2]; static unsigned lg; if (lg != i18n_gen() || !tx[0][0]) { lg = i18n_gen(); snprintf(tx[0], sizeof tx[0], "%s", T("Episode reviews")); snprintf(tx[1], sizeof tx[1], "%s", T(HOLD_STREAMS));
     for (int i = 0; i < 2; i++) tw[i] = text_width(tx[i], 22, 600, 0.2f) + 30; } /* (the key is drawn on its own, moving) */
   /* best stream on: the two ways on, in turn every 3.5 s (OK held for its streams first, then Down for its reviews), crossfading */
   float m = 0; if (best_on()) { float ph = (float)fmod(t, 7.0); m = ph < 3.15f ? 0 : ph < 3.5f ? (ph - 3.15f) / 0.35f : ph < 6.65f ? 1 : 1 - (ph - 6.65f) / 0.35f; m = m * m * (3 - 2 * m); m = 1 - m; } /* (Hold for streams first, then Episode reviews) */
@@ -633,6 +638,7 @@ static void draw(void) {
   int rtl = app_rtl(); float X0 = 48, X1 = SB_W - 48, W = X1 - X0; int al = rtl ? ALIGN_RIGHT : ALIGN_LEFT; float lx = rtl ? X1 : X0;
   float y = 100; double now = app_now();
   float PK = revpanel_page_k(), pbY = 0; if (PK > 0.001f) { gfx_opacity_push(1 - PK); gfx_offset_push(0, -220 * PK); } /* the reviews rising: the page goes up and away, its buttons stay */
+  int pageHits = hit_count(); /* (what the page under the reviews registers is dropped once they rise: only the panel and the buttons at the top are clicked) */
   /* the cover: nothing in its place while it loads, then it fades in (one already in memory is simply there) */
   dc_check();
   if (D.posterA.v > 0.001f) { const char *src = DC.cover;
@@ -751,7 +757,7 @@ static void draw(void) {
   }
   gfx_offset_pop();
   film_hint();
-  if (PK > 0.001f) { gfx_offset_pop(); gfx_opacity_pop(); /* the buttons glide up to the top, over a darker page for the reviews */
+  if (PK > 0.001f) { hit_trim(pageHits); gfx_offset_pop(); gfx_opacity_pop(); /* the buttons glide up to the top, over a darker page for the reviews */
     gfx_rect(0, 0, SB_W, SB_H, BLACK_A((int)(150 * PK)));
     if (D.pageZone == 2) { gfx_opacity_push(PK); gfx_offset_push(0, 56 - 12 * (1 - PK)); draw_btns(lx, rtl); gfx_offset_pop(); gfx_opacity_pop(); } /* from an episode: the row at the top fades in and out in place (the page's own one comes back below) */
     else { float by = pbY + 220 * PK; by += (56 - by) * PK; gfx_offset_push(0, by); draw_btns(lx, rtl); gfx_offset_pop(); } }
@@ -773,5 +779,10 @@ static int key(int k) {
   if (z != D.zone || b != D.btnIdx || p != D.pIdx || se != D.seasonIdx || e != D.epIdx) sound_focus();
   return r;
 }
+/* a desktop's right button: on Play (best stream on) or an episode, its list of streams, as holding OK does */
+static int menu_streams(void) { if (!best_on()) return 0;
+  if (D.zone == 0 && D.btnIdx < D.nbtn && D.btn[D.btnIdx].kind == B_PLAY) { char vid[80]; D.playHold = 0; fpill_press(&D.pill); if (play_target(vid, sizeof vid)) detail_open_streams(vid); return 1; }
+  if (D.zone == 2 && D.epIdx < D.neps) { const char *v = js_str(D.eps[D.epIdx], "id", ""); D.epHold = 0; if (unreleased(D.eps[D.epIdx])) not_aired(v); else detail_open_streams(v); return 1; }
+  return 0; }
 static const Item *focused_menu(void) { return best_on() && D.zone == 2 ? NULL : focused(); } /* best stream on: holding an episode is its streams, not its menu */
-Screen detailScreen = { enter, leave, key, tick, draw, focused_menu, open_ep, NULL, origin, out };
+Screen detailScreen = { enter, leave, key, tick, draw, focused_menu, open_ep, NULL, origin, out, menu_streams };

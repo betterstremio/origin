@@ -121,6 +121,7 @@ static struct {
   double liveT0, steadyAt; /* the first frame came / playing steadily since */
   int ssOn; double ssAt, ssCheckAt, lastAct; double size; char sizeTxt[24]; unsigned sizeTok; int httpSt, sizeAns, canNext; double errAt; int lastVw, lastVh; double aspRefreshAt;
   /* the pointer: the time bubble over the bar */ int hvOn, barDown; float hvP; Mo hvA;
+  /* a desktop: the wheel's volume and its pill */ int volHm; double volUntil; Mo volA;
   int extTry, embKnown, embWaitOver; double extRetryAt, embWaitAt;
   /* the stream as its addon gave it (headers, group, file facts); the subtitles addons installed for this video, the
      language chosen in their tab */
@@ -664,6 +665,9 @@ static void dts_conv_failed(const char *why) { /* the converted stream didn't pl
 static void dts_tick(void) {
   if (P.dts.conv) { dts_conv_tick(); return; }
   if (!P.dts.dvTried && mkv_listed(mkv) && dv7_convert("read in the file's head")) return;
+#if SB_WINDOWED
+  return; /* a desktop: mpv decodes DTS and TrueHD itself (folded down for stereo, audiodev_win.c): no track is swapped, nothing to say */
+#endif
   if (P.isTrailer || P.dts.gaveUp) return;
   VidTrack ts[16]; int n = aud_list(ts, 16); if (!n) return; /* only after the TV listed them: choosing earlier stalls it */
   int cur = P.curAud >= 0 ? P.curAud : video_audio_current(), ci = 0; for (int i = 0; i < n; i++) if (ts[i].idx == cur) ci = i;
@@ -1812,13 +1816,14 @@ static void foc_update(void) {
   if (strcmp(P.tip, P.btns[fi].lb)) { snprintf(P.tip, sizeof P.tip, "%s", P.btns[fi].lb); P.tipAt = now_(); } /* a new name: its entrance again */
   mo_to(&P.tipA, lw > 0 ? 1 : 0, .14f, C_EASE, 0);
 }
+static void vol_tick(void); static void vol_draw(void);
 void player_tick(float dt) {
   hand_tick(dt);
   subs_pump(); /* subtitle files and lists, fetched on their own threads */
   if (!P.open) return; video_pump(); sync_tick();
-  css();
+  css(); vol_tick();
   Mo *mo[] = { &P.pgA, &P.pgY, &P.in, &P.artA, &P.ttlA, &P.ttlX, &P.ttlY, &P.barA, &P.barY, &P.btnA, &P.btnY, &P.topR, &P.topY, &P.dim, &P.dimT, &P.vig, &P.pzA, &P.bufA, &P.lnA, &P.skA, &P.skS, &P.knA,
-    &P.prA, &P.prY, &P.prB, &P.subB, &P.ccS, &P.dlyA, &P.dlyR, &P.p2pA, &P.focX, &P.focY, &P.focW, &P.focH, &P.focA, &P.tipA, &P.hvA, &P.tray.open, &P.tray.openA, &P.tray.rowX, &P.tray.tabsX, &P.tray.ringX, &P.tray.ringY, &P.tray.ringA, &RL.t };
+    &P.prA, &P.prY, &P.prB, &P.subB, &P.ccS, &P.dlyA, &P.dlyR, &P.p2pA, &P.focX, &P.focY, &P.focW, &P.focH, &P.focA, &P.tipA, &P.hvA, &P.volA, &P.tray.open, &P.tray.openA, &P.tray.rowX, &P.tray.tabsX, &P.tray.ringX, &P.tray.ringY, &P.tray.ringA, &RL.t };
   if (P.skA.v <= 0.001f && !P.skOn) RL.key[0] = 0; /* the pill gone: its next time shows at once */
   for (size_t i = 0; i < sizeof mo / sizeof *mo; i++) mo_tick(mo[i], dt);
   for (int i = 0; i < 4; i++) { mo_tick(&P.tray.colY[i], dt); mo_tick(&P.tray.plY[i], dt); mo_tick(&P.tray.plA[i], dt); }
@@ -2353,7 +2358,7 @@ static void draw_tray(void) {
 }
 void player_draw(void) {
   if (!P.open) return; float a = P.in.v; gfx_opacity_push(a);
-  if (P.live && P.artA.v < 0.999f) { draw_osd(); draw_tray(); }
+  if (P.live && P.artA.v < 0.999f) { draw_osd(); draw_tray(); vol_draw(); }
   else if (P.artA.v < 0.999f) hand_draw();
   draw_art();
   gfx_opacity_pop();
@@ -2393,11 +2398,43 @@ static void ptr_tray(float x, float y, int down) {
     if (P.tray.idx != i || P.tray.zone != 0 || P.tray.onBtn) { P.tray.idx = i; P.tray.zone = 0; P.tray.onBtn = 0; }
     if (down) choose(it); return; }
 }
+/* a desktop: the wheel over the film is its volume (5 a notch, kept for the next film); a pill says how loud */
+static int vol_pct(void) { int v = atoi(store_get("playerVol", "100")); return v < 0 ? 0 : v > 100 ? 100 : v; }
+void player_wheel(float dy) {
+#if SB_WINDOWED
+  if (!P.open || P.closing) return; int v = vol_pct() + (int)lroundf(dy * 5); if (dy > 0 && v == vol_pct()) v++; if (dy < 0 && v == vol_pct()) v--;
+  v = v < 0 ? 0 : v > 100 ? 100 : v; char b[8]; snprintf(b, sizeof b, "%d", v); store_set("playerVol", b); video_set_volume(v, 0); P.volUntil = now_() + 1.2;
+#else
+  (void)dy;
+#endif
+}
+static void vol_tick(void) {
+#if SB_WINDOWED
+  int hm = video_has_media(); if (hm && !P.volHm) video_set_volume(vol_pct(), 0); P.volHm = hm; /* each load starts at 100: the film's own level again */
+  mo_to(&P.volA, now_() < P.volUntil ? 1 : 0, .16f, C_EASE, 0);
+#endif
+}
+static void vol_draw(void) {
+#if SB_WINDOWED
+  if (P.volA.v <= 0.001f) return; int v = vol_pct(); float w = 360, h = 64, x = SB_W / 2 - w / 2, y = 64;
+  gfx_opacity_push(P.volA.v); gfx_rrect(x, y, w, h, h / 2, RGBA(14, 12, 22, 219)); gfx_ring(x, y, w, h, h / 2, 1, WHITE_A(36));
+  icon_draw("p_aud", x + 22, y + 14, 36, WHITE_A(v ? 230 : 110));
+  float bx = x + 76, bw = w - 76 - 90, by = y + h / 2 - 4; gfx_rrect(bx, by, bw, 8, 4, WHITE_A(46)); if (v > 0) gfx_rrect(bx, by, bw * v / 100.0f, 8, 4, WHITE_A(240));
+  char t[8]; snprintf(t, sizeof t, "%d", v); text_draw(t, x + w - 26, y + (h - text_line_height(26)) / 2, 26, 700, WHITE_A(255), 0, 0, ALIGN_RIGHT);
+  gfx_opacity_pop();
+#endif
+}
 void player_ptr(int type, float x, float y) {
   if (!P.open || P.closing || !P.live) return; /* the art is up (resolving): nothing to point at */
   float L25 = text_line_height(25), barTop = SB_H - 54 - 94 - 30 - L25; /* the bar's row, its times included (the track alone is a few pixels high) */
   int onBar = y >= barTop && y <= barTop + L25, onBtns = y >= SB_H - 54 - 94 && y <= SB_H - 54;
+#if SB_WINDOWED
+  /* a desktop: the knob follows a held button anywhere on the screen (the bar shows where it will go), the seek on release */
+  if (type == 0 && P.barDown) { ptr_hv(1, x); double d = dur(); if (d > 0) { P.seekT = P.hvP * d; P.seekCommitAt = now_() + 1e6; } arm_hide(); return; }
+  if (type == 2) { if (P.barDown) { ptr_hv(1, x); double d = dur(); if (d > 0) { P.seekT = P.hvP * d; commit_seek(); } ptr_hv(onBar, x); } P.barDown = 0; return; }
+#else
   if (type == 2) { if (P.barDown && onBar) { ptr_hv(1, x); double d = dur(); if (d > 0) { P.seekT = P.hvP * d; commit_seek(); } } P.barDown = 0; return; } /* the bar seeks on release, where the pointer is then */
+#endif
   int down = type == 1;
   if (P.mode == 4) { /* the delay card: its buttons; elsewhere the picture stays as it is */
     if (DG.h > 0 && y >= DG.y && y <= DG.y + DG.h) for (int i = 0; i < 4; i++) if (x >= DG.x[i] && x <= DG.x[i] + DG.w[i]) { if (P.dlyF != i) { P.dlyF = i; mo_to(&P.dlyR, (float)i, .18f, C_OUT, 0); } if (down) dly_act(i); return; }
@@ -2413,8 +2450,15 @@ void player_ptr(int type, float x, float y) {
     if (pi >= 0) { if (P.mode != 3 || P.prompt.idx != pi) { if (P.mode == 0) show_osd(1); P.mode = 3; P.prompt.idx = pi; } ptr_hv(0, x); if (down) prompt_go(pi); return; } }
   if (P.mode == 0 || P.mode == 3) { if (P.mode == 3) P.mode = 0; show_osd(1); } else arm_hide(); /* moving brings the controls */
   if (onBtns) for (int i = 0; i < P.nbtn; i++) if (x >= P.btns[i].x && x <= P.btns[i].x + P.btns[i].w) { if (P.row != 0 || P.bIdx != i) { P.row = 0; P.bIdx = i; } ptr_hv(0, x); if (down) act(P.btns[i].id); return; }
-  if (onBar) { if (P.row != 1) P.row = 1; ptr_hv(1, x); if (down) P.barDown = 1; return; } /* the bar, its times included */
+  if (onBar) { if (P.row != 1) P.row = 1; ptr_hv(1, x); if (down) { P.barDown = 1;
+#if SB_WINDOWED
+      { double d = dur(); if (d > 0) { P.seekT = P.hvP * d; P.seekCommitAt = now_() + 1e6; } }
+#endif
+    } return; } /* the bar, its times included */
   ptr_hv(0, x);
+#if SB_WINDOWED
+  if (!down && P.mode == 1) P.hideAt = now_() + 2.5; /* over the picture, not a control: the controls go sooner than after a key */
+#endif
   if (down) { if (P.seekT >= 0) commit_seek(); else toggle(); show_osd(1); } /* the picture: play / pause */
 }
 

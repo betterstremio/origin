@@ -18,6 +18,7 @@ typedef struct {
   void (*text)(const char *utf8);     /* typed text (the sign-in fields) */
   int  (*origin)(float *x, float *y); /* the centre of the focused element: the next screen grows out of it, Back shrinks toward it */
   void (*out)(float k);              /* Back: the page drawn once more over the one it returns to, its entrance played backwards (k 0..1) */
+  int  (*menu)(void);                 /* a desktop's right button / menu key on the focused element: what holding OK does there (1), else 0 */
 } Screen;
 
 /* parameters for the title page */
@@ -90,6 +91,7 @@ float app_hold_k(double since);        /* 0..1 of a hold begun then, on the same
 typedef struct { int idx, active; int want; double swAt; Nudge nudge; Tween px, pw, pill; float pillShown; Tween cornerF[2], cornerS[2], dotK[2]; Tween setRot; float chipX[5], chipW[5]; int laidOut; } TopNav;
 extern TopNav topNav;
 void topnav_focus(void);
+void topnav_leave(void);                          /* the content takes the focus (the pointer): the bar unlit */
 void topnav_draw(void);
 void topnav_tick(float dt);
 void topnav_switch(int idx);
@@ -121,6 +123,12 @@ void app_pointer_move(float x, float y);          /* layout units */
 void app_pointer_button(int down, float x, float y);
 void app_pointer_wheel(float dx, float dy);
 void app_pointer_system(int show);                /* the TV showed / hid its cursor */
+int  app_pointer_menu(float x, float y);          /* a desktop's right button: the card menu there (1), or nothing to show (0) */
+void app_menu_key(void);                          /* the keyboard's menu key: the focused card's menu */
+int  app_ptr_pressing(void);                      /* the OK being handled is the pointer's button, not a key */
+int  app_scroll_hold(void);                       /* a desktop: the focus came from hovering, the page keeps its scroll */
+int  app_ptr_over(float x, float y, float w, float h); /* the pointer is shown and inside that rectangle */
+int  app_ptr_hovers(void (*focus)(int, int), int a);  /* the pointer is over the element with that focus callback and first value */
 
 /* ---- toast / notices ---- */
 void toast(const char *msg, int ms, const char *key);

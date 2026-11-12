@@ -136,12 +136,13 @@ static Row *row_add(Board *b, const char *title, int wide, int label) {
   if (b->n >= MAXROWS) return NULL; Row *r = &b->rows[b->n++]; row_clear(r); memset(r, 0, sizeof *r); prep_free(r);
   snprintf(r->title, sizeof r->title, "%s", title); r->wide = wide; r->label = label; r->hidden = 1; r->closing = 0; r->hk = 1; r->recsIdx = -1; r->popCol = -1; tween_set(&r->off, 0); tween_set(&r->a, 1); return r;
 }
-static void slide_row(Row *r) {
+static void slide_row_k(Row *r, int force) {
   float w = step_of(r); int vis = (int)((SB_W - 96) / w);
   int k = r->col - (vis - 2); if (k < 0) k = 0; float off = k * w; if (r->col <= 0) off = 0;
-  tween_to(&r->off, off, 0.18f, EASE_ROW);
+  if (force || !app_scroll_hold()) tween_to(&r->off, off, 0.18f, EASE_ROW); /* (a desktop's hover: the row stays where it is) */
   if (r->popCol != r->col) { r->popCol = r->col; focus_pop(&r->pop); } /* the floating copy pops on every move */
 }
+static void slide_row(Row *r) { slide_row_k(r, 0); }
 static void board_cw_row(Board *b) {
   ItemList cw; if (lib_cw_items(&cw) > 0) { Row *r = row_add(b, "Continue Watching", 1, 0); if (r) { r->items = cw; r->hidden = 0; } else itemlist_clear(&cw); } else itemlist_clear(&cw);
 }
@@ -455,6 +456,11 @@ static void bill_btn(float x, float y, float w, int play, int on, float a) {
 static float bill_btn_w(int play) { return 72 + text_width(T(play ? "Play" : "More info"), 27, 700, 0) + 34; }
 static int bill_hi(void) { static int v = -1; if (v < 0) v = plat_mem_total_mb() >= 1500; return v; }
 static const char *bill_src(const Item *it, char *bu, size_t cap) { return bill_hi() ? sb_bg_large(it, bu, cap) : sb_bg_mid(it, bu, cap); }
+#if SB_WINDOWED
+static void bill_focus(int i, int c) { (void)c; Board *b = cur(); if (!b || !spotOn(b)) return; topnav_leave(); if (b->billBtn != i) { b->billBtn = i; sound_focus(); } }
+static void bill_open(int a, int c) { (void)a; (void)c; Board *b = cur(); const Item *it = b && b->nfeat ? &b->feat[b->featIdx % b->nfeat] : NULL; if (it) app_open_item(it); }
+static void bill_dot(int i, int c) { (void)c; Board *b = cur(); if (!b || !b->nfeat) return; int d = i - b->featIdx % b->nfeat; if (d) { b->billBtn = 0; feat_go(b, d); } }
+#endif
 static void bill_draw(Board *b) {
   float a = b->spotA.v; if (a <= 0.002f || !b->nfeat) return;
   float dy = -60 * (1 - a), X = BILL_X, Y = BILL_Y + dy, W = BILL_W, H = BILL_H; int rtl = app_rtl();
@@ -483,6 +489,13 @@ static void bill_draw(Board *b) {
     meta_draw_p(&hl->mp, x, my, WHITE_A(235), align);
     gfx_opacity_pop(); }
   int f = spotOn(b) && !topNav.active; float pw = bill_btn_w(1), mw = bill_btn_w(0);
+#if SB_WINDOWED
+  if (spotOn(b) && a > 0.99f) { /* a desktop: the picture opens the title, its buttons and dots are pointed at and clicked */
+    hit_act(X, Y, W, H, bill_open, 0, 0);
+    float px = rtl ? x - pw : x, mx = rtl ? x - pw - 18 - mw : x + pw + 18; hit_add(px, by, pw, 66, bill_focus, NULL, 0, 0); hit_add(mx, by, mw, 66, bill_focus, NULL, 1, 0);
+    { int n = b->nfeat; float tot = 0; for (int i = 0; i < n; i++) tot += b->dotW[i].v + 10; float dx = rtl ? X + 56 : X + W - 56 - tot, dyy = Y + H - 56 - 33 - 5;
+      for (int i = 0; i < n; i++) { float w = b->dotW[i].v; hit_act(dx - 5, dyy - 14, w + 10, 38, bill_dot, i, 0); dx += w + 10; } } }
+#endif
   if (rtl) { bill_btn(x - pw, by, pw, 1, f && b->billBtn == 0, 1); bill_btn(x - pw - 18 - mw, by, mw, 0, f && b->billBtn == 1, 1); }
   else { bill_btn(x, by, pw, 1, f && b->billBtn == 0, 1); bill_btn(x + pw + 18, by, mw, 0, f && b->billBtn == 1, 1); }
   /* the dots, bottom right: the one showing wider */
@@ -519,10 +532,16 @@ static void rank_draw(int n, float x, float y, float h) {
   for (int i = 0; i < 8; i++) text_draw(s, x + o[i][0], ty + o[i][1], px, 800, WHITE_A(150), -8, 0, ALIGN_RIGHT);
   text_draw(s, x, ty, px, 800, RGB(0x0c, 0x0b, 0x11), -8, 0, ALIGN_RIGHT);
 }
+#if SB_WINDOWED
+static void spot_focus(int a, int c) { (void)a; (void)c; Board *b = cur(); if (!b || !spotk(b) || !b->nfeat) return; topnav_leave(); if (spotOn(b)) return; b->featOn = 1; b->billBtn = 0; hero_soon(b, 150); feat_arm(b); }
+#endif
 static void hero_draw(Board *b) {
   if (b->kind == 0 && b->cine) { if (b->bill) bill_draw(b); return; } /* the cinematic Home: the billboard; the rows draw their own details */
   if (b->kind == 1 && b->spotA.v > 0.001f) gfx_alpha_tex(scrim_tex(), 260, 170, SB_W - 520, 460, RGBA(12, 11, 17, (int)(255 * b->spotA.v))); /* painted once, one quad */
   if (b->kind == 1) dots_draw(b);
+#if SB_WINDOWED
+  if (b->kind == 1 && b->nfeat) { hit_add(260, 170, SB_W - 520, 460, spot_focus, NULL, 0, 0); if (!spotOn(b)) hit_peek_last(); } /* a desktop: the spotlight is clicked (from the rows: brought back first) */
+#endif
   if (!b->heroSet) return; float a = b->heroA.v; if (a <= 0.001f && !(b->kind == 1 && b->heroSpot)) return;
   /* first launch: the hero rises 18 px and fades in (no delay) */
   float rv = app_reveal_x(0, 0.5f), ry = 18 * (1 - ease_apply(EASE_WEB, rv)), ra = ease_apply(EASE_CSS_EASE, app_reveal_x(0, 0.45f));
@@ -621,7 +640,8 @@ static int key_disc(int k) { return board_key(&boards[1], k); }
 static const Item *focused_cur(void) { Board *b = cur(); return b ? focused_of(b) : NULL; }
 /* the pointer on a card: the highlight moves there, the row follows as for the arrows */
 static void card_focus(int r, int c) { Board *b = cur(); if (!b || r >= b->n) return; Row *row = &b->rows[r]; if (c > col_last(row)) return; int was = topNav.active; if (!was && !spotOn(b) && r == b->rowIdx && c == row->col) return;
-  topNav.active = 0; if (spotOn(b)) spot_leave(b); if (r == b->rowIdx) { row->col = c; slide_row(row); } else { b->rowIdx = r; row->col = c; slide_row(row); } hero_soon(b, 150); row_more(b, r); }
+  if (app_scroll_hold() && (spotOn(b) || r != b->rowIdx)) return; /* a desktop's hover stays in the row in view (the others are only peeking) */
+  topnav_leave(); if (spotOn(b)) spot_leave(b); if (r == b->rowIdx) { row->col = c; slide_row(row); } else { b->rowIdx = r; row->col = c; slide_row(row); } hero_soon(b, 150); row_more(b, r); }
 static void card_open_tick(Board *b, float dt) {
   const Row *r = b->rowIdx < b->n ? &b->rows[b->rowIdx] : NULL; int here = r && r->col < r->items.n && focusOn(b) && !app_overlay;
   if (b->exp.v > 0.001f && (!here || b->expRow != b->rowIdx || b->expCol != r->col)) tween_set(&b->exp, 0); /* moved: shut at once, the row must not lag behind the remote */
@@ -706,6 +726,33 @@ static void row_prefetch(Row *r, int slot, int from, int to) {
 }
 /* "its trailer is playing": three slim bars rising and falling out of step, on a small glass chip in the card's
    top left corner (it comes and goes with the trailer) */
+/* a desktop: a card the pointer may only bring into view by a click (another row, the spotlight in focus, or one
+   whose opening would run past the screen's edge) */
+static void card_peek(Board *b, const Row *r, int ri, int i, float x, float cw, int opens) {
+#if SB_WINDOWED
+  int focused = focusOn(b) && ri == b->rowIdx && i == r->col;
+  if (spotOn(b) || ri != b->rowIdx || (opens && !focused && !r->wide && (app_rtl() ? x + cw - CARD_OPEN_W < 24 : x + CARD_OPEN_W > SB_W - 24))) hit_peek_last();
+#else
+  (void)b; (void)r; (void)ri; (void)i; (void)x; (void)cw; (void)opens;
+#endif
+}
+#if SB_WINDOWED
+/* a desktop: round arrows at the ends of the row in view, while the pointer is over it; a click turns a page of cards */
+static void row_page(int ri, int dir) { Board *b = cur(); if (!b || ri >= b->n) return; Row *r = &b->rows[ri]; int vis = (int)((SB_W - 96) / step_of(r)), n = vis > 1 ? vis - 1 : 1, c = r->col + dir * n, last = col_last(r);
+  if (c < 0) c = 0; if (c > last) c = last; if (c == r->col) { nudge_start(&r->nudge, dir > 0 ? K_RIGHT : K_LEFT); return; }
+  topnav_leave(); if (ri != b->rowIdx) b->rowIdx = ri; r->col = c; slide_row_k(r, 1); hero_soon(b, 150); row_more(b, ri); sound_focus(); }
+static void row_arrows(Board *b, Row *r, int ri, float cy, float ch) {
+  (void)b; extern void gfx_xform_point(float *x, float *y); float sx = 0, sy = cy; gfx_xform_point(&sx, &sy);
+  static Tween show; static int showRow = -1; int over = app_ptr_over(0, sy - 40, SB_W, ch + 80);
+  if (showRow != ri) { showRow = ri; tween_set(&show, 0); } tween_to(&show, over ? 1 : 0, 0.18f, EASE_CSS_EASE); tween_tick(&show, app_dt());
+  if (show.v <= 0.01f) return; int rtl = app_rtl(); const float D = 72; float y = cy + ch / 2 - D / 2, step = step_of(r), end = 48 + (col_last(r) + 1) * step - r->off.to;
+  for (int s = 0; s < 2; s++) { int fwd = s == 1; if (fwd ? end <= SB_W - 40 : r->off.to <= 0.5f) continue;
+    float x = fwd != rtl ? SB_W - 20 - D : 20; int lit = app_ptr_over(x, sy + (y - cy), D, D);
+    hit_act(x, y, D, D, row_page, ri, fwd ? 1 : -1);
+    gfx_opacity_push(show.v); gfx_rrect(x, y, D, D, D / 2, RGBA(14, 12, 22, lit ? 235 : 190)); gfx_ring(x, y, D, D, D / 2, 1.5f, WHITE_A(lit ? 120 : 50));
+    icon_draw(fwd != rtl ? "k_right" : "k_left", x + 18, y + 18, 36, WHITE_A(lit ? 255 : 210)); gfx_opacity_pop(); }
+}
+#endif
 static void row_draw(Board *b, Row *r, int ri, float y, int near, float rowA) {
   int rtl = app_rtl(); float lh = text_line_height(31);
   int active = focusOn(b) && ri == b->rowIdx;
@@ -731,7 +778,7 @@ static void row_draw(Board *b, Row *r, int ri, float y, int near, float rowA) {
   for (int i = i0; i <= i1; i++) {
     float x = 48 + i * step - off + rk0 + (rem && i >= b->remIdx ? step * (1 - rk) : 0) + (i > r->col ? ex : 0); if (rtl) x = SB_W - x - cw; /* (the ones after it close the gap) */
     int load = near && i >= r->col - 2 && i < r->col + 9;
-    if (active && i == r->col) { hit_add(rtl ? x - ex : x, cy, cw + ex, ch, card_focus, NULL, ri, i); continue; } hit_add(x, cy, cw, ch, card_focus, NULL, ri, i); /* the focused card is drawn last, over its neighbours as it grows */
+    if (active && i == r->col) { hit_add(rtl ? x - ex : x, cy, cw + ex, ch, card_focus, NULL, ri, i); card_peek(b, r, ri, i, x, cw, 1); continue; } hit_add(x, cy, cw, ch, card_focus, NULL, ri, i); card_peek(b, r, ri, i, x, cw, 1); /* the focused card is drawn last, over its neighbours as it grows */
     int hold; const CardPrep *cp = row_prep(r, i, load, &hold, NULL); unsigned long long lk = lift_key(r, i);
     lift_begin(lk, 0, 0, x, cy, cw, ch, CARD_R); /* (the one the focus just left settles back) */
     card_draw_prep(&r->items.items[i], cp, x, cy, cw, ch, r->wide, r->label, !hold && (load || near));
@@ -770,17 +817,20 @@ static void row_draw(Board *b, Row *r, int ri, float y, int near, float rowA) {
     if (ra < 1) gfx_opacity_pop(); }
   if (r->ntiles) { int a = (int)(off / step) - 1, z = (int)((off + SB_W - 48) / step) + 1, fit = r->wide ? 1 : 0; if (a < 0) a = 0; if (z > r->ntiles - 1) z = r->ntiles - 1; if (ca < 1) gfx_opacity_push(ca); /* a tile's own picture, with its name only when it asks for one or has none */
     for (int pass = 0; pass < 2; pass++) for (int i = a; i <= z; i++) { int on = active && i == r->col; if (on != pass) continue; const ColFolder *f = &r->tiles[i]; float x = 48 + i * step - off; if (rtl) x = SB_W - x - cw; unsigned long long lk = lift_key(r, i);
-      hit_add(x, cy, cw, ch, card_focus, NULL, ri, i);
+      hit_add(x, cy, cw, ch, card_focus, NULL, ri, i); card_peek(b, r, ri, i, x, cw, 0);
       lift_begin(lk, on, 0, x, cy, cw, ch, CARD_R); GLuint tx = f->cover[0] && near ? img_get_shaped(f->cover, (int)cw, (int)ch, CARD_R, fit) : 0; int pic = tx != 0;
       if (pic) ph_picture(tx, x, cy, cw, ch, CARD_R, WHITE_A(255)); else ph_surface(x, cy, cw, ch, CARD_R);
       if (!f->hideTitle || !f->cover[0] || (!pic && f->cover[0] && img_shaped_failed(f->cover, (int)cw, (int)ch, CARD_R, fit))) text_draw(f->title, x + cw / 2, cy + (ch - lh) / 2, 31, 700, WHITE_A(on ? 255 : 217), 0, cw - 32, ALIGN_CENTER);
       lift_end(lk, x, cy, cw, ch, CARD_R); }
     if (ca < 1) gfx_opacity_pop(); }
   if (see_all(r)) { int i = r->items.n, on = active && r->col == i; float x = 48 + i * step - off + ex; if (rtl) x = SB_W - x - cw;
-    if (x + cw > 0 && x < SB_W) { unsigned long long lk = lift_key(r, i); hit_add(x, cy, cw, ch, card_focus, NULL, ri, i); if (ca < 1) gfx_opacity_push(ca);
+    if (x + cw > 0 && x < SB_W) { unsigned long long lk = lift_key(r, i); hit_add(x, cy, cw, ch, card_focus, NULL, ri, i); card_peek(b, r, ri, i, x, cw, 0); if (ca < 1) gfx_opacity_push(ca);
       lift_begin(lk, on, 0, x, cy, cw, ch, CARD_R); gfx_rrect(x, cy, cw, ch, CARD_R, WHITE_A(on ? 40 : 18));
       text_draw(T("See All"), x + cw / 2, cy + (ch - lh) / 2, 31, 700, WHITE_A(on ? 255 : 191), 0, cw - 32, ALIGN_CENTER);
       lift_end(lk, x, cy, cw, ch, CARD_R); if (ca < 1) gfx_opacity_pop(); } }
+#if SB_WINDOWED
+  if (active && ra > 0.5f) row_arrows(b, r, ri, cy, ch);
+#endif
   gfx_offset_pop();
 }
 static void board_draw(void) {

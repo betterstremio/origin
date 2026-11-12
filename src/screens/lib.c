@@ -202,7 +202,7 @@ static void lift(int i) { if (i == L.fcur) return; L.fold = L.fcur; tween_set(&L
 static void paint(void) { rail_paint(0); head_want();
   lift(L.zone == 1 ? L.idx : -1);
   tween_to(&L.ringA, L.zone == 1 ? 1 : 0, 0.16f, EASE_IN_OUT);
-  int row = L.zone == 1 ? L.idx / COLS : 0; tween_to(&L.gridY, -row * LROWH, 0.32f, EASE_OUT); }
+  int row = L.zone == 1 ? L.idx / COLS : 0; if (!app_scroll_hold()) tween_to(&L.gridY, -row * LROWH, 0.32f, EASE_OUT); } /* (a desktop's hover: the grid stays put) */
 static void enter(const void *p) {
   (void)p; int keep = L.built && L.ver == lib_version(); if (!L.built) L.zone = 1; /* the first visit opens on the grid */ L.built = 1;
   if (!keep) { L.ver = lib_version(); load(); render(); }
@@ -235,6 +235,7 @@ static int key(int k) {
     if ((k == K_RIGHT || k == K_LEFT) && L.ri < NF && L.ri != L.tab) { L.tab = L.ri; L.idx = 0; render(); } /* a filter applies as the focus lands on it */
     else if (k == K_UP) { topnav_focus(); rail_paint(0); return 1; }
     else if (k == K_OK && L.ri == NB - 1) { int si = (sort_key() + 1) % 4; store_set("libSort", S_KEY[si]); sound_play(SND_FILTER); L.idx = 0; timer_start(&L.press, 0.25f); render(); paint(); return 1; } /* OK on the sort: the next order */
+    else if (k == K_OK && L.ri < NF && L.ri != L.tab) { L.tab = L.ri; L.idx = 0; sound_play(SND_FILTER); render(); } /* a click on another filter: that one (the keys apply it as they land) */
     else if (k == K_DOWN || (k == K_OK && L.ri < NF)) { L.ri = L.tab; if (L.n) L.zone = 1; else nudge_start(&L.nudge, k); } /* down (or OK) into the titles */
     else if (k == K_BACK) return 0;
     paint(); return 1; }
@@ -259,8 +260,8 @@ static void tick(float dt) {
 }
 static float col_x(int c) { float x = GRID_X + c * LSTEP; return app_rtl() ? SB_W - x - LW : x; }
 /* the pointer: on a category or the sort, on a poster */
-static void rail_focus(int i, int b) { (void)b; int was = topNav.active; topNav.active = 0; if (was || L.zone != 0 || L.ri != i) { L.zone = 0; L.ri = i; paint(); } }
-static void card_focus(int i, int b) { (void)b; int was = topNav.active; topNav.active = 0; if (was || L.zone != 1 || L.idx != i) { L.zone = 1; L.idx = i; paint(); } }
+static void rail_focus(int i, int b) { (void)b; int was = topNav.active; topnav_leave(); if (was || L.zone != 0 || L.ri != i) { L.zone = 0; L.ri = i; paint(); } }
+static void card_focus(int i, int b) { (void)b; int was = topNav.active; topnav_leave(); if (was || L.zone != 1 || L.idx != i) { L.zone = 1; L.idx = i; paint(); } }
 static void draw_card(const LibIt *o, float x, float y, int load) {
   const char *src = o->poster; GLuint t = src[0] && (load || img_shaped_loaded(src, (int)LW, (int)LH, CARD_R, 0)) ? img_get_shaped(src, (int)LW, (int)LH, CARD_R, 0) : 0;
   int failed = !t && (!src[0] || img_shaped_failed(src, (int)LW, (int)LH, CARD_R, 0));

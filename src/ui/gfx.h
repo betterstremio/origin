@@ -87,6 +87,7 @@ void gfx_set_screen_fbo(GLuint fbo);                  /* frames go to this frame
 /* state */
 void gfx_clip_push(float x, float y, float w, float h);  /* intersects with the current clip */
 void gfx_clip_pop(void);
+int  gfx_clip_get(float *x, float *y, float *w, float *h); /* the current clip in screen space; 0 when none */
 /* mirrored drawing (a left-to-right picture shown right to left): where everything lands is flipped about the
    vertical line at cx; pictures and words keep their own way round. Not nested */
 void gfx_mirror_push(float cx);

@@ -1,5 +1,8 @@
 /* The streams sheet: an opaque side sheet from the right edge with soft leading corners and a shadow over the page's
    glass, a sentence-case heading, calm rows and the gliding accent highlight under the focus. */
+#ifndef SB_WINDOWED
+#define SB_WINDOWED 0 /* target.h: 1 on a desktop window */
+#endif
 #include "screens/streams.h"
 #include <SDL2/SDL.h>
 #include "screens/sheet.h"
@@ -86,7 +89,8 @@ static void on_done(int total, void *ud) { (void)total; if ((unsigned)(uintptr_t
 static int key(int k);
 static void tick(float dt);
 static void draw(void);
-static Screen sheet = { NULL, NULL, key, tick, draw, NULL, NULL, NULL };
+static int sheet_menu(void);
+static Screen sheet = { NULL, NULL, key, tick, draw, NULL, NULL, NULL, NULL, NULL, sheet_menu };
 static float sheet_x(void) { return app_rtl() ? 0 : SB_W - SW; }
 static char emptyNote[200]; /* said instead of "No streams found." (an episode that has not aired) */
 void streams_empty_note(const char *t) { snprintf(emptyNote, sizeof emptyNote, "%s", t ? t : ""); }
@@ -130,6 +134,9 @@ static float info_measure(const Stream *s, float w) {
   char sub[320]; info_sub(s, sub, sizeof sub); float h = text_line_height(30) + 8 + text_wrap_count(sub, w, 3, 24, 600, 0) * 32.0f;
   for (int i = 0; i < 3; i++) { const char *t = info_text(s, i); if (!t[0]) continue; h += 26 + text_line_height(21) + 6 + text_wrap_count(t, w, 80, 26, 400, 0) * 36.0f; }
   return h; }
+static void info_open(void);
+/* a desktop's right button on the best or resume row: its details, as holding OK does */
+static int sheet_menu(void) { if (!S.open || S.info || S.zone != 0 || S.idx >= S.n || S.kind[S.idx] == R_PLAIN) return 0; S.holding = 0; info_open(); return 1; }
 static void info_open(void) {
   if (S.idx >= S.n) return; const Stream *s = S.items[S.idx]; S.infoS = s; S.info = 1; qt_set(&S.infoY, 0);
   /* its width: the widest line, between a minimum and the sheet's content; its height: the words, within the screen's margins */
@@ -204,7 +211,7 @@ static void tick(float dt) {
   tween_tick(&S.x, dt > 0.034f ? 0.034f : dt); tween_tick(&S.op, dt > 0.034f ? 0.034f : dt); tween_tick(&S.out, dt); if (S.closing && !S.out.on && S.out.v <= 0) S.closing = 0;
   nudge_tick(&S.nudge, dt); qt_tick(&S.chipsX, dt); qt_tick(&S.listY, dt); fpill_tick(&S.pill, dt); sglass_tick(&S.glass, dt);
   layout(); float y = S.idx > 0 && S.idx - 1 < S.n ? S.itemY[S.idx - 1] : 0; /* the card above the focus stays fully visible */
-  qt_to(&S.listY, -y, 0.24f);
+  if (!app_scroll_hold()) qt_to(&S.listY, -y, 0.24f); /* (a desktop's hover: the list stays put) */
   if (S.zone == 0 && S.idx < S.n) fpill_to(&S.pill, 0, S.itemY[S.idx], LW, S.itemH[S.idx], GLIDE_DUR); else fpill_hide(&S.pill);
   fpill_tick(&S.chipPill, dt); qt_tick(&S.ulX, dt); qt_tick(&S.ulW, dt); tween_to(&S.phA, S.loading && !S.n ? 1 : 0, 0.22f, EASE_IN_OUT); tween_to(&S.msgA, !S.loading && !S.n ? 1 : 0, 0.26f, EASE_IN_OUT); tween_to(&S.spA, S.loading ? 1 : 0, 0.25f, EASE_IN_OUT);
   tween_tick(&S.phA, dt); tween_tick(&S.msgA, dt); tween_tick(&S.spA, dt); tween_tick(&S.infoK, dt); qt_tick(&S.infoY, dt); sglass_tick(&S.pglass, dt);
@@ -342,7 +349,7 @@ static void draw(void) {
     if (ds[0]) text_draw_wrapped(ds, rtl ? lx - 24 + nx : x0 + 24 + nx, ty + (DS_LH - text_line_height(DS_PX)) / 2, LW - 48, DS_MAX, DS_PX, 400, f ? ACC_FG : WHITE_A(204), 0, al, DS_LH);
     if (S.kind[i] != R_PLAIN && f) { float ha = (float)((now - S.restAt - 3) / 0.4); ha = ha < 0 ? 0 : ha > 1 ? 1 : ha; /* resting on it 3 s: how to see all of it, faint */
       if (S.holding || S.info) ha = 0;
-      if (ha > 0) key_hint(rtl ? x0 + 24 + nx : x0 + LW - 24 + nx, iy + 18 + ny + NM_LH / 2, K_OK, T("Hold for details"), col_alpha(ACC_FG, 0.8f * ha), !rtl); /* the remote's OK, then what holding it does */
+      if (ha > 0) key_hint(rtl ? x0 + 24 + nx : x0 + LW - 24 + nx, iy + 18 + ny + NM_LH / 2, K_OK, T(SB_WINDOWED ? "Right-click for details" : "Hold for details"), col_alpha(ACC_FG, 0.8f * ha), !rtl); /* the remote's OK, then what holding it does */
       float hk = S.holding ? app_hold_k(S.holdAt) : 0; if (hk > 0) hold_trace_draw(x0 + nx, iy + ny, LW, ih, 18, ease_apply(EASE_IN_OUT, hk)); }
     if (rdy > 0.01f) gfx_offset_pop(); if (fa < 1) gfx_opacity_pop(); }
   gfx_offset_pop(); gfx_clip_pop();
