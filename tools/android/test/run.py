@@ -163,12 +163,14 @@ def t_keys():
     wait(1.5); b = screen('keys-after'); L = log()
     diff = sum(1 for y in range(0, a[1], 30) for x in range(0, a[0], 30) if px(a, x, y) != px(b, x, y))
     evs = L.count('[ev] type=768')   # SDL_KEYDOWN
-    sh('input keyevent KEYCODE_BACK'); wait(2); alive = sh('pidof ' + PKG).strip() != ''
-    sh('input keyevent KEYCODE_PROG_RED'); wait(1); L = log()
+    # Back reaches the app, not the activity: on the sign-in screen the app itself closes on Back (login.c), and since
+    # 2.1.6 its process ends with it, so "still running" alone no longer tells; the app's own "[exit] app_quit" does
+    sh('input keyevent KEYCODE_BACK'); wait(2); alive = sh('pidof ' + PKG).strip() != ''; took = alive or '[exit] app_quit' in log()
+    if alive: sh('input keyevent KEYCODE_PROG_RED'); wait(1)
     if evs < 3: return False, 'the app saw %d key presses of 3' % evs
     if diff < 5: return False, 'the highlight did not move'
-    if not alive: return False, 'Back closed the app (the app should take it)'
-    return True, '%d key presses reached the app, the highlight moved (%d points changed), Back stays in the app' % (evs, diff)
+    if not took: return False, 'Back closed the activity, not the app (the app should take it)'
+    return True, '%d key presses reached the app, the highlight moved (%d points changed), Back taken by the app (%s)' % (evs, diff, 'stays open' if alive else 'sign-in: it closed itself')
 
 @test('nuvio-signin')
 def t_nuvio():   # the Stremio | Nuvio switch and the profiles, against tests/nuvio/fake_nuvio.py on this PC
@@ -278,6 +280,22 @@ def t_life():
     img = screen('lifecycle-back');
     if variety(img) < 8: return False, 'blank screen after coming back'
     return True, 'to the back and back in front, drawing again'
+
+@test('relaunch')
+def t_relaunch():   # issue #1: Back twice closes the app; the next launch must start it again, not close it on its first frame
+    signed_out(); launch(); wait_log('[loop] start', 30); wait(5)
+    pid1 = sh('pidof ' + PKG).strip()
+    for _ in range(3): sh('input keyevent KEYCODE_BACK'); wait(1)
+    wait(4)
+    if '[exit]' not in log(): return False, 'Back did not close the app'
+    pid2 = sh('pidof ' + PKG).strip()
+    adb('logcat', '-c'); sh('am start -n ' + ACT); wait_log('[loop] start', 30); wait(5); L = log()
+    c = crashed(L)
+    if c: return False, 'crash: ' + c
+    if '[exit]' in L: return False, 'the second launch closed at once (process %s kept: %s)' % (pid1, pid2 or 'none')
+    img = screen('relaunch')
+    if variety(img) < 8: return False, 'blank screen after the second launch'
+    return True, 'reopened after Back-Back (process %s -> %s)' % (pid1, pid2 or 'ended')
 
 @test('letterbox')
 def t_letterbox():

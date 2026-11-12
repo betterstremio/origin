@@ -62,7 +62,15 @@ public class MainActivity extends SDLActivity {
     }
 
     @Override protected void onResume() { super.onResume(); SbUpdater.onResume(this); }
-    @Override protected void onDestroy() { SbPlayer.release(); super.onDestroy(); }
+    /* SDL's onDestroy waits for the C main() to return (its store is saved by then) but leaves the process alive, and
+       the next launch would run main() again over the last run's C globals ("quitting" still set: the app closed on its
+       first frame, issue #1). So the process ends here, and every launch starts a fresh one. */
+    @Override protected void onDestroy() {
+        SbPlayer.release();
+        super.onDestroy();
+        Log.i(TAG, "activity gone: ending the process");
+        android.os.Process.killProcess(android.os.Process.myPid());
+    }
     @Override protected void onNewIntent(Intent i) { super.onNewIntent(i); }
 
     /* the remote's keys SDL has no name for, as keys it does (plat_map_key reads them back); every key as a
