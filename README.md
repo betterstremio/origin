@@ -55,7 +55,7 @@ Settings > For You > Preview on focus also offers The title itself: the film, pa
 
 **Only on Android:** DTS and TrueHD play where the device decodes them or passes them to a receiver.
 
-**Only on Windows:** a mouse and keyboard (type on Home to search, F11 or the button at the top right for fullscreen), and DTS and TrueHD played by the app itself. 5.1 and 7.1 sound is folded down to stereo for headphones without clipping.
+**Only on Windows:** a mouse and keyboard (type on Home to search, F11 or the button at the top right for fullscreen), a layout that adapts to the window and display's aspect ratio, and DTS and TrueHD played by the app itself. 5.1 and 7.1 sound is folded down to stereo for headphones without clipping.
 
 ## Set up For You
 Recommendations need your own free [TMDB](https://www.themoviedb.org/settings/api) API key. If you sign in with Nuvio and saved a TMDB key in Nuvio's TMDB settings, the app uses that one. Otherwise add it under Settings > For You > TMDB key: on a TV from your phone, on Windows by copying the key and pressing OK on that row. Trakt is optional and adds ratings and reviews, also with your own client id. No keys are built into the app.
@@ -115,7 +115,7 @@ tools/build-engine.sh android-arm64-v8a        # the P2P engine (also android-ar
 tools/android/build-apk.sh                     # the release APKs: one per CPU type, and one with both
 tools/android/build-apk.sh --dev               # a test build with x86 for the emulator
 
-tools/windows/build-deps.sh                    # Windows: SDL2, Mbed TLS, curl, ANGLE, libmpv, the Vulkan loader
+tools/windows/build-deps.sh                    # Windows: SDL2, curl with Schannel, ANGLE, libmpv, the Vulkan loader
 tools/build-engine.sh windows                  # the P2P engine as libsbengine.dll
 tools/build.sh windows                         # Origin.exe (mingw-w64)
 packaging/windows/pack.sh                      # the Windows setup (NSIS) and portable zip

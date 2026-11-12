@@ -886,13 +886,22 @@ static void words(int i, float a, float dx) {
 static void picture(int slot, int i, int st, float t) {
   if (picOk < 0) { int w = (int)(FW * gfx_scale() + 0.5f), h = (int)(FH * gfx_scale() + 0.5f); picOk = gfx_target_create(&pic[0], w, h) && gfx_target_create(&pic[1], w, h); }
   if (!picOk || i < 0 || i >= W.n) return;
+#if SB_ADAPTIVE_LAYOUT
+  /* The guide's demonstrations depict a 16:9 screen, not the surrounding window. */
+  float layoutW = gfx_layout_w, layoutH = gfx_layout_h; gfx_layout_w = 1920; gfx_layout_h = 1080;
+#endif
   evSlot = slot; evPrev[slot] = evNow[slot]; evNow[slot] = t; if (evNow[slot] < evPrev[slot] || evNow[slot] - evPrev[slot] > 0.5f) evPrev[slot] = evNow[slot]; /* (a new point: nothing crossed) */
-  if (orbTOk < 0) orbTOk = gfx_target_create(&orbT[0], 384, 216) && gfx_target_create(&orbT[1], 384, 216);
+  int ow, oh; gfx_screen_target_size(384, 216, &ow, &oh);
+  if (orbT[0].fbo && (orbT[0].w != ow || orbT[0].h != oh)) { gfx_target_free(&orbT[0]); gfx_target_free(&orbT[1]); orbTOk = -1; }
+  if (orbTOk < 0) orbTOk = gfx_target_create(&orbT[0], ow, oh) && gfx_target_create(&orbT[1], ow, oh);
   if (orbTOk > 0) { gfx_target_begin(&orbT[slot], PAGE | 0xff000000u); gfx_rrect_v(0, 0, SB_W, SB_H, 0, RGB(0x19, 0x15, 0x26), RGB(0x0b, 0x0a, 0x10)); orbs_draw(&orbs[slot], 1); gfx_target_end(); sgOrb = orbT[slot].tex; } else sgOrb = 0;
   gfx_target_begin(&pic[slot], PAGE | 0xff000000u);
   { int m = i18n_rtl(); if (m) { app_rtl_hold(1); gfx_mirror_push(SB_W / 2); } /* right to left: the app's pages are mirrored, so their pictures are too */
     sgT = sgT2 = 0; sgShade = sgPage = sgMix = sgDim = 0; camOn = 0; wPress = pressK[slot]; wKey = keyK[slot]; pressNow = 0; keyNow = 0; scene(W.p[i].pv, st, t); pressK[slot] = pressNow; keyK[slot] = keyNow; if (camOn) { gfx_scale_pop(); gfx_offset_pop(); camOn = 0; } if (m) { gfx_mirror_pop(); app_rtl_hold(0); } }
   gfx_target_end();
+#if SB_ADAPTIVE_LAYOUT
+  gfx_layout_w = layoutW; gfx_layout_h = layoutH;
+#endif
 }
 static void frame_draw(int slot, float a, float dx) {
   if (a <= 0.004f || !picOk) return; float x = frameX() + dx * 0.6f;

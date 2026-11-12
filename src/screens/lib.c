@@ -335,7 +335,7 @@ static void draw(void) {
   if (rem) { int j = L.remIdx; float sx = col_x(j % COLS), sy = ROW0_Y + (j / COLS) * LROWH + gy, s = 0.86f + 0.14f * (1 - rk); /* the one taken out, fading and shrinking where it was */
     gfx_opacity_push(1 - rk); gfx_scale_push(s, s, sx + LW / 2, sy + LH / 2); draw_card(&L.remIt, sx, sy, 0); gfx_scale_pop(); gfx_opacity_pop(); }
   for (int pass = 0; pass < 2; pass++) /* the focused poster last, over its neighbours as it grows */
-  for (int r = r0 - 1; r <= r0 + 2; r++) { if (r < 0 || r >= rows) continue; float y = ROW0_Y + r * LROWH + gy; if (y > SB_H || y + LH < GRID_TOP) continue;
+  for (int r = r0 - 1; r < rows; r++) { if (r < 0) continue; float y = ROW0_Y + r * LROWH + gy; if (y > SB_H) break; if (y + LH < GRID_TOP) continue;
     int near = r >= fr - 1 && r <= fr + 3;
     for (int c = 0; c < COLS; c++) { int i = r * COLS + c; if (i >= L.n) break; const LibIt *o = at(i); float x = col_x(c);
       if (rem && i >= L.remIdx) { int j = i + 1; float ox = col_x(j % COLS), oy = ROW0_Y + (j / COLS) * LROWH + gy; x = ox + (x - ox) * rk; y0 = oy + (y - oy) * rk; } else y0 = y; /* (one taken out before it: from its old place to its new one) */

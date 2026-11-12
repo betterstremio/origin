@@ -1,5 +1,5 @@
-/* The renderer: every screen draws itself each frame with these calls, in a 1920x1080 layout
-   space that is scaled to the real surface. Quads are batched into one stream per shader
+/* The renderer: screens draw in layout units, normally 1920x1080; Windows expands that space
+   for other window shapes. Quads are batched into one stream per shader
    (shapes with rounded corners and soft edges, textured quads, text) and flushed when the
    shader, texture or clip changes. Only GLES2-level GL is used, so the same code runs on the TV
    (GLES2) and the Mac preview (OpenGL 2.1). */
@@ -8,8 +8,14 @@
 #include <stdint.h>
 #include "ui/gl.h"
 
+#if SB_ADAPTIVE_LAYOUT
+extern float gfx_layout_w, gfx_layout_h;
+#define SB_W gfx_layout_w
+#define SB_H gfx_layout_h
+#else
 #define SB_W 1920.0f
 #define SB_H 1080.0f
+#endif
 
 /* colours are 0xAARRGGBB */
 #define RGBA(r, g, b, a) ((uint32_t)(((a) & 255) << 24 | ((r) & 255) << 16 | ((g) & 255) << 8 | ((b) & 255)))
@@ -28,7 +34,7 @@ static inline SbRect rect(float x, float y, float w, float h) { SbRect r = { x, 
 
 int  gfx_init(int surfaceW, int surfaceH);
 void gfx_resize(int surfaceW, int surfaceH);
-void gfx_viewport(int *x, int *y, int *w, int *h);  /* where the 16:9 screen sits in the surface, in its pixels from the top left */
+void gfx_viewport(int *x, int *y, int *w, int *h);  /* layout viewport in surface pixels from the top left */
 void gfx_begin(uint32_t clear);   /* clears to the colour (alpha included: the video shows through alpha 0) */
 void gfx_end(void);               /* flushes what is left */
 void gfx_flush(void);
@@ -76,6 +82,12 @@ void gfx_tex_update(GLuint tex, const unsigned char *px, int x, int y, int w, in
 /* offscreen pictures: draw once into a texture, then show it as one quad (the texture is upside
    down: show it with v0 = 1, v1 = 0) */
 typedef struct { GLuint tex, fbo; int w, h; } GfxTarget;
+static inline void gfx_screen_target_size(int maxw, int maxh, int *w, int *h) {
+  float s = (float)maxw / SB_W, sy = (float)maxh / SB_H;
+  if (sy < s) s = sy;
+  *w = (int)(SB_W * s + 0.5f); *h = (int)(SB_H * s + 0.5f);
+  if (*w < 1) *w = 1; if (*h < 1) *h = 1;
+}
 int  gfx_target_create(GfxTarget *t, int w, int h);   /* 0 when the driver cannot draw into textures */
 void gfx_target_free(GfxTarget *t);
 unsigned gfx_frame(void);                             /* frames begun so far */

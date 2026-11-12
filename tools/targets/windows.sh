@@ -20,7 +20,7 @@ link_app() {
   $X-windres -I"$ROOT/packaging/windows" -I"$B" -DVER_A="$va" -DVER_B="$vb" -DVER_C="$vc" -DVER_STR="\\\"$v\\\"" "$ROOT/packaging/windows/origin.rc" -O coff -o "$B/origin_res.o"
   $CXX $OPT -o "$O/Origin.dbg.exe" "${OBJS[@]}" "$B/origin_res.o" "$B/tp/libass.a" "$B/tp/libtp.a" -L"$D/lib" \
     -lSDL2 -lcurl -lmbedtls -lmbedx509 -lmbedcrypto -leverest -lp256m -lz "$D/lib/libGLESv2.dll.a" \
-    -lws2_32 -liphlpapi -lcrypt32 -lbcrypt -lsetupapi -lwinmm -limm32 -lversion -loleaut32 -lole32 -lgdi32 -luser32 -lshell32 -ladvapi32 -lpsapi -luuid -ldwmapi \
+    -lws2_32 -liphlpapi -lcrypt32 -lbcrypt -lsecur32 -lsetupapi -lwinmm -limm32 -lversion -loleaut32 -lole32 -lgdi32 -luser32 -lshell32 -ladvapi32 -lpsapi -luuid -ldwmapi \
     -static -static-libgcc -static-libstdc++ -mwindows -Wl,--gc-sections
   $X-strip --strip-unneeded -o "$O/Origin.exe" "$O/Origin.dbg.exe"
   cp -u "$D/bin/libEGL.dll" "$D/bin/libGLESv2.dll" "$D/bin/libmpv-2.dll" "$O/"; mkdir -p "$O/fallback"; cp -u "$D/bin/fallback/vulkan-1.dll" "$O/fallback/"

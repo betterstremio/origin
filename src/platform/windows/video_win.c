@@ -234,7 +234,7 @@ void video_set_volume(int pct, int easeMs) {
 /* layout units (SB_W x SB_H) to the window's pixels */
 static void place(void) {
   if (!plane || !R.set) return;
-  int vx, vy, W, Hh; gfx_viewport(&vx, &vy, &W, &Hh); if (W <= 0 || Hh <= 0) return; /* (the 16:9 screen inside the window) */
+  int vx, vy, W, Hh; gfx_viewport(&vx, &vy, &W, &Hh); if (W <= 0 || Hh <= 0) return;
   int px[4] = { vx + (int)(R.x * W / SB_W + 0.5f), vy + (int)(R.y * Hh / SB_H + 0.5f), (int)(R.w * W / SB_W + 0.5f), (int)(R.h * Hh / SB_H + 0.5f) };
   if (memcmp(px, lastPx, sizeof px) || W != lastCW || Hh != lastCH) { memcpy(lastPx, px, sizeof px); lastCW = W; lastCH = Hh;
     SetWindowPos(plane, NULL, px[0], px[1], px[2] > 1 ? px[2] : 1, px[3] > 1 ? px[3] : 1, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER); }
