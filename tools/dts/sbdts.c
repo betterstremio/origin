@@ -30,6 +30,7 @@
 #include <libavutil/channel_layout.h>
 #include <libavutil/avstring.h>
 #include <libavutil/dovi_meta.h>
+#include <libavutil/intreadwrite.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -61,7 +62,7 @@ struct SbdSrc {
   int vEof, aEof, needKey; double keyAt;
   int64_t grid; int gridOn; double audioFrom;
   size_t peak; sbd_stats *st;
-  int copyA, dv81; uint8_t desc[16]; int descLen; /* desc: the video's PMT descriptors (Dolby Vision), descLen 0 none */
+  int copyA, dv81, nls; uint8_t desc[16]; int descLen; /* desc: the video's PMT descriptors (Dolby Vision), descLen 0 none */
   uint8_t *nal; size_t nalCap; uint8_t tsb[188 * 2]; int tsc; uint8_t *wb; int wbCap;
 };
 
@@ -181,9 +182,25 @@ static void video_out(SbdSrc *s, AVPacket *p) {
   q_push(s, &s->vq, p, t, s->runSeg >= 0 ? s->curVSeg : 0, 0); s->st->vpkts++;
   dts_assign(s, 0);
 }
+/* HEVC from Matroska / MP4 (length-prefixed NAL units) to start codes, done here and not by FFmpeg 7.1's
+   hevc_mp4toannexb: that one puts the file header's parameter sets right before a keyframe's first slice, after the
+   frame's own. Where the two differ (Dolby Vision hybrid remuxes: Interstellar, Captain Marvel) the header's stale PPS
+   is the one in force and every keyframe decodes as garbage (on the TV: a broken picture in a box at the top left).
+   Here the header's sets go first, and only into a keyframe that carries none of its own. 0 done, -1 not this form */
+static int hevc_annexb(SbdSrc *s, AVPacket *pk) {
+  const uint8_t *b = pk->data; int n = pk->size, L = s->nls, o = 0, ps = 0, irap = 0; size_t need = 0;
+  while (o < n) { if (o + L > n) return -1; uint32_t l = 0; for (int i = 0; i < L; i++) l = l << 8 | b[o + i]; o += L;
+    if (!l || l > (uint32_t)(n - o)) return -1; int t = (b[o] >> 1) & 63; if (t >= 32 && t <= 34) ps = 1; if (t >= 16 && t <= 23) irap = 1; need += 4 + l; o += (int)l; }
+  const AVCodecParameters *par = s->bsf->par_out; int ex = irap && !ps ? par->extradata_size : 0;
+  AVPacket *out = av_packet_alloc(); if (!out || av_new_packet(out, (int)need + ex) < 0 || av_packet_copy_props(out, pk) < 0) { av_packet_free(&out); return -1; }
+  uint8_t *d = out->data; if (ex) { memcpy(d, par->extradata, (size_t)ex); d += ex; }
+  for (o = 0; o < n; ) { uint32_t l = 0; for (int i = 0; i < L; i++) l = l << 8 | b[o + i]; o += L; memcpy(d, "\0\0\0\1", 4); memcpy(d + 4, b + o, l); d += 4 + l; o += (int)l; }
+  av_packet_unref(pk); video_out(s, out); return 0;
+}
 static int video_in(SbdSrc *s, AVPacket *pk) {
   double t = (pk->pts != AV_NOPTS_VALUE ? pk->pts : pk->dts) * av_q2d(s->vtb);
   if (s->needKey) { if (!(pk->flags & AV_PKT_FLAG_KEY) || t < s->keyAt - EPS) { av_packet_unref(pk); return 0; } s->needKey = 0; if (s->audioFrom < -1e8) s->audioFrom = t; }
+  if (s->nls && hevc_annexb(s, pk) == 0) return 0;
   int r = av_bsf_send_packet(s->bsf, pk); if (r < 0) { av_packet_unref(pk); return 0; }
   for (;;) { AVPacket *o = av_packet_alloc(); if (!o) return AVERROR(ENOMEM); r = av_bsf_receive_packet(s->bsf, o); if (r < 0) { av_packet_free(&o); break; } video_out(s, o); }
   return 0;
@@ -325,6 +342,8 @@ static SbdSrc *sbd_open(sbd_read rd, void *ud, long long size, int audioOrd, int
   if (!bf || av_bsf_alloc(bf, &s->bsf) < 0) { snprintf(err, errn, "no bitstream filter"); goto fail; }
   avcodec_parameters_copy(s->bsf->par_in, V->codecpar); s->bsf->time_base_in = s->vtb;
   if ((r = av_bsf_init(s->bsf)) < 0) { say(err, errn, "bitstream filter", r); goto fail; }
+  { const AVCodecParameters *c = V->codecpar; /* HEVC in hvcC form: its packets go through hevc_annexb (the filter keeps the header's sets in start-code form) */
+    if (c->codec_id == AV_CODEC_ID_HEVC && c->extradata_size >= 23 && AV_RB24(c->extradata) != 1 && AV_RB32(c->extradata) != 1 && s->bsf->par_out->extradata_size) s->nls = (c->extradata[21] & 3) + 1; }
   /* the picture's Dolby Vision, from the container (Matroska's BlockAdditionMapping, MP4's dvcC / dvvC) */
   { const AVPacketSideData *sd = av_packet_side_data_get(V->codecpar->coded_side_data, V->codecpar->nb_coded_side_data, AV_PKT_DATA_DOVI_CONF);
     const AVDOVIDecoderConfigurationRecord *dv = sd && sd->size >= sizeof *dv ? (const void *)sd->data : NULL;

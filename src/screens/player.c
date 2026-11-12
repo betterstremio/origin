@@ -673,15 +673,18 @@ static void dts_tick(void) {
   int cur = P.curAud >= 0 ? P.curAud : video_audio_current(), ci = 0; for (int i = 0; i < n; i++) if (ts[i].idx == cur) ci = i;
   VidTrack *t = &ts[ci]; int kind = aud_kind(t->codec), unsup = video_audio_unsupported();
   /* the TV hides tracks it can't decode (TrueHD) from its list yet starts on one: an error 200 then belongs to the hidden track, not to the listed one; the listed tracks all play */
-  int hid = 0; if (mkv_listed(mkv)) { MkvAudio ma[16]; int m = mkv_audio_tracks(mkv, ma, 16), nb = 0, tvb = 0; for (int i = 0; i < m; i++) if (aud_kind(ma[i].codec)) nb++; for (int i = 0; i < n; i++) if (aud_kind(ts[i].codec)) tvb++; hid = m > n && nb >= m - n && !tvb; }
-  if (unsup && hid && P.dts.hidSw < 2) {
-    const char *wl = !strcmp(store_get("enableDefaultAudioTrack", "true"), "true") ? store_get("defaultAudioTrack", "eng") : "";
+  int hid = 0, hidWant = -1; MkvAudio hma[16]; int hm = mkv_listed(mkv) ? mkv_audio_tracks(mkv, hma, 16) : 0;
+  const char *wl = !strcmp(store_get("enableDefaultAudioTrack", "true"), "true") ? store_get("defaultAudioTrack", "eng") : "";
+  if (hm) { int nb = 0, tvb = 0, tvWant = 0; for (int i = 0; i < hm; i++) if (aud_kind(hma[i].codec)) nb++; for (int i = 0; i < n; i++) { if (aud_kind(ts[i].codec)) tvb++; if (*wl && lang_match(ts[i].lang, wl)) tvWant = 1; }
+    hid = hm > n && nb >= hm - n && !tvb;
+    if (hid && *wl && !tvWant) for (int i = 0; i < hm && hidWant < 0; i++) if (aud_kind(hma[i].codec) && lang_match(hma[i].lang, wl)) hidWant = i; } /* the default-audio language only in a hidden track: that one is converted */
+  if (unsup && hid && hidWant < 0 && P.dts.hidSw < 2) {
     int pk = -1, ps = -1; for (int i = 0; i < n; i++) { int sc = ((*wl && lang_match(ts[i].lang, wl)) ? 100 : 0) + ts[i].channels; if (sc > ps) { ps = sc; pk = i; } }
     if (pk >= 0) { char lb[32], msg[160]; aud_label(&ts[pk], lb, sizeof lb); snprintf(msg, sizeof msg, "%s", T1("Playing the {t} track: this TV can’t play TrueHD", "t", lb));
       fprintf(stderr, "[dts] path b: the TV hides the file's TrueHD/DTS track and refused it (error 200), track %d (%s %s, %d ch) instead\n", pk, ts[pk].codec, ts[pk].lang, ts[pk].channels);
       P.dts.hidSw++; set_audio(ts[pk].idx); if (!P.dts.said) { P.dts.said = 1; toast(msg, 4000, NULL); } return; }
   }
-  if (unsup && hid) { if (dts_convert(-1, "error 200, hidden track")) return; }
+  if (unsup && hid) { if (dts_convert(hidWant, hidWant >= 0 ? "error 200, your language only in a hidden track" : "error 200, hidden track")) return; }
   if (kind == 1 && best_dts_mode() == 2) return; /* DTS sound Off: the TV does with it whatever it can, nothing here steps in */
   if (unsup && !hid) { if (kind == 1 && !best_dts_mode()) { best_learn("dts", 0); fprintf(stderr, "[dts] auto: this TV refused DTS, converting from now on\n"); } int known = 0; for (int i = 0; i < P.dts.nbad; i++) if (!strcasecmp(P.dts.bad[i], t->codec)) known = 1;
     if (!known && t->codec[0] && P.dts.nbad < 4) snprintf(P.dts.bad[P.dts.nbad++], sizeof P.dts.bad[0], "%s", t->codec); }

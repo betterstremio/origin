@@ -47,7 +47,7 @@ CONF="$COMMON $COMPONENTS $ARCH"
 if [ ! -f "$P/lib/libavformat.a" ] || [ "$(cat "$B/.conf" 2>/dev/null)" != "$CONF $XC" ]; then
   echo "== FFmpeg $VERSION ($TARGET)"
   (cd "$B" && "$SRC/configure" --prefix="$P" $CONF --extra-cflags="$XC" --extra-ldflags="$XL" >/dev/null \
-    && { [ "$TARGET" != webos ] || sed -i '' 's/#define HAVE_SYSCTL 1/#define HAVE_SYSCTL 0/' config.h; } \
+    && { [ "$TARGET" != webos ] || sed -i.orig 's/#define HAVE_SYSCTL 1/#define HAVE_SYSCTL 0/' config.h; } \
     && make -j"${FFMPEG_JOBS:-4}" >/dev/null && make install >/dev/null)   # (the compiler's newer libc headers make configure see a sysctl glibc 2.17 never had)
   echo "$CONF $XC" > "$B/.conf"
 fi

@@ -170,9 +170,32 @@ void hls_conv_stop(void) {
   pthread_mutex_lock(&mu); Conv *c = conv; conv = NULL; if (c) { c->dead = 1; c->stop = 1; } pthread_mutex_unlock(&mu);
   if (c) { fprintf(stderr, "[dts] conversion ended (%d MB)\n", rss_mb()); conv_unref(c); }
 }
+static int chunk_out(int fd, const unsigned char *p, int n) { char h[16]; int hl = snprintf(h, sizeof h, "%x\r\n", n);
+  return !n || (send_all(fd, h, (size_t)hl) && send_all(fd, p, (size_t)n) && send_all(fd, "\r\n", 2)); }
+/* Dolby Vision profile 8 sent as HDR10 (the maintainer's choice for converted streams: the HDR10 base layer, no Dolby
+   Vision switch on the TV's side). The converter labels the stream in each PMT (a "DOVI" registration and the 0xB0 configuration in the HEVC entry); those two tags become
+   private ones the TV ignores, lengths kept, the CRC again. The packets go out whole (a 188-byte tail is held) */
+typedef struct { int fd, strip; unsigned char carry[188]; int cl; } Wr;
+static uint32_t crc32_ts(const unsigned char *p, int n) { uint32_t c = 0xFFFFFFFFu; while (n--) { c ^= (uint32_t)*p++ << 24; for (int i = 0; i < 8; i++) c = c & 0x80000000u ? c << 1 ^ 0x04C11DB7u : c << 1; } return c; }
+static void pmt_undv(unsigned char *t) {
+  if (t[0] != 0x47 || !(t[1] & 0x40) || (((t[1] & 0x1f) << 8) | t[2]) != 0x1000 || (t[3] & 0x30) != 0x10) return;
+  unsigned char *sec = t + 5 + t[4]; if (sec + 12 > t + 188 || sec[0] != 0x02) return;
+  int sl = ((sec[1] & 0x0f) << 8) | sec[2], end = 3 + sl, hit = 0; if (sec + end > t + 188 || sl < 13) return;
+  int pil = ((sec[10] & 0x0f) << 8) | sec[11], at = 12 + pil;
+  while (at + 5 <= end - 4) {
+    int eil = ((sec[at + 3] & 0x0f) << 8) | sec[at + 4], de = at + 5 + eil; if (de > end - 4) return;
+    if (sec[at] == 0x24) for (int i = at + 5; i + 1 < de && i + 2 + sec[i + 1] <= de; i += 2 + sec[i + 1]) {
+      if (sec[i] == 0xB0) { sec[i] = 0xF0; hit = 1; }
+      else if (sec[i] == 0x05 && sec[i + 1] >= 4 && !memcmp(sec + i + 2, "DOVI", 4)) { sec[i] = 0xF1; hit = 1; } }
+    at = de;
+  }
+  if (hit) { uint32_t c = crc32_ts(sec, end - 4); sec[end - 4] = (unsigned char)(c >> 24); sec[end - 3] = (unsigned char)(c >> 16); sec[end - 2] = (unsigned char)(c >> 8); sec[end - 1] = (unsigned char)c; }
+}
 static int fd_write(void *ud, const unsigned char *p, int n) { /* one HTTP chunk per write (the muxer's 32 KB) */
-  int fd = *(int *)ud; char h[16]; int hl = snprintf(h, sizeof h, "%x\r\n", n);
-  return send_all(fd, h, (size_t)hl) && send_all(fd, p, (size_t)n) && send_all(fd, "\r\n", 2) ? n : -1; }
+  Wr *w = ud; if (!w->strip) return chunk_out(w->fd, p, n) ? n : -1;
+  unsigned char *b = malloc((size_t)n + 188); if (!b) return -1; memcpy(b, w->carry, (size_t)w->cl); memcpy(b + w->cl, p, (size_t)n);
+  int all = w->cl + n, whole = all - all % 188; for (int o = 0; o < whole; o += 188) pmt_undv(b + o);
+  int ok = chunk_out(w->fd, b, whole); w->cl = all - whole; memcpy(w->carry, b + whole, (size_t)w->cl); free(b); return ok ? n : -1; }
 static void conv_serve(int fd, unsigned id, const char *path, int head) {
   Conv *c = conv_get(id); int seg = -1; double from = 0; const char *nm = strchr(path + 3, '/');
   if (!c || c->state <= 0 || !nm) { const char *b = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"; send_all(fd, b, strlen(b)); if (c) conv_unref(c); return; }
@@ -201,8 +224,9 @@ static void conv_serve(int fd, unsigned id, const char *path, int head) {
   pthread_mutex_lock(&mu); c->running = seg; pthread_mutex_unlock(&mu);
   {
     sbd_stats st; char err[160] = ""; c->rd.stop = &c->stop;
-    int r = D->run(c->src, seg, from, fd_write, &fd, &c->stop, &st, err, sizeof err);
-    if (r == 0) send_all(fd, "0\r\n\r\n", 5); /* (a run cut short ends without it: the player sees it incomplete) */
+    Wr w = { fd, c->info.dvIn == 8 && c->info.dvOut == 8, {0}, 0 }; /* (profile 8 in and out: sent as HDR10) */
+    int r = D->run(c->src, seg, from, fd_write, &w, &c->stop, &st, err, sizeof err);
+    if (r == 0) { chunk_out(fd, w.carry, w.cl); send_all(fd, "0\r\n\r\n", 5); } /* (a run cut short ends without it: the player sees it incomplete) */
     c->rd.stop = &c->dead;
     if (seg < 0) fprintf(stderr, "[dts] stream from %.0f s: %s, %.1f MB, cpu %.1f s over %.0f s\n", from, r == 0 ? "to the end" : r == -2 ? "stopped" : err, st.bytes / 1048576.0, st.cpu, st.wall);
     else fprintf(stderr, "[dts] segment %d%s: %.1f-%.1f s, %s, %.0f KB, cpu %.0f ms, wall %.0f ms (reading %.0f), queue %.1f MB, %d MB\n", seg, st.fresh ? " (seek)" : "", D->seg_start(c->src, seg), D->seg_start(c->src, seg) + D->seg_dur(c->src, seg),
