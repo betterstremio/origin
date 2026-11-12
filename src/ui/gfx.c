@@ -1,5 +1,6 @@
 #include "ui/gfx.h"
 #include "ui/atlas.h"
+#include "ui/layout.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -134,12 +135,19 @@ int gfx_init(int w, int h) {
   fprintf(stderr, "[gfx] %s | %s | %s\n", glGetString(GL_VENDOR), glGetString(GL_RENDERER), glGetString(GL_VERSION));
   return 1;
 }
-/* the layout fits the screen whole and centred: a surface that is not 16:9 (a resized desktop window, a 16:10 or ultrawide
-   monitor) gets bars, never a cut-off page; on a 16:9 surface this is the whole surface, as before */
-static int vpX, vpY, vpW, vpH, winH; /* the screen's 16:9 area inside the surface, GL's origin (bottom left) */
+static int vpX, vpY, vpW, vpH, winH; /* viewport in GL coordinates */
+#if SB_ADAPTIVE_LAYOUT
+float gfx_layout_w = 1920.0f, gfx_layout_h = 1080.0f;
+#endif
 void gfx_resize(int w, int h) {
+  if (w <= 0 || h <= 0) return;
   winH = h; int vw = w, vh = h;
+#if SB_ADAPTIVE_LAYOUT
+  SbLayout layout = layout_for_surface(w, h);
+  gfx_layout_w = layout.w; gfx_layout_h = layout.h;
+#else
   if (h > 0 && (long)w * 9 > (long)h * 16) vw = (int)((long)h * 16 / 9); else if (w > 0 && (long)w * 9 < (long)h * 16) vh = (int)((long)w * 9 / 16);
+#endif
   vpX = (w - vw) / 2; vpY = (h - vh) / 2; vpW = vw; vpH = vh; surfW = vw; surfH = vh; scl = (float)vw / SB_W; glViewport(vpX, vpY, vw, vh);
 }
 void gfx_viewport(int *x, int *y, int *w, int *h) { *x = vpX; *y = winH - vpY - vpH; *w = vpW; *h = vpH; } /* (window pixels, top left) */

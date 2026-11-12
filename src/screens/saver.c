@@ -65,7 +65,9 @@ static void clock_update(void) {
 
 /* ---- scenes ---- */
 static void bake(SsLayer *l, GLuint tex, float asp) {
-  if (!l->t.fbo && !gfx_target_create(&l->t, SSW, SSH)) { l->ok = 0; return; }
+  int w, h; gfx_screen_target_size(SSW, SSH, &w, &h);
+  if (l->t.fbo && (l->t.w != w || l->t.h != h)) gfx_target_free(&l->t);
+  if (!l->t.fbo && !gfx_target_create(&l->t, w, h)) { l->ok = 0; return; }
   gfx_target_begin(&l->t, RGB(0, 0, 0));
   float u0, v0, u1, v1; img_cover_uv(asp, SB_W / SB_H, 0, &u0, &v0, &u1, &v1);
   gfx_image(tex, 0, 0, SB_W, SB_H, 0, WHITE_A(128), u0, v0, u1, v1);                     /* the picture at half strength */

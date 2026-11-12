@@ -1,6 +1,6 @@
 #!/bin/bash
 # The libraries the Windows build links against, cross-compiled in Linux or WSL with mingw-w64 (posix threads):
-#   SDL2, zlib, mbedTLS, curl (all static, so the exe needs no runtime DLLs of its own)
+#   SDL2, zlib, mbedTLS, curl with Windows Schannel (all static, so the exe needs no runtime DLLs of its own)
 #   ANGLE (libEGL.dll, libGLESv2.dll): GLES2 on Direct3D 11, taken from a pinned Electron release (the version VS Code 1.145
 #   ships; Electron 44 builds ANGLE into its exe and has no separate DLLs)
 #   libmpv (libmpv-2.dll and its header): shinchiro's build, loaded at run time by video_win.c, not linked. The stock
@@ -53,9 +53,9 @@ if [ ! -f "$O/lib/libz.a" ]; then echo "== zlib"
 if [ ! -f "$O/lib/libmbedtls.a" ]; then echo "== mbedTLS"
   cmake -S "$SRC/mbedtls-$MBED_V" -B "$WB/b/mbed" "${C[@]}" -DENABLE_PROGRAMS=OFF -DENABLE_TESTING=OFF -DUSE_SHARED_MBEDTLS_LIBRARY=OFF -DMBEDTLS_FATAL_WARNINGS=OFF >/dev/null
   ninja -C "$WB/b/mbed" install >/dev/null; fi
-if [ ! -f "$O/lib/libcurl.a" ]; then echo "== curl"
+if [ ! -f "$O/lib/libcurl.a" ] || [ ! -x "$O/bin/curl-config" ] || [ "$("$O/bin/curl-config" --ssl-backends)" != Schannel ]; then echo "== curl"
   cmake -S "$SRC/curl-$CURL_V" -B "$WB/b/curl" "${C[@]}" -DBUILD_SHARED_LIBS=OFF -DBUILD_STATIC_LIBS=ON -DBUILD_CURL_EXE=OFF -DBUILD_TESTING=OFF -DBUILD_LIBCURL_DOCS=OFF -DBUILD_MISC_DOCS=OFF -DENABLE_CURL_MANUAL=OFF \
-    -DCURL_USE_MBEDTLS=ON -DCURL_USE_SCHANNEL=OFF -DCURL_USE_OPENSSL=OFF -DMBEDTLS_INCLUDE_DIR="$O/include" -DMBEDTLS_LIBRARY="$O/lib/libmbedtls.a" -DMBEDX509_LIBRARY="$O/lib/libmbedx509.a" -DMBEDCRYPTO_LIBRARY="$O/lib/libmbedcrypto.a" \
+    -DCURL_USE_MBEDTLS=OFF -DCURL_USE_SCHANNEL=ON -DCURL_USE_OPENSSL=OFF \
     -DZLIB_INCLUDE_DIR="$O/include" -DZLIB_LIBRARY="$O/lib/libz.a" \
     -DCURL_USE_LIBPSL=OFF -DCURL_USE_LIBSSH2=OFF -DUSE_NGHTTP2=OFF -DCURL_BROTLI=OFF -DCURL_ZSTD=OFF -DUSE_LIBIDN2=OFF -DUSE_WIN32_IDN=OFF -DCURL_DISABLE_LDAP=ON \
     -DENABLE_THREADED_RESOLVER=ON -DCURL_CA_BUNDLE=none -DCURL_CA_PATH=none -DCURL_DISABLE_SRP=ON >/dev/null

@@ -120,7 +120,7 @@ static void *run(void *arg) {
   ASS_Renderer *rd = lib ? ass_renderer_init(lib) : NULL; ASS_Track *tr = lib ? ass_new_track(lib) : NULL;
   if (!rd || !tr) { fprintf(stderr, "[ass] libass would not start\n"); pthread_mutex_lock(&A->mu); A->fail = 1; pthread_mutex_unlock(&A->mu); goto out; }
   ass_set_cache_limits(rd, 800, 12); ass_set_hinting(rd, ASS_HINTING_NONE); ass_set_shaper(rd, ASS_SHAPING_COMPLEX);
-  int fontsDone = 0; long long attach = -1; unsigned cursor = 0, gen = ~0u; int haveHeader = 0, fw = 0, fh = 0, vw = 0, vh = 0; float scale = 0;
+  int fontsDone = 0; long long attach = -1; unsigned cursor = 0, gen = ~0u; int haveHeader = 0, fw = 0, fh = 0, vw = 0, vh = 0; float scale = 0, lastX = 0, lastY = 0, lastW = 0, lastH = 0;
   long long nextAt = -1, lastNow = -1; int anim = 0; double slowSince = 0, warmAt = wall(); unsigned warmGen = ~0u; int level = 0;
   struct { int n, frames; double sum, max, at; } stat = { 0, 0, 0, 0, wall() }; /* a line in the log every 30 s while it renders */
   for (;;) {
@@ -135,10 +135,11 @@ static void *run(void *arg) {
     if (!haveHeader || nfw <= 0) { pthread_mutex_lock(&A->mu); if (!A->dead) { struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts); ts.tv_nsec += 200000000; if (ts.tv_nsec >= 1000000000) { ts.tv_sec++; ts.tv_nsec -= 1000000000; } pthread_cond_timedwait(&A->cv, &A->mu, &ts); } pthread_mutex_unlock(&A->mu); continue; }
     if (!fontsDone) { fontsDone = 1; ass_set_fonts(rd, font, fam, ASS_FONTPROVIDER_NONE, NULL, 0); /* first lines in the bundled font at once */
       if (attach >= 0 && load_fonts(A, lib, attach)) { ass_set_fonts(rd, font, fam, ASS_FONTPROVIDER_NONE, NULL, 1); gen = ~0u; } }
-    int resized = nfw != fw || nfh != fh || nvw != vw || nvh != vh || nsc != scale;
+    int resized = nfw != fw || nfh != fh || nvw != vw || nvh != vh || nsc != scale || vx != lastX || vy != lastY || vww != lastW || vhh != lastH;
     if (resized) { fw = nfw; fh = nfh; vw = nvw; vh = nvh; scale = nsc; ass_set_frame_size(rd, fw, fh); if (vw > 0 && vh > 0) ass_set_storage_size(rd, vw, vh);
       /* the picture's own rectangle inside the frame: the script is laid out over it */
-      float k = fw / 1920.0f; int l = (int)(vx * k), tp = (int)(vy * (fh / 1080.0f)), rr = fw - (int)((vx + vww) * k), bb = fh - (int)((vy + vhh) * (fh / 1080.0f));
+      lastX = vx; lastY = vy; lastW = vww; lastH = vhh;
+      int l = (int)vx, tp = (int)vy, rr = fw - (int)(vx + vww), bb = fh - (int)(vy + vhh);
       ass_set_margins(rd, tp > 0 ? tp : 0, bb > 0 ? bb : 0, l > 0 ? l : 0, rr > 0 ? rr : 0); ass_set_use_margins(rd, 0); ass_set_font_scale(rd, scale > 0 ? scale : 1); }
     long long now = llround(t * 1000);
     int jumped = lastNow >= 0 && now < lastNow - 50; /* (seeks come as a new gen) */
@@ -226,7 +227,12 @@ int asssubs_too_slow(void) {
 }
 void asssubs_tick(double t, int playing, double fps, float vx, float vy, float vw, float vh, int videoW, int videoH, float scale) {
   Inst *A = cur; if (!A) return;
-  float k = gfx_scale(); int fw = (int)(1920 * k + 0.5f), fh = (int)(1080 * k + 0.5f); if (fw > 1920) { fw = 1920; fh = 1080; } /* the drawable's pixels, at most full HD */
+  float k = gfx_scale();
+  if (SB_W * k > 1920) k = 1920 / SB_W;
+  if (SB_H * k > 1080) k = 1080 / SB_H;
+  int fw = (int)(SB_W * k + 0.5f), fh = (int)(SB_H * k + 0.5f); /* drawable pixels, bounded by full HD */
+  if (fw < 1) fw = 1; if (fh < 1) fh = 1;
+  vx *= fw / SB_W; vw *= fw / SB_W; vy *= fh / SB_H; vh *= fh / SB_H;
   pthread_mutex_lock(&A->mu);
   double pred = A->t + (A->playing ? wall() - A->tAt : 0);
   int nudge = fabs(pred - t) > 0.3 || playing != A->playing || fw != A->fw || fh != A->fh || videoW != A->vw || videoH != A->vh || scale != A->scale || vx != A->vx || vy != A->vy || vw != A->vww || vh != A->vhh;
@@ -244,7 +250,7 @@ void asssubs_tick(double t, int playing, double fps, float vx, float vy, float v
 }
 void asssubs_draw(void) {
   if (!cur || !shown.n || shown.fw <= 0) return;
-  float kx = 1920.0f / shown.fw, ky = 1080.0f / shown.fh;
+  float kx = SB_W / shown.fw, ky = SB_H / shown.fh;
   for (int i = 0; i < shown.n; i++) { Piece *p = &shown.p[i]; uint32_t c = ((uint32_t)(255 - (p->color & 0xff)) << 24) | (p->color >> 8); if (!(c >> 24)) continue;
     int tx = (p->w + TILE - 1) / TILE; if (tx > 2) tx = 2;
     for (int k = 0; k < shown.ns[i]; k++) { AtlasSlot *s = &shown.s[i * 4 + k];

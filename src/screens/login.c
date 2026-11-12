@@ -159,7 +159,9 @@ void login_glows_draw(void) {
 /* the glows, small, for the glass over them (made in the tick each frame: they move; never while drawing, no target is nested) */
 static GfxTarget glowT; static int glowOk = -1, glowFresh;
 void login_glow_bake(void) {
-  if (glowOk < 0) glowOk = gfx_target_create(&glowT, 384, 216);
+  int w, h; gfx_screen_target_size(384, 216, &w, &h);
+  if (glowT.fbo && (glowT.w != w || glowT.h != h)) { gfx_target_free(&glowT); glowOk = -1; glowFresh = 0; }
+  if (glowOk < 0) glowOk = gfx_target_create(&glowT, w, h);
   if (!glowOk) return; { extern unsigned app_frame(void); if (glowFresh && app_frame() % 4) return; } /* (every fourth frame: they drift slowly) */
   gfx_target_begin(&glowT, PAGE | 0xff000000u); login_backdrop_draw(); gfx_target_end(); glowFresh = 1;
 }

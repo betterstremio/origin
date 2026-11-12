@@ -204,11 +204,10 @@ static void p2p_test_tick(int frame) {
     if (PT.cycle < PT.cycles) p2p_resolve(getenv("SB_P2PTEST"), p2p_test_done, NULL);
     else { fprintf(stderr, "[p2ptest] %d cycles done, quitting\n", PT.cycles); app_quit(); } }
 }
-/* the mouse's place in layout units: through the window's pixels (a high-DPI drawable is larger than the window) and the
-   16:9 screen inside them (gfx_viewport: bars on a window of another shape) */
+/* the mouse's place in layout units through window and drawable pixels */
 static void to_layout(SDL_Window *win, int mx, int my, float *x, float *y) {
   int ww, wh, pw, ph, vx, vy, vw, vh; SDL_GetWindowSize(win, &ww, &wh); GL_SIZE(win, &pw, &ph); gfx_viewport(&vx, &vy, &vw, &vh);
-  float k = ww > 0 ? (float)pw / ww : 1; *x = vw > 0 ? (mx * k - vx) * SB_W / vw : 0; *y = vh > 0 ? (my * k - vy) * SB_H / vh : 0;
+  float kx = ww > 0 ? (float)pw / ww : 1, ky = wh > 0 ? (float)ph / wh : 1; *x = vw > 0 ? (mx * kx - vx) * SB_W / vw : 0; *y = vh > 0 ? (my * ky - vy) * SB_H / vh : 0;
 }
 #if SB_WINDOWED
 /* a desktop: the swap waits for the monitor, at most 120 frames a second (a 240 Hz one draws every second refresh), and the

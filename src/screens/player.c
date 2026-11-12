@@ -119,7 +119,7 @@ static struct {
   int ended; double endGoAt; double metaRetryAt;
   /* the paused screensaver, the file size, the picture size */
   double liveT0, steadyAt; /* the first frame came / playing steadily since */
-  int ssOn; double ssAt, ssCheckAt, lastAct; double size; char sizeTxt[24]; unsigned sizeTok; int httpSt, sizeAns, canNext; double errAt; int lastVw, lastVh; double aspRefreshAt;
+  int ssOn; double ssAt, ssCheckAt, lastAct; double size; char sizeTxt[24]; unsigned sizeTok; int httpSt, sizeAns, canNext; double errAt; int lastVw, lastVh; float layoutW, layoutH; double aspRefreshAt;
   /* the pointer: the time bubble over the bar */ int hvOn, barDown; float hvP; Mo hvA;
   /* a desktop: the wheel's volume and its pill */ int volHm; double volUntil; Mo volA;
   int extTry, embKnown, embWaitOver; double extRetryAt, embWaitAt;
@@ -879,7 +879,7 @@ static void aspect_load(void) { char k[96]; aspect_key(k, sizeof k); const char 
 /* the web sizes the picture's box (Fill / Zoom go past the screen); a TV's plane blanks for a rectangle that leaves
    the screen, so the part of that box on the screen is shown as a crop of the frame instead */
 static void apply_aspect(void) {
-  int vw = video_width(), vh = video_height(); float W = SB_W, H = SB_H; P.lastVw = vw; P.lastVh = vh;
+  int vw = video_width(), vh = video_height(); float W = SB_W, H = SB_H; P.lastVw = vw; P.lastVh = vh; P.layoutW = W; P.layoutH = H;
   if (!vw || !vh) { video_set_window(0, 0, W, H); return; }
   float fit = fminf(W / vw, H / vh), fill = fmaxf(W / vw, H / vh), k = fit; int wide = fabsf((float)vw / vh - W / H) < 0.03f;
   if (!strcmp(P.aspect, "fill")) k = wide ? fit * 1.12f : fill; else if (!strcmp(P.aspect, "zoom")) k = wide ? fit * 2.39f / (W / H) : fill * 1.15f;
@@ -1514,7 +1514,9 @@ static void draw_osd(void); static void draw_tray(void);
    a picture, fade off as the controls do (.2 s) while the art comes back over them (.45 s); freed once gone */
 static GfxTarget handSnap; static Mo handA;
 static void hand_snap(void) {
-  if (!handSnap.fbo && !gfx_target_create(&handSnap, 1280, 720)) return;
+  int w, h; gfx_screen_target_size(1280, 720, &w, &h);
+  if (handSnap.fbo && (handSnap.w != w || handSnap.h != h)) gfx_target_free(&handSnap);
+  if (!handSnap.fbo && !gfx_target_create(&handSnap, w, h)) return;
   gfx_target_begin(&handSnap, RGBA(0, 0, 0, 0)); draw_osd(); draw_tray(); gfx_target_end();
   mo_set(&handA, 1); mo_to(&handA, 0, .2f, C_EASE, 0);
 }
@@ -1868,7 +1870,9 @@ void player_tick(float dt) {
   if (!video_live()) P.liveT0 = 0;
   if (P.live && !P.skipsAsked && dur() > 0) load_skips(); /* once the length is known: segments are checked against it */
   if (P.live) {
-    if (video_width() != P.lastVw || video_height() != P.lastVh) apply_aspect(); /* the picture's size became known or changed */
+    int resized = P.layoutW != SB_W || P.layoutH != SB_H;
+    if (resized) build_btns();
+    if (resized || video_width() != P.lastVw || video_height() != P.lastVh) apply_aspect();
     if (P.aspRefreshAt && now_() >= P.aspRefreshAt) { P.aspRefreshAt = 0; if (paused()) video_seek(video_time()); }
     if (paused() && P.prompt.autoN && (P.prompt.k == 1 || P.prompt.k == 2)) { P.prompt.autoN = 0; paint_prompt(); } /* paused: no skipping by itself */
     /* the screensaver: paused and untouched for the time chosen in Settings, the controls fade away and the title's cover takes the screen */

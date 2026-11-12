@@ -92,18 +92,20 @@ FL="-ffunction-sections -fdata-sections -fvisibility=hidden -fvisibility-inlines
 if [[ "$TARGET" == android-* ]]; then FL="$FL -fexperimental-library"; fi   # the NDK's libc++ 18 keeps std::stop_token behind it
 if [ "$TARGET" = windows ]; then FL="$FL -DESTALE=10070"; fi   # (mingw has no ESTALE: Winsock's WSAESTALE; it only marks a vanished drive)
 if [ "$TARGET" = mac ]; then mkdir -p "$W/ossl3"; ln -sfn "$OSSL/include/openssl" "$W/ossl3/openssl"; FL="$FL -I$W/ossl3"; fi   # OpenSSL 3 ahead of the compiler's own /opt/homebrew/include (OpenSSL 4 there does not build the pinned libtorrent; the same folder given twice is dropped, hence the link)
+CXXFL="$FL"
+if [ "$TARGET" = windows ]; then CXXFL="$CXXFL -fno-declone-ctor-dtor"; fi   # GCC 16 can leave unresolved C4 symbols when decloning
 [ "$TARGET" = mac ] && [ -n "${ENGINE_MAC_PREBUILT:-}" ] || cmake -S "$SRC" -B "$B" -G Ninja -DNUVIO_ENGINE_ENABLE_LIBTORRENT=ON -DNUVIO_ENGINE_BUILD_TESTS=OFF \
   -DFETCHCONTENT_SOURCE_DIR_NUVIO_BOOST="$DEPS/nuvio_boost-src" -DFETCHCONTENT_SOURCE_DIR_NUVIO_LIBTORRENT="$DEPS/nuvio_libtorrent-src" \
   -DCMAKE_TOOLCHAIN_FILE="$TC/toolchain.cmake" "${TCX[@]}" -DCMAKE_BUILD_TYPE=MinSizeRel -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
   "${SSL[@]}" -DCMAKE_DISABLE_FIND_PACKAGE_GnuTLS=ON -DCMAKE_DISABLE_FIND_PACKAGE_LibGcrypt=ON \
-  -DCMAKE_C_FLAGS="$FL" -DCMAKE_CXX_FLAGS="$FL" >/dev/null
+  -DCMAKE_C_FLAGS="$FL" -DCMAKE_CXX_FLAGS="$CXXFL" >/dev/null
 if [ "$TARGET" = mac ] && [ -n "${ENGINE_MAC_PREBUILT:-}" ]; then B="$ENGINE_MAC_PREBUILT"   # the Mac preview only: archives built earlier (Homebrew's newer OpenSSL no longer compiles the pinned libtorrent)
 else ninja -j "${ENGINE_JOBS:-4}" -C "$B" nuvio_engine; fi   # a few jobs: the Mac stays usable
 mkdir -p "$(dirname "$OUT")"
 LT="$B/_deps/nuvio_libtorrent-build/libtorrent-rasterbar.a"
 if [ "$TARGET" = windows ]; then   # a DLL that exports sbe_get alone (the .def), the C++ runtime and winpthreads linked in
   printf 'LIBRARY libsbengine.dll\nEXPORTS\n  sbe_get\n' > "$TC/sbengine.def"
-  "$TC/c++" -std=c++20 -Os $FL -shared -I"$SRC/include" -I"$ROOT/src" "$ROOT/tools/engine/sbengine.cpp" "$TC/sbengine.def" \
+  "$TC/c++" -std=c++20 -Os $CXXFL -shared -I"$SRC/include" -I"$ROOT/src" "$ROOT/tools/engine/sbengine.cpp" "$TC/sbengine.def" \
     "$B/nuvio_engine.a" "$LT" -static -static-libgcc -static-libstdc++ -Wl,--gc-sections -s \
     -lws2_32 -lmswsock -liphlpapi -lbcrypt -lcrypt32 -ladvapi32 -ldbghelp -o "$OUT"
 elif [ "$TARGET" = webos ] || [[ "$TARGET" == android-* ]]; then
