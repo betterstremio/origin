@@ -4,6 +4,7 @@
 #ifndef SB_STREMIO_H
 #define SB_STREMIO_H
 #include "cJSON.h"
+#include "core/addons.h"
 
 #define CINEMETA "https://v3-cinemeta.strem.io"
 #define STREMIO_API "https://api.strem.io"
@@ -18,7 +19,7 @@ typedef struct { Item *items; int n; int total; /* total: the metas in the answe
 
 /* url: the first page as asked (also the cache's name); path: the address before the extra part, extra: what the
    first page is asked with (a required property's first option, or none), skip: the catalog takes "skip" (pages) */
-typedef struct { char title[96], type[16], url[512], key[48], path[512], extra[200]; int skip; } CatalogDef;
+typedef struct { char title[96], type[16], url[ADDON_URL_MAX + 256], key[48], path[ADDON_URL_MAX], extra[200]; int skip; } CatalogDef;
 
 int  sb_init(void);
 /* ---- account ---- */

@@ -325,7 +325,7 @@ static int addon_profile(void) { NvProfile p; int cur = nv_profile_current();
 
 /* ---- addons: each manifest kept with the list; a dead or slow one never takes its addon away ------ */
 #define MANIFEST_MAX_AGE (24 * 3600)
-typedef struct { void (*cb)(int, void *); void *ud; int n, left, gen, fetched[64]; char urls[64][512], names[64][96]; cJSON *man[64]; } AddReq;
+typedef struct { void (*cb)(int, void *); void *ud; int n, left, gen, fetched[64]; char urls[64][ADDON_URL_MAX], names[64][96]; cJSON *man[64]; } AddReq;
 static int addonsForce, addonsRetries; static double addonsRetryAt;
 void nv_addons_force_next(void) { addonsForce = 1; }
 static void add_end(AddReq *r, int changed) { if (r->cb) r->cb(changed, r->ud); for (int i = 0; i < 64; i++) cJSON_Delete(r->man[i]); free(r); }
@@ -366,9 +366,9 @@ static void addons_from_rows(AddReq *r, const cJSON *j) {
   r->n = 0;
   for (int i = 0; i < k; i++) { const char *u = js_str(rows[i], "url", js_str(rows[i], "base_url", "")); const char *q = strchr(u, '?'); size_t base = q ? (size_t)(q - u) : strlen(u); while (base && u[base - 1] == '/') base--;
     int hasMan = base >= 14 && !strncmp(u + base - 14, "/manifest.json", 14); int dup = 0;
-    char url[512]; if (hasMan) snprintf(url, sizeof url, "%s", u); else snprintf(url, sizeof url, "%.*s/manifest.json%s", (int)base, u, q ? q : "");
+    char url[ADDON_URL_MAX]; if (hasMan) snprintf(url, sizeof url, "%s", u); else snprintf(url, sizeof url, "%.*s/manifest.json%s", (int)base, u, q ? q : "");
     for (int d = 0; d < r->n; d++) if (!strcmp(r->urls[d], url)) dup = 1;
-    if (!dup) { const char *dn = js_str(rows[i], "display_name", js_str(rows[i], "custom_name", js_str(rows[i], "alias", ""))); snprintf(r->names[r->n], 96, "%s", dn); snprintf(r->urls[r->n++], 512, "%s", url); } }
+    if (!dup) { const char *dn = js_str(rows[i], "display_name", js_str(rows[i], "custom_name", js_str(rows[i], "alias", ""))); snprintf(r->names[r->n], 96, "%s", dn); snprintf(r->urls[r->n++], sizeof r->urls[0], "%s", url); } }
   if (!r->n) { add_end(r, 0); return; } /* an empty answer never wipes the list here */
   /* a manifest younger than a day is not asked for again: a start costs one small query, not one per addon */
   for (int i = 0; i < r->n; i++) { cJSON *e = old_entry(r->urls[i]); r->fetched[i] = force || !e || now - js_num(e, "nvAt", 0) > MANIFEST_MAX_AGE; if (r->fetched[i]) r->left++; }

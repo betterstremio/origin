@@ -13,8 +13,14 @@ void addon_urlenc(const char *s, char *out, size_t cap) {
   out[o] = 0;
 }
 void addon_base(const cJSON *ad, char *out, size_t cap) {
-  snprintf(out, cap, "%s", js_str(ad, "transportUrl", "")); char *m = strstr(out, "/manifest.json"); if (m) *m = 0;
-  size_t n = strlen(out); while (n && out[n - 1] == '/') out[--n] = 0;
+  const char *u = js_str(ad, "transportUrl", ""), *q = strchr(u, '?'); size_t n = q ? (size_t)(q - u) : strlen(u);
+  if (n >= 14 && !strncmp(u + n - 14, "/manifest.json", 14)) n -= 14;
+  while (n && u[n - 1] == '/') n--;
+  snprintf(out, cap, "%.*s%s", (int)n, u, q ? q : "");
+}
+void addon_join(char *out, size_t cap, const char *base, const char *tail) {
+  const char *q = strchr(base, '?'); size_t n = q ? (size_t)(q - base) : strlen(base);
+  snprintf(out, cap, "%.*s%s%s", (int)n, base, tail, q ? q : "");
 }
 const char *addon_name(const cJSON *ad) { const char *n = js_str(js_obj(ad, "manifest"), "name", ""); return *n ? n : "Addon"; }
 
@@ -49,8 +55,8 @@ void addon_extra_add(char *ex, size_t cap, const char *name, const char *value) 
   snprintf(ex + l, cap > l ? cap - l : 0, "%s%s=%s", l ? "&" : "", name, v);
 }
 void addon_url(char *out, size_t cap, const char *base, const char *resource, const char *type, const char *id, const char *extra) {
-  char t[96], i[400]; addon_urlenc(type, t, sizeof t); addon_urlenc(id, i, sizeof i);
-  snprintf(out, cap, "%s/%s/%s/%s%s%s.json", base, resource, t, i, extra && *extra ? "/" : "", extra && *extra ? extra : "");
+  char t[96], i[400], tail[1600]; addon_urlenc(type, t, sizeof t); addon_urlenc(id, i, sizeof i);
+  snprintf(tail, sizeof tail, "/%s/%s/%s%s%s.json", resource, t, i, extra && *extra ? "/" : "", extra && *extra ? extra : ""); addon_join(out, cap, base, tail);
 }
 
 int addon_cat_extra(const cJSON *cat, const char *name, int *req, const cJSON **opts, int *optsLimit) {

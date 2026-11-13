@@ -207,7 +207,7 @@ static void warm_hosts(void) { static double at = -100; if (app_now() - at < 60)
   CatalogDef d[NCAT]; int n = sb_search_defs("a", d, NCAT); char seen[8][128]; int ns = 0;
   for (int i = 0; i < n && ns < 8; i++) { const char *h = strstr(d[i].path, "://"); if (!h) continue; h += 3; size_t L = strcspn(h, "/"); if (L >= 128) continue;
     int dup = 0; for (int k = 0; k < ns; k++) if (strlen(seen[k]) == L && !strncmp(seen[k], h, L)) dup = 1; if (dup) continue;
-    snprintf(seen[ns++], 128, "%.*s", (int)L, h); char u[600]; const char *c = strstr(d[i].path, "/catalog/"); snprintf(u, sizeof u, "%.*s/manifest.json", c ? (int)(c - d[i].path) : (int)strlen(d[i].path), d[i].path); net_get_bg(u, 5000, warm_done, NULL); } }
+    snprintf(seen[ns++], 128, "%.*s", (int)L, h); char u[ADDON_URL_MAX]; const char *c = strstr(d[i].path, "/catalog/"), *q = strchr(d[i].path, '?'); snprintf(u, sizeof u, "%.*s/manifest.json%s", c ? (int)(c - d[i].path) : q ? (int)(q - d[i].path) : (int)strlen(d[i].path), d[i].path, q ? q : ""); net_get_bg(u, 5000, warm_done, NULL); } }
 static void enter(const void *p) { (void)p; warm_hosts(); S.zone = (S.zone == 2 && S.items.n) ? 2 : 0; timer_start(&S.in, 0.42f); results_draw_state(); S.typedAt = app_now() - 0.8; phone_ask(); }
 static void leave(void) {} /* Search keeps its query and results for when you come back */
 static const Item *focused(void) { return S.zone == 2 && S.ri < S.items.n ? &S.items.items[S.ri] : NULL; }

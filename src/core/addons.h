@@ -6,13 +6,20 @@
 #include <stddef.h>
 #include "cJSON.h"
 
+/* the longest addon address kept: some addons carry their whole setup in it (Meteor: the debrid key, languages and
+   filters as base64, often 600-1500 characters); a shorter cut sent them a broken setup (issue #5) */
+#define ADDON_URL_MAX 2048
+
 /* the addon answers /{resource}/{type}/{id} (switched on here, its manifest's rules); id NULL: any id */
 int  addon_serves(const cJSON *ad, const char *resource, const char *type, const char *id);
 /* how many addons switched on answer it */
 /* subtitles, leniently: declared at all, movie and series are always asked (the id prefixes still apply); and their count */
 int  addon_serves_subs(const cJSON *ad, const char *type, const char *id);
 int  addon_count_subs(const char *type, const char *id);
-void addon_base(const cJSON *ad, char *out, size_t cap);       /* the transport URL without /manifest.json */
+void addon_base(const cJSON *ad, char *out, size_t cap);       /* the transport URL without /manifest.json (its ?query kept) */
+/* base with tail put in before its ?query, as the official core does: ".../x?a=b" + "/stream/movie/tt1.json" ->
+   ".../x/stream/movie/tt1.json?a=b" */
+void addon_join(char *out, size_t cap, const char *base, const char *tail);
 const char *addon_name(const cJSON *ad);                      /* its manifest's name ("Addon") */
 /* "{base}/{resource}/{type}/{id}[/{extra}].json", each part encoded; extra already "a=b&c=d" (NULL or "": none) */
 void addon_url(char *out, size_t cap, const char *base, const char *resource, const char *type, const char *id, const char *extra);
