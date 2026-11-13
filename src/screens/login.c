@@ -23,6 +23,9 @@
 #include "core/sync.h"
 #include "screens/board.h"
 #include <stdlib.h>
+#include <math.h>
+#include "core/form.h"
+#include "screens/phone.h"
 
 static struct {
   int zone;                 /* 0 email, 1 password, 2 button, 3 the service (Stremio | Nuvio) */
@@ -111,6 +114,7 @@ static void enter(const void *p) {
 static void leave(void) { if (L.pollReq) net_cancel(L.pollReq); L.pollReq = 0; SDL_StopTextInput(); L.editing = 0; }
 static int key(int k) {
   if (L.done) return 1;
+  if (form_touch() && L.editing && k == K_BACK) { L.editing = 0; SDL_StopTextInput(); return 1; } /* a phone: Back puts the keyboard away */
   if (L.editing && L.osk.open) { char *f = L.zone ? L.pass : L.email; int r = osk_key(&L.osk, k, f, 128);
     if (r == 2) { osk_close(&L.osk); L.editing = 0; L.zone = L.zone == 0 ? 1 : 2; } else if (!r && (k == K_UP)) { osk_close(&L.osk); L.editing = 0; } return 1; }
   if (L.editing) {
@@ -178,7 +182,46 @@ void login_backdrop_draw(void) {
   if (t) { float u0, v0, u1, v1; img_cover_uv(asp, SB_W / SB_H, 0, &u0, &v0, &u1, &v1); gfx_image(t, 0, 0, SB_W, SB_H, 0, WHITE_A(255), u0, v0, u1, v1); }
   login_glows_draw();
 }
+
+/* ---- a phone (core/form.h): one column, typed on the system's keyboard. "Sign in with your browser" opens the
+   service's own page for the code on this phone; once it is approved there the app goes on by itself (the same
+   polling as the TV's code). Or the email and password, as on the TV ---- */
+static void ph_field(int z, int b) { (void)b; if (L.done || L.loadingProfiles) return; L.zone = z; L.editing = 1; SDL_StartTextInput(); }
+static void ph_signin(int a, int b) { (void)a; (void)b; L.editing = 0; SDL_StopTextInput(); do_email(); }
+static void ph_browser(int a, int b) { (void)a; (void)b; if (L.link[0] && !plat_open_url(L.link)) toast(T("Could not open the link"), 2000, NULL); }
+static void ph_svc(int v, int b) { (void)b; set_service(v); }
+static void ph_input(float x, float y, float w, int z, const char *ph, const char *val, int secret) {
+  int on = L.editing && L.zone == z; gfx_rrect(x, y, w, 50, 12, on ? WHITE_A(36) : WHITE_A(20)); if (on) gfx_ring(x, y, w, 50, 12, 1.5f, col_alpha(ACC | 0xff000000u, 0.9f));
+  char shown[300]; if (secret) { size_t n = 0, k = 0; for (const char *c = val; *c && k + 4 < sizeof shown; c++) if (((unsigned char)*c & 0xc0) != 0x80) { memcpy(shown + k, "\xe2\x80\xa2", 3); k += 3; n++; } shown[k] = 0; (void)n; } else snprintf(shown, sizeof shown, "%s", val);
+  float ty = y + 25 - text_line_height(PH_TX_BODY + 2) / 2.0f, tw = 0;
+  if (*shown) tw = text_draw(shown, x + 14, ty, PH_TX_BODY + 2, 500, PH_TXT, 0, w - 28, ALIGN_LEFT); else text_draw(ph, x + 14, ty, PH_TX_BODY + 2, 500, PH_TXT2, 0, w - 28, ALIGN_LEFT);
+  if (on && fmod(app_now(), 1.0) < 0.6) gfx_rect(x + 14 + tw + 1, y + 13, 2, 24, ACC | 0xff000000u);
+  hit_act(x, y, w, 50, ph_field, z, 0);
+}
+static void draw_phone(void) {
+  login_backdrop_draw(); gfx_rect(0, 0, SB_W, SB_H, BLACK_A(90));
+  float W = SB_W - 2 * PH_M; if (W > 440) W = 440; float x = (SB_W - W) / 2, y = SB_H * 0.08f;
+  if (L.editing) y -= 40; /* (room for the keyboard) */
+  text_draw("Origin", SB_W / 2, y, 34, 800, PH_TXT, -0.8f, 0, ALIGN_CENTER); y += 56;
+  if (L.done || L.loadingProfiles) { text_draw(T(L.done ? "Signing in…" : "Loading profiles…"), SB_W / 2, y + 40, PH_TX_ROW, 600, PH_TXT2, 0, W, ALIGN_CENTER); return; }
+  if (nv_configured() && !L.adding) { /* which account: Stremio | Nuvio */
+    float sw = W, hw = sw / 2; gfx_rrect(x, y, sw, 40, 20, WHITE_A(20)); gfx_rrect(x + 3 + L.svc * hw, y + 3, hw - 6, 34, 17, WHITE_A(255));
+    for (int i = 0; i < 2; i++) { text_draw(i ? "Nuvio" : "Stremio", x + hw * i + hw / 2, y + 20 - text_line_height(PH_TX_BODY) / 2.0f, PH_TX_BODY, 700, L.svc == i ? RGB(12, 11, 17) : PH_TXT, 0, 0, ALIGN_CENTER); hit_act(x + hw * i, y, hw, 40, ph_svc, i, 0); }
+    y += 58; }
+  /* the browser */
+  if (L.qrOk) { int pr = touch_pressed(NULL, ph_browser, 0, 0); gfx_rrect(x, y, W, 50, 12, pr ? WHITE_A(200) : WHITE_A(255));
+    const char *bl = T("Sign in with your browser"); text_draw(bl, SB_W / 2, y + 25 - text_line_height(PH_TX_BODY + 1) / 2.0f, PH_TX_BODY + 1, 700, RGB(12, 11, 17), 0, W - 20, ALIGN_CENTER); hit_act(x, y, W, 50, ph_browser, 0, 0); y += 58;
+    char c[96]; snprintf(c, sizeof c, "%s %s", T("Code"), L.code); text_draw(c, SB_W / 2, y, PH_TX_SMALL + 1, 600, PH_TXT2, 0.5f, W, ALIGN_CENTER); y += 30; }
+  else { text_draw(L.stat[0] ? L.stat : T("Getting a sign-in code…"), SB_W / 2, y + 14, PH_TX_SMALL + 1, 600, PH_TXT2, 0, W, ALIGN_CENTER); y += 44; }
+  gfx_rect(x, y + 10, W / 2 - 24, 1, WHITE_A(40)); gfx_rect(x + W / 2 + 24, y + 10, W / 2 - 24, 1, WHITE_A(40)); text_draw(T("or"), SB_W / 2, y + 10 - text_line_height(PH_TX_SMALL) / 2.0f, PH_TX_SMALL, 600, PH_TXT2, 0, 0, ALIGN_CENTER); y += 34;
+  ph_input(x, y, W, 0, T("Email"), L.email, 0); y += 60;
+  ph_input(x, y, W, 1, T("Password"), L.pass, 1); y += 64;
+  { int pr = touch_pressed(NULL, ph_signin, 0, 0); gfx_rrect(x, y, W, 50, 12, pr ? col_alpha(ACC | 0xff000000u, 0.7f) : ACC | 0xff000000u);
+    text_draw(T("Sign in"), SB_W / 2, y + 25 - text_line_height(PH_TX_BODY + 1) / 2.0f, PH_TX_BODY + 1, 700, ACC_FG | 0xff000000u, 0, W, ALIGN_CENTER); hit_act(x, y, W, 50, ph_signin, 0, 0); y += 62; }
+  if (L.err[0]) text_draw_wrapped(L.err, SB_W / 2, y, W, 3, PH_TX_SMALL + 1, 600, RGB(0xff, 0x8a, 0x8a), 0, ALIGN_CENTER, 18);
+}
 static void draw(void) {
+  if (form_touch()) { draw_phone(); return; }
   login_glows_draw();
   int rtl = app_rtl();
   /* the box: QR half | divider | form half, centred */

@@ -155,3 +155,10 @@ int plat_panel_lines(void) {
 }
 int plat_color_keys(void) { return 1; } /* every LG remote has them */
 int plat_random(void *buf, int n) { FILE *f = fopen("/dev/urandom", "rb"); if (!f) return 0; size_t g = fread(buf, 1, (size_t)n, f); fclose(f); return g == (size_t)n; }
+
+/* phones only (core/form.h): nothing to turn, hide or buzz here */
+void plat_orientation(int landscape) { (void)landscape; }
+void plat_immersive(int on) { (void)on; }
+void plat_haptic(void) {}
+void plat_safe_area(int *top, int *bottom, int *left, int *right) { *top = *bottom = *left = *right = 0; }
+int  plat_open_url(const char *url) { (void)url; return 0; }

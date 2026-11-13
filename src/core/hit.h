@@ -4,7 +4,7 @@
 #ifndef SB_HIT_H
 #define SB_HIT_H
 typedef void (*HitFn)(int a, int b);
-typedef struct { float x, y, w, h; HitFn focus, act; int a, b, shield, nav, peek; } Hit;
+typedef struct { float x, y, w, h; HitFn focus, act, hold; int a, b, shield, nav, peek; } Hit; /* hold: a finger held on it (phones; core/touch.h) */
 /* peek (a desktop window): only part of it shows (cut by a clip or the screen's edge), or the screen marked it
    (hit_peek_last): pointing at it does nothing, a click brings it into view (focus, no OK) */
 void hit_begin(void);                                  /* each frame, before drawing */
@@ -13,6 +13,7 @@ void hit_trim(int to);                                 /* ... and dropping what 
 void hit_add(float x, float y, float w, float h, HitFn focus, HitFn act, int a, int b);
 void hit_add_nav(float x, float y, float w, float h, HitFn focus, HitFn act, int a, int b);
 void hit_peek_last(void);                              /* the last one added: a click brings it in, hovering does not */
+void hit_add_hold(float x, float y, float w, float h, HitFn focus, HitFn act, HitFn hold, int a, int b); /* a phone: a tap acts, a long press holds */
 void hit_shield(float x, float y, float w, float h);
 void hit_act(float x, float y, float w, float h, HitFn act, int a, int b);  /* acts on release, no focus */
 const Hit *hit_at(float x, float y);                   /* the topmost one, or NULL */

@@ -19,6 +19,7 @@
 #include "ui/qr.h"
 #include "core/net.h"
 #include "platform/plat.h"
+#include "core/form.h"
 
 #define SKEYS SEARCH_KEYS
 #define NK SEARCH_NK
@@ -189,7 +190,7 @@ static void cat_go(void) {
 }
 static void cat_now(void) { if (S.catPending) { S.catPending = 0; cat_go(); } }
 /* the QR for typing on the phone, and what arrives from it (asked only while Search is up) */
-static void phone_ask(void) { if (!SB_PHONE_TYPE) return; if (S.qrOk) { httpd_start(); return; } S.qrAt = app_now(); S.qrOk = httpd_url("", S.qrUrl, sizeof S.qrUrl); }
+static void phone_ask(void) { if (!SB_PHONE_TYPE || form_touch()) return; /* (a phone types on itself) */ if (S.qrOk) { httpd_start(); return; } S.qrAt = app_now(); S.qrOk = httpd_url("", S.qrUrl, sizeof S.qrUrl); }
 static void phone_tick(void) {
   double now = app_now(); if (!SB_PHONE_TYPE) return;
   if (!S.qrOk && now - S.qrAt >= 2.5) phone_ask(); /* no network address yet: again in a moment */
@@ -342,3 +343,11 @@ static void draw(void) {
   gfx_offset_pop(); gfx_opacity_pop();
 }
 Screen searchScreen = { enter, leave, key, tick, draw, focused, NULL, text_in };
+
+/* ---- phones (screens/phone_search.c): the same search, typed on the system's keyboard ---- */
+const char *search_query(void) { return S.q; }
+void search_set_query(const char *q) { set_q(q ? q : ""); }
+const ItemList *search_results(void) { return &S.items; }
+int  search_busy(void) { return S.q[0] && (S.livePending || S.catPending || S.loading); }
+int  search_sug_list(const char **out, int max) { int n = 0; for (int i = 0; i < S.nsug && n < max; i++) out[n++] = S.sug[i]; return n; }
+void search_now(void) { if (S.livePending) { S.livePending = 0; live(); } cat_now(); }

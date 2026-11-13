@@ -32,6 +32,8 @@
 #include "core/addons.h"
 #include "core/subsync.h"
 #include "ui/asssubs.h"
+#include "core/form.h"
+#include <math.h>
 
 /* ---- the stream's text, read for the info chips: resolution, HDR, audio ---- */
 static void lower(const char *s, char *out, size_t cap) { size_t i = 0; for (; s[i] && i + 1 < cap; i++) out[i] = (char)tolower((unsigned char)s[i]); out[i] = 0; }
@@ -1833,6 +1835,7 @@ static void foc_update(void) {
 }
 static void vol_tick(void); static void vol_draw(void);
 void player_tick(float dt) {
+  { static float lw, lh; if (P.open && (SB_W != lw || SB_H != lh)) { lw = SB_W; lh = SB_H; build_btns(); } } /* the canvas changed (a phone turning for the film): the buttons placed again */
   hand_tick(dt);
   subs_pump(); /* subtitle files and lists, fetched on their own threads */
   if (!P.open) return; video_pump(); sync_tick();
@@ -2373,9 +2376,10 @@ static void draw_tray(void) {
   if (sw) { gfx_offset_pop(); gfx_opacity_pop(); }
   gfx_offset_pop(); gfx_scale_pop(); gfx_opacity_pop();
 }
+static void ph_controls_draw(void);
 void player_draw(void) {
   if (!P.open) return; float a = P.in.v; gfx_opacity_push(a);
-  if (P.live && P.artA.v < 0.999f) { draw_osd(); draw_tray(); vol_draw(); }
+  if (P.live && P.artA.v < 0.999f) { draw_osd(); ph_controls_draw(); draw_tray(); vol_draw(); }
   else if (P.artA.v < 0.999f) hand_draw();
   draw_art();
   gfx_opacity_pop();
@@ -2477,6 +2481,54 @@ void player_ptr(int type, float x, float y) {
   if (!down && P.mode == 1) P.hideAt = now_() + 2.5; /* over the picture, not a control: the controls go sooner than after a key */
 #endif
   if (down) { if (P.seekT >= 0) commit_seek(); else toggle(); show_osd(1); } /* the picture: play / pause */
+}
+
+
+/* ---- a phone's fingers (core/form.h; the film is sideways, the canvas the TV's): a tap shows or hides the controls,
+   the big buttons in the middle step back 10 s, play or pause and step on 10 s, a double tap on the left or right
+   third steps back or on (each further tap adds a step), the bar is dragged to a place, Back is at the top left;
+   the trays, the buttons' row and the prompts take a tap as a click (player_ptr) ---- */
+static struct { int down, moved, onBar, lastSide, osdBefore; float x0, y0, ylast, acc; double lastTapAt; } TP;
+static float tdp(void) { float s = gfx_scale(); return s > 0 ? form_density() / s : 1; } /* layout units per dp */
+static void ph_centres(float *cx, float *cy, float *gap, float *r) { float d = tdp(); *cx = SB_W / 2; *cy = SB_H * 0.3f; /* (above the title and its chips) */ *gap = 128 * d; *r = 36 * d; }
+static int ph_in(float x, float y, float cx, float cy, float r) { return (x - cx) * (x - cx) + (y - cy) * (y - cy) <= r * r; }
+static void ph_controls_draw(void) {
+  if (!form_touch() || !P.live) return; float a = P.btnA.v; if (a <= 0.01f || P.mode == 2 || P.mode == 4) return;
+  float cx, cy, gap, r, d = tdp(); ph_centres(&cx, &cy, &gap, &r); gfx_opacity_push(a);
+  gfx_circle(cx, cy, r * 1.15f, BLACK_A(110)); icon_draw(paused() ? "p_play" : "p_pause", cx - r * 0.6f, cy - r * 0.6f, r * 1.2f, WHITE_A(250));
+  for (int s = -1; s <= 1; s += 2) { float x = cx + s * gap; gfx_circle(x, cy, r * 0.85f, BLACK_A(90)); icon_draw(s < 0 ? "p_rw" : "p_ff", x - r * 0.45f, cy - r * 0.45f, r * 0.9f, WHITE_A(235)); }
+  gfx_circle(26 * d + 18 * d, 30 * d, 20 * d, BLACK_A(100)); icon_draw("ph_back", 26 * d + 6 * d, 18 * d, 24 * d, WHITE_A(240));
+  gfx_opacity_pop();
+}
+void player_touch(int type, float x, float y) {
+  if (!P.open || P.closing || !P.live) return; float d = tdp(), L25 = text_line_height(25), barTop = SB_H - 54 - 94 - 30 - L25;
+  if (type == 0) { TP.down = 1; TP.moved = 0; TP.x0 = x; TP.y0 = y; TP.ylast = y; TP.acc = 0; if (P.mode == 2) player_ptr(0, x, y); /* (a tray: the row under the finger is pointed at, not picked: a drag moves through its column, a lift picks it) */
+    TP.onBar = P.osd && P.mode != 2 && P.mode != 4 && y >= barTop - 22 * d && y <= barTop + L25 + 16 * d;
+    if (TP.onBar) { P.row = 1; ptr_hv(1, x); P.barDown = 1; show_osd(1); double du = dur(); if (du > 0) { P.seekT = P.hvP * du; P.seekCommitAt = now_() + 1e6; } }
+    return; }
+  if (type == 1) { if (!TP.down) return; if (!TP.moved && hypotf(x - TP.x0, y - TP.y0) > 10 * d) TP.moved = 1;
+    if (TP.onBar) { ptr_hv(1, x); double du = dur(); if (du > 0) { P.seekT = P.hvP * du; P.seekCommitAt = now_() + 1e6; } arm_hide(); return; }
+    if (P.mode == 2 && TP.moved) { TP.acc += y - TP.ylast; TP.ylast = y; float step = 30 * d; /* a tray: a drag steps through the column's rows, one per 30 dp */
+      while (TP.acc <= -step) { TP.acc += step; player_key(K_DOWN, 1); player_key(K_DOWN, 0); }
+      while (TP.acc >= step) { TP.acc -= step; player_key(K_UP, 1); player_key(K_UP, 0); } }
+    return; }
+  if (!TP.down) return; TP.down = 0;
+  if (TP.onBar) { ptr_hv(1, x); double du = dur(); if (du > 0) { P.seekT = P.hvP * du; commit_seek(); } P.barDown = 0; ptr_hv(0, x); arm_hide(); return; }
+  if (TP.moved) return;
+  double n = now_(); int side = x < SB_W / 3 ? -1 : x > SB_W * 2 / 3 ? 1 : 0;
+  if (getenv("SB_TOUCHLOG")) fprintf(stderr, "[touch] film tap %.0f,%.0f osd %d mode %d side %d\n", x, y, P.osd, P.mode, side);
+  if (side && TP.lastSide == side && n - TP.lastTapAt < 0.4) { /* a double tap on a side: a step back or on */
+    TP.lastTapAt = n; seek_by(side); if (TP.osdBefore) show_osd(1); else if (P.osd) { hide_osd(); P.skm = 1; } return; }
+  TP.lastTapAt = n; TP.lastSide = side; TP.osdBefore = P.osd;
+  if (P.mode == 2) { player_ptr(1, x, y); player_ptr(2, x, y); return; } /* a tray: the row picked, or beside it, the tray closed */
+  if (P.mode == 4 || (P.prompt.k && PG.prompt)) { player_ptr(1, x, y); player_ptr(2, x, y); return; }
+  if (P.osd) { float cx, cy, gap, r; ph_centres(&cx, &cy, &gap, &r);
+    if (ph_in(x, y, cx, cy, r * 1.3f)) { if (P.seekT >= 0) commit_seek(); toggle(); show_osd(1); return; }
+    for (int s = -1; s <= 1; s += 2) if (ph_in(x, y, cx + s * gap, cy, r * 1.2f)) { seek_by(s); show_osd(1); return; }
+    if (x < 80 * d && y < 64 * d) { close_player(0, 0); return; }
+    if (y >= SB_H - 54 - 94 - 10 * d && y <= SB_H - 54 + 10 * d) { player_ptr(1, x, y); player_ptr(2, x, y); return; } /* the buttons' row */
+    hide_osd(); return; }
+  show_osd(1);
 }
 
 /* Stats for nerds: what plays and how, a few short lines (n of them filled) */

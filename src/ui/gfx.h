@@ -12,7 +12,13 @@
 extern float gfx_layout_w, gfx_layout_h;
 #define SB_W gfx_layout_w
 #define SB_H gfx_layout_h
+void  gfx_touch_layout(float density);  /* phones: layout units become dp (0: the 16:9 design again, as for a film) */
+void  gfx_film_layout(float designW);   /* phones, a film: a canvas that wide (0: the 16:9 design, widened to the surface) */
+float gfx_touch_dp(void);               /* the density in use, 0 when the canvas is the 16:9 design */
 #else
+static inline void gfx_touch_layout(float density) { (void)density; }
+static inline void gfx_film_layout(float designW) { (void)designW; }
+static inline float gfx_touch_dp(void) { return 0; }
 #define SB_W 1920.0f
 #define SB_H 1080.0f
 #endif

@@ -28,6 +28,7 @@
 #include "ui/qrcard.h"
 #include "screens/revpanel.h"
 #include "core/app.h"
+#include "core/form.h"
 #include "core/tmdb.h"
 #include "core/trakt.h"
 #include "core/best.h"
@@ -1153,6 +1154,7 @@ static int due = -1;
 static int is_due(void) { if (due < 0) { int has = load(); const char *seen = store_get("whatsNewSeen", ""); due = getenv("SB_GUIDE") || getenv("SB_WHATSNEW") || (!store_get("guideSeen", NULL) && !seen[0]) || (has && strcmp(seen, W.ver)); } return due; }
 int welcome_ready(void) { return !is_due() || W.checked || preload(); }
 void welcome_tick(void) {
+  if (form_touch()) { W.checked = 1; return; } /* a phone: the TV's tour and news pages are not for it (yet) */
   if (W.open || (!W.checked && is_due())) { int r = preload(); static double since; if (!since) since = app_now(); if (!W.open && !r && app_now() - since < 4) return; } /* (kept fresh while it shows; it opens once they are in, 4 s at most) */
   if (W.checked || W.open || !app_splash_done || SCR != SCR_HOME || app_overlay || app_idle() < 1.2f) return;
   W.checked = 1; if (getenv("SB_STRESS")) return;
@@ -1161,6 +1163,7 @@ void welcome_tick(void) {
   if (forceG || (!forceW && first)) open_guide(1); else if (has && (forceW || strcmp(seen, W.ver))) open_guide(0);
 }
 void welcome_open_now(void) {
+  if (form_touch()) { W.checked = 1; return; }
   if (W.checked || W.open || getenv("SB_STRESS")) return;
   W.checked = 1; int has = load(); const char *seen = store_get("whatsNewSeen", ""); int first = !store_get("guideSeen", NULL) && !seen[0];
   if (first) open_guide(1); else if (has && strcmp(seen, W.ver)) open_guide(0); else return;

@@ -22,6 +22,8 @@
 #include <string.h>
 #include <time.h>
 #include "core/hit.h"
+#include "core/form.h"
+#include "screens/phone.h"
 #include "core/tmdb.h"
 #include "core/trakt.h"
 #include "screens/revpanel.h"
@@ -447,7 +449,9 @@ static void open_pick(void) {
   S.zone = 2; tween_to(&S.pkA, 1, 0.22f, EASE_CSS_EASE); tween_to(&S.pkX, 1, 0.26f, EASE_SNAP); tween_set(&S.pickY, 0); S.pickAt = app_now(); memset(&S.hp, 0, sizeof S.hp);
 }
 static void close_pick(void) { S.zone = 1; S.pick = -1; tween_to(&S.pkA, 0, 0.22f, EASE_CSS_EASE); tween_to(&S.pkX, 0, 0.26f, EASE_SNAP); }
+static void close_pick(void);
 static int key(int k) {
+  if (form_touch() && k == K_BACK) { if (S.zone == 2) { close_pick(); return 1; } if (S.zone == 1) { S.zone = 0; return 1; } return 0; }
   if (k == K_OK) hl_press(S.zone == 0 ? &S.hc : S.zone == 2 ? &S.hp : &S.ho);
   if (S.zone == 2) { Setting *o = &cats[S.cat].opts[S.idx];
     if (k == K_UP) { if (S.pick > 0) S.pick--; else nudge_start(&S.nudge, k); }
@@ -500,7 +504,9 @@ static int key(int k) {
     open_pick(); return 1; }
   return 1;
 }
+static void tick_phone(float dt);
 static void tick(float dt) {
+  if (form_touch()) tick_phone(dt);
   ab_tick();
   { static int ck; int c = tmdb_key_check_state(); if (c != ck) { int was = ck; ck = c; /* a pasted or Nuvio key checked: say how it went, the row follows */
       if (was == TK_CHECKING) toast(c == TK_KEPT ? T("TMDB key added: getting your picks") : c == TK_BAD ? T("TMDB did not accept that key") : T("TMDB did not answer: try again in a moment"), 2500, NULL);
@@ -813,7 +819,64 @@ static void draw_row(const Setting *o, int i, float x, float y, float h, int f, 
     if (f) line("\xe2\x80\xb9 ", rtl ? vx + vw : vx - vw, vy, 34, 26, 600, cc, 0, 0, ar);
     (void)bw; }
 }
+
+/* ---- a phone (core/form.h): the categories as a list, a tap opens one, its settings as rows (a switch flips where it
+   is, a choice opens its list, an action runs), Back steps out. The rows are the TV's own (build(), set_val(), and
+   key() applies them: a tap points the TV's selection at the row and presses OK) ---- */
+static Scroller phS[3]; static int phLevel = -1;
+static void ph_cat(int i, int b) { (void)b; if (i < 0 || i >= ncat) return; if (cats[i].out) { logout(); return; } S.cat = i; S.zone = 1; S.idx = 0; show_cat(i, 1); scroller_set(&phS[1], 0); }
+static void ph_row(int j, int b) { (void)b; Cat *c = &cats[S.cat]; if (j < 0 || j >= c->n) return; Setting *o = &c->opts[j]; if (o->off || o->info) return;
+  S.zone = 1; S.idx = j; key(K_OK); if (S.zone == 2) scroller_set(&phS[2], 0); }
+static void ph_pick(int j, int b) { (void)b; if (S.zone != 2) return; S.pick = j; key(K_OK); }
+static void ph_back(int a, int b) { (void)a; (void)b; app_back(); }
+static void ph_head(const char *t, int back) {
+  gfx_rect(0, 0, SB_W, PH_TOPBAR, PAGE); gfx_rect(0, PH_TOPBAR - 1, SB_W, 1, WHITE_A(14)); hit_shield(0, 0, SB_W, PH_TOPBAR);
+  float x = PH_M; if (back) { int pr = touch_pressed(NULL, ph_back, 0, 0); gfx_circle(PH_M + 18, PH_TOPBAR / 2, 18, pr ? WHITE_A(60) : WHITE_A(0)); icon_draw("ph_back", PH_M + 6, PH_TOPBAR / 2 - 12, 24, PH_TXT); hit_act(0, 0, 64, PH_TOPBAR, ph_back, 0, 0); x = 60; }
+  text_draw(t, x, PH_TOPBAR / 2 - text_line_height(back ? 19 : 22) / 2.0f, back ? 19 : 22, 800, PH_TXT, -0.3f, SB_W - x - PH_M, ALIGN_LEFT);
+}
+static void ph_switch(float x, float cy, int on) { gfx_rrect(x, cy - 14, 48, 28, 14, on ? ACC | 0xff000000u : WHITE_A(50)); gfx_circle(on ? x + 34 : x + 14, cy, 11, WHITE_A(255)); }
+static void draw_phone(void) {
+  gfx_rect(0, 0, SB_W, SB_H, PAGE); int lv = S.zone == 2 ? 2 : S.zone == 1 ? 1 : 0; if (lv != phLevel) { phLevel = lv; }
+  float top = PH_TOPBAR, bottom = phone_bottom(), W = SB_W - 2 * PH_M; Scroller *sc = &phS[lv];
+  touch_region(0, top, SB_W, bottom - top, NULL, sc); gfx_clip_push(0, top, SB_W, bottom - top);
+  float y = top + 8 - sc->off;
+  if (lv == 0) {
+    if (S.acct[0]) { text_draw(S.acct, PH_M, y + 4, PH_TX_SMALL + 1, 600, PH_TXT2, 0, W, ALIGN_LEFT); y += 32; }
+    for (int i = 0; i < ncat; i++) { const Cat *c = &cats[i]; float h = c->ds && *c->ds ? 64 : 52; int pr = touch_pressed(NULL, ph_cat, i, 0);
+      if (pr) gfx_rrect(PH_M - 8, y, W + 16, h, 10, WHITE_A(18));
+      if (c->ic) icon_draw(c->ic, PH_M, y + h / 2 - 12, 24, c->out ? RGB(0xff, 0x8a, 0x8a) : PH_TXT2);
+      float tx = PH_M + 40; text_draw(T(c->lb), tx, y + (h > 52 ? 11 : h / 2 - text_line_height(PH_TX_BODY + 2) / 2.0f), PH_TX_BODY + 2, 600, c->out ? RGB(0xff, 0x8a, 0x8a) : PH_TXT, 0, W - 60, ALIGN_LEFT);
+      if (h > 52) text_draw(T(c->ds), tx, y + 35, PH_TX_SMALL, 500, PH_TXT2, 0, W - 60, ALIGN_LEFT);
+      if (!c->out) icon_draw_rot("ph_back", PH_M + W - 14, y + h / 2 - 9, 18, WHITE_A(70), 180); /* (turned: pointing on) */
+      hit_act(PH_M - 8, y, W + 16, h, ph_cat, i, 0); y += h; }
+  } else if (lv == 1) { Cat *c = &cats[S.cat];
+    for (int j = 0; j < c->n; j++) { Setting *o = &c->opts[j]; const char *lb = o->raw ? o->lb : T(o->lb), *ds = o->ds[0] ? (o->raw ? o->ds : T(o->ds)) : NULL;
+      int sw = is_switch(o); char vb[160]; const char *v = !sw && !o->action && (o->nopts || o->info) ? val_text(o, vb, sizeof vb) : NULL; float rw = sw ? 60 : v ? (text_width(v, PH_TX_SMALL + 1, 600, 0) > W * 0.4f ? W * 0.4f : text_width(v, PH_TX_SMALL + 1, 600, 0)) + 12 : 0;
+      int dl = ds ? text_wrap_count(ds, W - rw - 8, 3, PH_TX_SMALL, 400, 0) : 0; float h = 22 + 20 + (dl ? 4 + dl * 17 : 0); if (h < 56) h = 56;
+      if (y + h > top && y < bottom) { int pr = touch_pressed(NULL, ph_row, j, 0); if (pr) gfx_rrect(PH_M - 8, y, W + 16, h, 10, WHITE_A(18));
+        if (o->off) gfx_opacity_push(0.45f);
+        text_draw(lb, PH_M, y + 11, PH_TX_BODY + 1, 600, PH_TXT, 0, W - rw - 8, ALIGN_LEFT);
+        if (dl) text_draw_wrapped(ds, PH_M, y + 34, W - rw - 8, 3, PH_TX_SMALL, 400, PH_TXT2, 0, ALIGN_LEFT, 17);
+        if (sw) ph_switch(PH_M + W - 48, y + h / 2, !strcmp(cur_val(o), "true"));
+        else if (v) text_draw(v, PH_M + W, y + h / 2 - text_line_height(PH_TX_SMALL + 1) / 2.0f, PH_TX_SMALL + 1, 600, col_mix(ACC, 0xffffffffu, 0.4f), 0, W * 0.4f, ALIGN_RIGHT);
+        if (o->off) gfx_opacity_pop();
+        gfx_rect(PH_M, y + h - 1, W, 1, WHITE_A(10));
+        hit_act(PH_M - 8, y, W + 16, h, ph_row, j, 0); }
+      y += h; }
+  } else { Setting *o = &cats[S.cat].opts[S.idx]; const char *cur = cur_val(o);
+    for (int j = 0; j < o->nopts; j++) { int on = !strcmp(o->opts[j].v, cur), pr = touch_pressed(NULL, ph_pick, j, 0); float h = 52;
+      if (pr) gfx_rrect(PH_M - 8, y, W + 16, h, 10, WHITE_A(18));
+      const char *lb = !strcmp(o->k, "uiLang") ? i18n_lang_name(o->opts[j].v) : T(o->opts[j].lb);
+      text_draw(lb, PH_M, y + h / 2 - text_line_height(PH_TX_BODY + 1) / 2.0f, PH_TX_BODY + 1, on ? 700 : 500, on ? PH_TXT : PH_TXT2, 0, W - 40, ALIGN_LEFT);
+      if (on) icon_draw("check", PH_M + W - 22, y + h / 2 - 11, 22, col_mix(ACC, 0xffffffffu, 0.4f));
+      hit_act(PH_M - 8, y, W + 16, h, ph_pick, j, 0); y += h; } }
+  gfx_clip_pop();
+  scroller_limits(sc, 0, y + sc->off - top + 24 - (bottom - top));
+  ph_head(lv == 0 ? T("Settings") : lv == 1 ? T(cats[S.cat].lb) : (cats[S.cat].opts[S.idx].raw ? cats[S.cat].opts[S.idx].lb : T(cats[S.cat].opts[S.idx].lb)), lv > 0 || SCR == SCR_SET);
+}
+static void tick_phone(float dt) { for (int i = 0; i < 3; i++) scroller_tick(&phS[i], dt); }
 static void draw(void) {
+  if (form_touch()) { draw_phone(); return; }
   int rtl = app_rtl(), al = rtl ? ALIGN_RIGHT : ALIGN_LEFT; double now = app_now();
   /* the entrance: the pieces rise in once the screen is up (the panel itself stays) */
   float et = (float)(now - S.enterAt), fa = et < 0.42f ? ease_apply(EASE_CSS_EASE, et / 0.42f) : 1, fy = 22 * (1 - fa);

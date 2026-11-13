@@ -130,12 +130,15 @@ public final class SbPlayer {
             player.setTrackSelectionParameters(player.getTrackSelectionParameters().buildUpon().clearOverrides()
                 .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false).build());
             player.setMediaItem(mb.build(), startSec > 0 ? (long) (startSec * 1000) : C.TIME_UNSET);
+            // a fade left from the last video (a preview's sound coming up or going, frozen while the app was away) must
+            // not carry on over this one: it held a film silent for seconds
+            if (volAnim != null) { volAnim.cancel(); volAnim = null; }
             player.setVolume(1f);
             player.prepare(); player.setPlayWhenReady(true);
             refresh();
         });
     }
-    public static void unload() { ui.post(() -> { if (player != null) { player.stop(); player.clearMediaItems(); } clip.setVisibility(View.INVISIBLE); subs.setCues(new ArrayList<>()); keepOn(false); everReady = firstFrame = false; refresh(); }); }
+    public static void unload() { ui.post(() -> { if (volAnim != null) { volAnim.cancel(); volAnim = null; } if (player != null) { player.stop(); player.clearMediaItems(); } clip.setVisibility(View.INVISIBLE); subs.setCues(new ArrayList<>()); keepOn(false); everReady = firstFrame = false; refresh(); }); }
     public static void play() { ui.post(() -> { if (player != null) player.play(); }); }
     public static void pause() { ui.post(() -> { if (player != null) player.pause(); }); }
     public static void seek(double sec) { ui.post(() -> { if (player != null) { seeking = true; player.seekTo((long) (sec * 1000)); refresh(); } }); }

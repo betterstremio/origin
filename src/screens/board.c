@@ -957,3 +957,43 @@ int board_sample(Item *out, int max, char *rowTitle, int cap) {
       for (int j = 0; j < r->items.n && n < max; j++) if (r->items.items[j].poster[0]) out[n++] = r->items.items[j]; } }
   return n;
 }
+
+/* ---- phones (screens/phone_home.c): the same rows and picks, read as data; the TV's focus, hero and card opening
+   are not run there (a phone has no focus: the screen scrolls, a finger picks) ---- */
+static Board *phb(int kind) { return &boards[kind == 1 ? 1 : kind == 2 ? 2 : 0]; }
+void board_ph_enter(int kind) {
+  Board *b = phb(kind);
+  int fresh = !b->built || (b->kind == 0 && (b->libVer != lib_version() || b->recsVer != recs_version()));
+  if (fresh) { b->built = 1; b->libVer = lib_version(); load_catalog_rows(b, b->kind == 1, b->n > 0); }
+  if (b->kind == 1) feat_fill(b);
+}
+void board_ph_tick(int kind, int r0, int r1, float dt) {
+  Board *b = phb(kind);
+  if (b->kind == 0 && b->recsVer != recs_version()) { b->recsVer = recs_version(); b->built = 1; b->libVer = lib_version(); load_catalog_rows(b, 0, b->n > 0); }
+  if (b->kind == 0 && b->libVer != lib_version()) { b->libVer = lib_version(); load_catalog_rows(b, 0, b->n > 0); }
+  for (int i = 0; i < b->n; i++) { Row *r = &b->rows[i]; if (!r->closing) continue; float k = (float)((app_now() - r->closeAt) / 0.45); if (k >= 1) { r->closing = 0; r->hidden = 1; r->hk = 1; } else r->hk = 1 - ease_apply(EASE_CSS_EASE, k); }
+  if (b->kind == 0) for (int i = 0; i < b->n; i++) { Row *r = &b->rows[i]; if (r->recsIdx < 0) continue; /* For You rows: their cards loaded while near the screen */
+    if (i >= r0 - 1 && i <= r1 + 1) row_load(r); else if ((i < r0 - WIN_DROP || i > r1 + WIN_DROP) && r->items.n) { itemlist_clear(&r->items); prep_free(r); } }
+  (void)dt;
+}
+unsigned board_ph_gen(int kind) { return phb(kind)->gen; }
+int board_ph_nrows(int kind) { return phb(kind)->n; }
+int board_ph_row(int kind, int i, BoardRow *o) {
+  Board *b = phb(kind); if (i < 0 || i >= b->n) return 0; Row *r = &b->rows[i]; memset(o, 0, sizeof *o);
+  o->title = T(r->title); o->items = r->items.items; o->n = r->items.n; o->wide = r->wide; o->rank = r->rank; o->hidden = r->hidden; o->closing = r->closing ? r->hk : 0;
+  o->tiles = r->tiles; o->ntiles = r->ntiles; o->seeAll = see_all(r); o->label = r->label; o->loading = r->hasDef && !r->items.n && !r->hidden;
+  return 1;
+}
+int board_ph_feat(int kind, const Item **out, int max) {
+  Board *b = phb(kind); int n = 0;
+  for (int i = 0; i < b->nfeat && n < max; i++) out[n++] = &b->feat[i];
+  return n;
+}
+/* a finger near a row's end: its next page */
+void board_ph_near_end(int kind, int row, int col) { Board *b = phb(kind); if (row < 0 || row >= b->n) return; Row *r = &b->rows[row]; if (col > r->col) r->col = col < r->items.n ? col : r->items.n - 1; row_more(b, row); }
+void board_ph_open(int kind, int row, int col) {
+  Board *b = phb(kind); if (row < 0 || row >= b->n) return; Row *r = &b->rows[row];
+  if (r->ntiles) { if (col >= 0 && col < r->ntiles) { const ColFolder *f = &r->tiles[col]; app_go(SCR_COL, &f, 0); } return; }
+  if (col >= 0 && col < r->items.n) { app_open_item(&r->items.items[col]); return; }
+  if (see_all(r) && col == r->items.n) see_all_open(r);
+}

@@ -234,6 +234,13 @@ int plat_luna_send(const char *uri, const char *payload) { (void)uri; (void)payl
 int plat_panel_lines(void) { return GetSystemMetrics(SM_CYSCREEN); }
 int plat_color_keys(void) { return 1; } /* F1-F4 stand in for them */
 int plat_random(void *buf, int n) { return n >= 0 && BCryptGenRandom(NULL, buf, (ULONG)n, BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0; }
+
+/* phones only (core/form.h): nothing to turn, hide or buzz here */
+void plat_orientation(int landscape) { (void)landscape; }
+void plat_immersive(int on) { (void)on; }
+void plat_haptic(void) {}
+void plat_safe_area(int *top, int *bottom, int *left, int *right) { *top = *bottom = *left = *right = 0; }
+int  plat_open_url(const char *url) { (void)url; return 0; }
 /* ---- updates: the release's setup file, downloaded on a thread into %TEMP%, its SHA-256 checked against the one
    GitHub lists, then run silently (/S) with /RELAUNCH; the app closes so the files can be replaced, and the installer
    opens the new version when it is done ---- */

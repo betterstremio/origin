@@ -355,3 +355,14 @@ static int origin(float *x, float *y) {
   *x = col_x(c) + LW / 2; *y = ROW0_Y + r * LROWH + L.gridY.v + LH / 2; return 1;
 }
 Screen libScreen = { enter, NULL, key, tick, draw, focused, NULL, NULL, origin };
+
+/* ---- phones (screens/phone_lib.c): the same titles, filters and orders, read as data ---- */
+void lib_ph_refresh(void) { if (!L.built || L.ver != lib_version()) { L.built = 1; L.ver = lib_version(); load(); render(); } }
+int  lib_ph_count(void) { return L.n; }
+const Item *lib_ph_item(int i) { const LibIt *o = at(i); return o ? &o->it : NULL; }
+int  lib_ph_filter(void) { return L.tab; }
+void lib_ph_set_filter(int f) { if (f >= 0 && f < NF && f != L.tab) { L.tab = f; render(); } }
+int  lib_ph_filters(const char **labels, int *counts, int max) { int n = 0; for (int i = 0; i < NF && n < max; i++) { labels[n] = T(F_LB[i]); counts[n] = L.counts[i]; n++; } return n; }
+int  lib_ph_sort(void) { return sort_key(); }
+void lib_ph_next_sort(void) { int si = (sort_key() + 1) % 4; store_set("libSort", S_KEY[si]); render(); }
+const char *lib_ph_sort_label(void) { return T(S_LB[sort_key()]); }

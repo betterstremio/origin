@@ -1,3 +1,7 @@
+#include "core/form.h"
+#include "platform/plat.h"
+#include "core/app.h"
+#include "core/i18n.h"
 #include "ui/qrcard.h"
 #include "ui/widgets.h"
 #include "core/keys.h"
@@ -62,6 +66,7 @@ static void open_link(int a, int b) { (void)a; (void)b;
 }
 void qrcard_note(const char *msg) { if (!Q.open) return; snprintf(Q.note, sizeof Q.note, "%s", msg ? msg : ""); }
 static int key(int k) {
+  if (form_touch()) { if (k == K_BACK || k == K_EXIT) qrcard_close(); return 1; } /* a phone: only Back closes it (its buttons do the rest) */
   if (Q.pasteMode && !Q.closing && !Q.done) { /* the paste card: Enter or Ctrl+V pastes, Escape closes, the rest does nothing */
     if (k == K_OK || k == K_PASTE) do_paste(0, 0); else if (k == K_BACK || k == K_EXIT) qrcard_close(); return 1; }
   if (Q.closing) finish(); else qrcard_close(); return 1; } /* any key, Back too */
@@ -74,10 +79,31 @@ static void tick(float dt) {
   if (Q.done && now >= Q.closeAt) qrcard_close();
 }
 static void outside(int a, int b) { (void)a; (void)b; qrcard_close(); } /* a click anywhere closes it too */
+
+/* a phone: the page the code would open is opened here, in the phone's own browser (the app serves it on this
+   device), and the card waits for what it brings as it does on a TV */
+static void ph_open(int a, int b) { (void)a; (void)b; if (Q.url[0] && !plat_open_url(Q.url)) toast(T("Could not open the link"), 2000, NULL); }
+static void draw_phone(float a) {
+  float W = SB_W - 32; if (W > 440) W = 440; float x = (SB_W - W) / 2, pad = 20;
+  int sl = Q.sub[0] ? text_wrap_count(Q.sub, W - 2 * pad, 6, 14, 400, 0) : 0, dl = Q.doneSub[0] ? text_wrap_count(Q.doneSub, W - 2 * pad, 6, 14, 400, 0) : 0;
+  float H = Q.done ? pad + 30 + (dl ? 8 + dl * 20 : 0) + pad : pad + 30 + (sl ? 8 + sl * 20 : 0) + 20 + 48 + 10 + 44 + pad, y = (SB_H - H) / 2;
+  gfx_opacity_push(a); gfx_rect(0, 0, SB_W, SB_H, BLACK_A(150)); hit_act(0, 0, SB_W, SB_H, outside, 0, 0);
+  gfx_rrect(x, y, W, H, 18, RGB(0x1d, 0x1b, 0x26)); hit_shield(x, y, W, H);
+  float ty = y + pad;
+  text_draw(Q.done ? Q.doneTitle : Q.title, x + pad, ty, 19, 800, WHITE_A(250), -0.2f, W - 2 * pad, ALIGN_LEFT); ty += 30;
+  const char *sub = Q.done ? Q.doneSub : Q.sub; int n = Q.done ? dl : sl;
+  if (n) { ty += 8; text_draw_wrapped(sub, x + pad, ty, W - 2 * pad, 6, 14, 400, WHITE_A(190), 0, ALIGN_LEFT, 20); ty += n * 20; }
+  if (!Q.done) { ty += 20;
+    gfx_rrect(x + pad, ty, W - 2 * pad, 48, 12, Q.url[0] ? WHITE_A(255) : WHITE_A(60)); text_draw(T("Open the page"), SB_W / 2, ty + 24 - text_line_height(15) / 2.0f, 15, 700, RGB(12, 11, 17), 0, W - 60, ALIGN_CENTER);
+    if (Q.url[0]) hit_act(x + pad, ty, W - 2 * pad, 48, ph_open, 0, 0); ty += 58;
+    gfx_rrect(x + pad, ty, W - 2 * pad, 44, 12, WHITE_A(24)); text_draw(T("Close"), SB_W / 2, ty + 22 - text_line_height(15) / 2.0f, 15, 700, WHITE_A(235), 0, W - 60, ALIGN_CENTER); hit_act(x + pad, ty, W - 2 * pad, 44, outside, 0, 0); }
+  gfx_opacity_pop();
+}
 static void draw(void) {
   if (!Q.open) return;
   float ia = Q.in.on ? quint(timer_x(&Q.in)) : 1, a = ia, dy = 18 * (1 - ia), sc = 0.97f + 0.03f * ia;
   if (Q.closing) { float x = timer_x(&Q.out), o = x / (0.18f / 0.22f); a = 1 - (o > 1 ? 1 : o); float t = quint(x); dy = 14 * t; sc = 1 - 0.03f * t; }
+  if (form_touch()) { (void)dy; (void)sc; draw_phone(a); return; }
   if (!Q.closing) hit_act(0, 0, SB_W, SB_H, outside, 0, 0);
   float x = SB_W / 2 - CW / 2, y = SB_H / 2 - Q.h / 2, cx = SB_W / 2, w = CW - 2 * PAD_X;
   if (!Q.closing && Q.pasteMode && !Q.done) hit_shield(x, y, CW, Q.h); /* a click on the card itself keeps it open */
@@ -157,7 +183,7 @@ void qrcard_show_tmdb(void (*onClose)(int hasKey, void *ud), void *ud) {
   tmdb_has_key(); /* the TMDB side ready to take the key from the phone */
   char url[600]; httpd_url("/tmdb", url, sizeof url);
   QrCardOpts o; memset(&o, 0, sizeof o);
-  o.title = T("Titles and descriptions"); o.sub = T("Scan with your phone and paste your TMDB key. Get one at themoviedb.org"); o.url = url;
+  o.title = T("Titles and descriptions"); o.sub = form_touch() ? T("Open the page and paste your TMDB key. Get one at themoviedb.org") : T("Scan with your phone and paste your TMDB key. Get one at themoviedb.org"); o.url = url;
 #if SB_WINDOWED
   o.title = T("TMDB key"); o.sub = tmdb_key_from_nuvio() ? T("You are using the key from your Nuvio account. To use your own instead, copy it, then paste it here")
                                                          : T("Copy your TMDB key (the API Key, or the longer Read Access Token), then paste it here"); o.paste = tmdb_paste; o.link = "https://www.themoviedb.org/settings/api";
@@ -175,7 +201,7 @@ void qrcard_show_trakt(void (*onClose)(int hasKey, void *ud), void *ud) {
   trakt_has_key(); /* the Trakt side ready to take the id from the phone */
   char url[600]; httpd_url("/trakt", url, sizeof url);
   QrCardOpts o; memset(&o, 0, sizeof o);
-  o.title = T("Ratings and reviews"); o.sub = T("Scan with your phone and paste your Trakt Client ID. The page says where to get it"); o.url = url;
+  o.title = T("Ratings and reviews"); o.sub = form_touch() ? T("Open the page and paste your Trakt Client ID. It says where to get it") : T("Scan with your phone and paste your Trakt Client ID. The page says where to get it"); o.url = url;
   o.check = trakt_check; o.doneTitle = T("Id saved"); o.doneSub = T("Ratings, their spread and people\xe2\x80\x99s comments now come from Trakt"); o.doneHold = 1.6f;
   o.onClose = trakt_closed;
   qrcard_show(&o); tk.cb = onClose; tk.ud = ud; tk.gen = trakt_generation();

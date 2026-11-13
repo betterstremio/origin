@@ -12,6 +12,8 @@
 #include "core/pace.h"
 #include "ui/gfx.h"
 #include <stdio.h>
+#include "core/form.h"
+#include "screens/phone.h"
 
 /* own = the decoder holds the trailer (the player takes it over the moment it opens) */
 static struct { int own, live, held, resumes, byKey, quiet, endFade, seekWant, checkAt; double pauseAt, resumeAt, steadyAt, loadAt, loadT; } B;
@@ -42,7 +44,7 @@ static void h_hide(int now, void *ud) {
 }
 static void h_unload(void *ud) { (void)ud; if (B.own && !player_open()) video_unload(); B.own = 0; B.live = 0; }
 void btr_init(void) { static BgtHooks h = { h_load, h_hide, h_unload, NULL }; bgt_init(&h); tween_set(&CD.a, 0); }
-void btr_key(int arrow) { (void)arrow; if (CD.on) B.byKey = 1; bgt_key(); B.byKey = 0; }
+void btr_key(int arrow) { (void)arrow; if (form_touch() && phone_peek_on()) return; /* (a phone's card plays on under the finger's taps; it stops when it shuts) */ if (CD.on) B.byKey = 1; bgt_key(); B.byKey = 0; }
 void btr_release(void) { bgt_release_now(); tween_set(&CD.a, 0); }
 void btr_tick(float dt) {
   trailer_tick();
@@ -51,10 +53,14 @@ void btr_tick(float dt) {
   int cardScr = SCR == SCR_HOME || SCR == SCR_DISC || SCR == SCR_COL; /* where a card opens */
   if (cardScr && !topNav.active && screens[SCR] && screens[SCR]->focused) f = screens[SCR]->focused();
   float ow = cardScr ? board_open_wait() : 0, idle = app_trailer_idle() - ow; /* (a card set to wait longer: its clip, too, as if the key came that much later) */
+  if (form_touch()) { /* a phone: only the card a long press opened plays, at once (no focus to rest on) */
+    f = phone_peek_item(); BgtView pv = { phone_peek_since() + 3.0f, f != NULL, f, player_open() || !app_splash_done || saver_on(), 0, pace_period() > 21.5 };
+    pv.hero = 1; bgt_tick(&pv); goto played; }
   BgtView v = { idle < 0 ? 0 : idle, cardScr, f, topNav.active || app_overlay != NULL || /* (a sheet or the long-press menu: it gives way, softly, and none starts under it) */ player_open() || !app_splash_done || saver_on(),
                 board_spot_up(), pace_period() > 21.5 };
   v.next = cardScr ? board_next_item() : NULL; v.hero = cardScr && board_on_billboard(); v.nnear = cardScr ? board_near_items(v.near, 10) : 0;
   bgt_tick(&v);
+  played:
   if (B.own && !player_open()) {
     video_pump();
     VidState vs = video_state(); double now = app_now();

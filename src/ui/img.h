@@ -31,6 +31,7 @@ void   img_frame(void);                  /* marks the frame (for eviction) */
 void   img_release_unused(int keepMb);   /* evicts least recently drawn textures over the budget */
 void   img_set_budget_mb(int mb);
 void   img_set_draw_scale(float s);      /* surface pixels per layout unit when below 1: pictures are decoded at the size really drawn */
+void   img_set_draw_scale_up(float s);   /* the same above 1 too (a phone's dp canvas): pictures as sharp as its pixels */
 int    img_used_mb(void);
 /* computes cover-crop uv for drawing a texture of aspect `ta` into a box of aspect `ba`, anchored at the top (posters) or centre */
 void   img_cover_uv(float ta, float ba, int anchorTop, float *u0, float *v0, float *u1, float *v1);

@@ -63,9 +63,10 @@ void plat_pre_init(const char *appId) {
   snprintf(devName, sizeof devName, "%s", dev && *dev ? dev : "Android");
   if (loc && *loc) snprintf(locale, sizeof locale, "%s", loc);
   SDL_SetHint(SDL_HINT_ANDROID_TRAP_BACK_BUTTON, "1");           /* Back is the app's key, not the activity's end */
-  SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
+  int touch = getenv("SB_FORM") && strcmp(getenv("SB_FORM"), "tv"); /* a phone or a tablet: MainActivity turns the screen, fingers are read as fingers */
+  SDL_SetHint(SDL_HINT_ORIENTATIONS, touch ? "Portrait LandscapeLeft LandscapeRight" : "LandscapeLeft LandscapeRight");
   SDL_SetHint(SDL_HINT_ANDROID_BLOCK_ON_PAUSE, "1");
-  SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "1");                  /* a phone's taps act as the pointer */
+  SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, touch ? "0" : "1");    /* a TV's touch screen (rare): taps act as the pointer */
   SDL_SetHint(SDL_HINT_ACCELEROMETER_AS_JOYSTICK, "0");
   applog_start(dataDir);
   fprintf(stderr, "[store] data in %s, assets in %s\n", dataDir, assetDir);
@@ -74,12 +75,12 @@ void plat_post_window(SDL_Window *w) { (void)w; }
 void plat_cursor_visible(int on) { (void)on; }
 const char *plat_asset_dir(void) { return assetDir; }
 const char *plat_data_dir(void) { return dataDir; }
-/* fullscreen at the surface Java gives SDL: a 16:9 box in the middle of the screen (a phone's wider screen gets
-   black bars), 1920x1080 or less */
+/* fullscreen at the surface Java gives SDL: a 16:9 box in the middle of the screen (a wider screen gets black bars),
+   1920x1080 or less; a phone or a tablet: a window between the system bars (MainActivity hides them for a film) */
 void plat_window_size(int *w, int *h, Uint32 *flags) {
   SDL_DisplayMode m; *w = 1920; *h = 1080;
   if (!SDL_GetDesktopDisplayMode(0, &m) && m.w > 0 && m.h > 0) { *w = m.w; *h = m.h; }
-  *flags = SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN;
+  *flags = SDL_WINDOW_OPENGL | (getenv("SB_FORM") && strcmp(getenv("SB_FORM"), "tv") ? SDL_WINDOW_RESIZABLE : SDL_WINDOW_FULLSCREEN);
 }
 int plat_map_key(const SDL_KeyboardEvent *e) {
   switch (e->keysym.scancode) {
@@ -93,7 +94,8 @@ int plat_map_key(const SDL_KeyboardEvent *e) {
   switch (e->keysym.sym) {
     case SDLK_LEFT: return K_LEFT; case SDLK_RIGHT: return K_RIGHT; case SDLK_UP: return K_UP; case SDLK_DOWN: return K_DOWN;
     case SDLK_RETURN: case SDLK_KP_ENTER: case SDLK_SELECT: return K_OK;
-    case SDLK_AC_BACK: case SDLK_ESCAPE: case SDLK_BACKSPACE: return K_BACK;
+    case SDLK_AC_BACK: case SDLK_ESCAPE: return K_BACK;
+    case SDLK_BACKSPACE: { static int ph = -1; if (ph < 0) ph = getenv("SB_FORM") && strcmp(getenv("SB_FORM"), "tv"); return ph ? K_ERASE : K_BACK; } /* a phone's keyboard deletes */
     case SDLK_AUDIOPLAY: case SDLK_SPACE: return K_PLAYPAUSE;
     case SDLK_PAUSE: return K_PAUSE; case SDLK_AUDIOSTOP: return K_STOP;
     case SDLK_AUDIOREWIND: case SDLK_COMMA: return K_REW; case SDLK_AUDIOFASTFORWARD: case SDLK_PERIOD: return K_FF;
@@ -104,7 +106,7 @@ int plat_map_key(const SDL_KeyboardEvent *e) {
   return K_NONE;
 }
 const char *plat_device_name(void) { return devName; }
-int plat_text_input(void) { return getenv("SB_TEXTINPUT") ? 1 : 0; } /* a remote has no keyboard: the app draws its own */
+int plat_text_input(void) { return getenv("SB_TEXTINPUT") ? 1 : 0; } /* a remote has no keyboard: the app draws its own (a phone opens the system's per field: core/form.h) */
 void plat_thread_background(int nice) { setpriority(PRIO_PROCESS, (id_t)syscall(SYS_gettid), nice); }
 int plat_mem_total_mb(void) {
   if (getenv("SB_MEMMB")) return atoi(getenv("SB_MEMMB"));

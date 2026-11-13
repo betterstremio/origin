@@ -2,6 +2,7 @@ package tv.stremioorigin.app;
 
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.ActivityInfo;
 import android.content.pm.PackageInfo;
 import android.content.res.AssetManager;
 import android.graphics.Color;
@@ -13,6 +14,8 @@ import android.os.Bundle;
 import android.system.Os;
 import android.util.Log;
 import android.view.Display;
+import android.view.DisplayCutout;
+import android.view.HapticFeedbackConstants;
 import android.view.KeyEvent;
 import android.view.InputDevice;
 import android.view.View;
@@ -36,6 +39,10 @@ public class MainActivity extends SDLActivity {
     static final String TAG = "StremioOrigin";
     static MainActivity self;
     static Box box;
+    /* a phone or a tablet (SB_FORM): the screen is the app's whole, it stands upright (a tablet turns freely), the
+       system bars show while browsing and hide for a film; a TV keeps its 16:9 box and landscape */
+    static boolean touch, tablet;
+    static volatile int film;   /* the C side asked for a film's full screen */
     /* every variable set for the C side, also handed over by envList(): native code running under a translation layer
        (an ARM build on an x86 emulator) has its own copy of the environment, which Os.setenv does not reach */
     static final java.util.LinkedHashMap<String, String> env = new java.util.LinkedHashMap<>();
@@ -49,8 +56,15 @@ public class MainActivity extends SDLActivity {
         prepareEnvironment(getIntent());
         super.onCreate(saved);
         if (mBrokenLibraries || mLayout == null) return;
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
-        getWindow().getDecorView().setBackgroundColor(Color.BLACK);
+        if (touch) {
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+            getWindow().setStatusBarColor(PAGE); getWindow().setNavigationBarColor(PAGE);
+            getWindow().getDecorView().setBackgroundColor(PAGE);
+            setRequestedOrientation(browseOrientation());
+        } else {
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+            getWindow().getDecorView().setBackgroundColor(Color.BLACK);
+        }
         // SDL's surface over the video: translucent, and on the media-overlay layer above the player's SurfaceView
         mSurface.getHolder().setFormat(PixelFormat.TRANSLUCENT);
         mSurface.setZOrderMediaOverlay(true);
@@ -61,7 +75,56 @@ public class MainActivity extends SDLActivity {
         setContentView(box);
     }
 
-    @Override protected void onResume() { super.onResume(); SbUpdater.onResume(this); }
+    /* a phone sent to the back (Home, another app, the screen off): whatever plays stops at once, the film or a card's
+       preview (the app's own loop sleeps while it is away, so it is done here) */
+    @Override protected void onPause() { super.onPause(); if (touch) SbPlayer.pause(); }
+    @Override protected void onResume() { super.onResume(); SbUpdater.onResume(this); if (touch && film == 1) applyFilm(true); }
+
+    // ---- phones and tablets (src/platform/android/bridge_android.c calls these from the app's thread) ----
+    static final int PAGE = 0xff0c0b11;   /* the app's page colour (app.h PAGE): the bars blend into it */
+    int browseOrientation() { return tablet ? ActivityInfo.SCREEN_ORIENTATION_FULL_USER : ActivityInfo.SCREEN_ORIENTATION_USER_PORTRAIT; }
+    /* SDL turns the screen as its window asks once it is made; on a phone or tablet the app decides instead */
+    @Override public void setOrientationBis(int w, int h, boolean resizable, String hint) { if (!touch) super.setOrientationBis(w, h, resizable, hint); }
+    @SuppressWarnings("deprecation")
+    void applyFilm(boolean on) {
+        View d = getWindow().getDecorView();
+        WindowManager.LayoutParams lp = getWindow().getAttributes();
+        if (on) {
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+            if (Build.VERSION.SDK_INT >= 28) lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+            d.setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+        } else {
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+            if (Build.VERSION.SDK_INT >= 28) lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT;
+            d.setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
+        }
+        getWindow().setAttributes(lp);
+    }
+    public static void uiOrientation(final int landscape) {
+        final MainActivity a = self; if (a == null || !touch) return;
+        a.runOnUiThread(() -> a.setRequestedOrientation(landscape != 0 ? ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE : a.browseOrientation()));
+    }
+    public static void uiImmersive(final int on) {
+        final MainActivity a = self; if (a == null || !touch) return; film = on;
+        a.runOnUiThread(() -> a.applyFilm(on != 0));
+    }
+    public static void uiHaptic() {
+        final MainActivity a = self; if (a == null || box == null) return;
+        a.runOnUiThread(() -> box.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS));
+    }
+    /* the room a camera cutout takes over a film (the bars are outside the surface while browsing): "top,bottom,left,right" in pixels */
+    public static String uiSafeArea() {
+        Box b = box; if (b == null || Build.VERSION.SDK_INT < 28) return "0,0,0,0";
+        android.view.WindowInsets wi = b.getRootWindowInsets(); DisplayCutout c = wi != null ? wi.getDisplayCutout() : null;
+        if (c == null) return "0,0,0,0";
+        return c.getSafeInsetTop() + "," + c.getSafeInsetBottom() + "," + c.getSafeInsetLeft() + "," + c.getSafeInsetRight();
+    }
+    public static boolean uiOpenUrl(String url) {
+        final MainActivity a = self; if (a == null) return false;
+        try { Intent i = new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)); i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); a.startActivity(i); return true; }
+        catch (Exception e) { Log.w(TAG, "open " + url, e); return false; }
+    }
     /* SDL's onDestroy waits for the C main() to return (its store is saved by then) but leaves the process alive, and
        the next launch would run main() again over the last run's C globals ("quitting" still set: the app closed on its
        first frame, issue #1). So the process ends here, and every launch starts a fresh one. */
@@ -117,10 +180,17 @@ public class MainActivity extends SDLActivity {
             // the guide names them only then
             boolean[] ck = android.view.KeyCharacterMap.deviceHasKeys(new int[] { KeyEvent.KEYCODE_PROG_RED, KeyEvent.KEYCODE_PROG_GREEN });
             setenv("SB_COLORKEYS", ck[0] && ck[1] ? "1" : "0");
+            // phone, tablet or TV: a TV has the leanback feature, or no touch screen at all (a box with a remote)
+            boolean tv = isTv() || !getPackageManager().hasSystemFeature("android.hardware.touchscreen");
+            int sw = getResources().getConfiguration().smallestScreenWidthDp;
+            setenv("SB_FORM", tv ? "tv" : sw >= 600 ? "tablet" : "phone");
+            setenv("SB_DENSITY", String.valueOf(getResources().getDisplayMetrics().density));
             if (BuildConfig.DEV_HOOKS && intent != null && intent.getExtras() != null) {   // dev builds: SB_* from the launch (the tests)
                 Bundle b = intent.getExtras();
                 for (String k : b.keySet()) if (k.startsWith("SB_") || k.equals("LANG")) { Object v = b.get(k); if (v != null) { setenv(k, v.toString()); Log.i(TAG, "dev env " + k + "=" + v); } }
             }
+            String f = env.get("SB_FORM"); touch = "phone".equals(f) || "tablet".equals(f); tablet = "tablet".equals(f);
+            Log.i(TAG, "form " + f + " (smallest width " + sw + " dp)");
         } catch (Exception ex) { Log.e(TAG, "environment", ex); }
     }
     boolean isTv() { return getPackageManager().hasSystemFeature("android.software.leanback"); }
@@ -154,13 +224,15 @@ public class MainActivity extends SDLActivity {
     }
     static void deleteTree(File f) { File[] k = f.listFiles(); if (k != null) for (File c : k) deleteTree(c); f.delete(); }
 
-    /* a 16:9 box in the middle of the screen: every child is laid out in it (a phone's wider screen gets black bars) */
+    /* a 16:9 box in the middle of the screen: every child is laid out in it (a wider screen gets black bars); a phone
+       or a tablet: the whole screen */
     static class Box extends FrameLayout {
         int bx, by, bw, bh;
-        Box(Context c) { super(c); setBackgroundColor(Color.BLACK); setClipChildren(true); }
+        Box(Context c) { super(c); setBackgroundColor(touch ? PAGE : Color.BLACK); setClipChildren(true); }
         @Override protected void onMeasure(int ws, int hs) {
             int w = MeasureSpec.getSize(ws), h = MeasureSpec.getSize(hs);
             bw = w; bh = w * 9 / 16; if (bh > h) { bh = h; bw = h * 16 / 9; }
+            if (touch) { bw = w; bh = h; }
             bx = (w - bw) / 2; by = (h - bh) / 2;
             setMeasuredDimension(w, h);
             for (int i = 0; i < getChildCount(); i++) getChildAt(i).measure(MeasureSpec.makeMeasureSpec(bw, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(bh, MeasureSpec.EXACTLY));

@@ -58,3 +58,11 @@ int plat_luna_send(const char *uri, const char *payload) { (void)uri; (void)payl
 int plat_panel_lines(void) { return 0; }
 int plat_color_keys(void) { return 1; } /* F1-F4 stand in for them */
 int plat_random(void *buf, int n) { FILE *f = fopen("/dev/urandom", "rb"); if (!f) return 0; size_t g = fread(buf, 1, (size_t)n, f); fclose(f); return g == (size_t)n; }
+
+/* the phone preview (SB_FORM=phone): the turns and buzzes are logged; SB_SAFE="top,bottom,left,right" (surface pixels)
+   stands in for a phone's status and navigation bars */
+void plat_orientation(int landscape) { fprintf(stderr, "[form] orientation: %s\n", landscape ? "landscape" : "as browsing"); }
+void plat_immersive(int on) { fprintf(stderr, "[form] immersive %s\n", on ? "on" : "off"); }
+void plat_haptic(void) { fprintf(stderr, "[form] haptic\n"); }
+void plat_safe_area(int *top, int *bottom, int *left, int *right) { *top = *bottom = *left = *right = 0; const char *s = getenv("SB_SAFE"); if (s) sscanf(s, "%d,%d,%d,%d", top, bottom, left, right); }
+int  plat_open_url(const char *url) { fprintf(stderr, "[form] open %s\n", url); return 1; }

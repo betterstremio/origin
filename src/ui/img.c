@@ -180,6 +180,8 @@ int img_init(const char *dir) {
 }
 static float drawScale = 1.0f;
 void img_set_draw_scale(float sc) { drawScale = sc > 0 && sc < 1 ? sc : 1.0f; }
+/* a phone (layout units are dp, about 2.6 pixels each): pictures decoded at the pixels they cover, up to 3 per unit */
+void img_set_draw_scale_up(float sc) { drawScale = sc > 1 ? (sc > 3 ? 3 : sc) : sc > 0 ? sc : 1.0f; }
 void img_set_budget_mb(int mb) { budgetBytes = (long)mb * 1024 * 1024; }
 int img_budget_mb(void) { return (int)(budgetBytes / (1024 * 1024)); }
 void img_queue_stats(int *queued, int *waiting) { pthread_mutex_lock(&mu); *queued = qn; *waiting = dn; pthread_mutex_unlock(&mu); }
@@ -197,7 +199,7 @@ static Img *request_as(const char *key, const char *src, int w, int h, int fit, 
     if (im->state == 3 && im->fails > 0 && im->fails < 6 && mono_s() - im->failAt > 1.5 * (1 << (im->fails - 1))) { fprintf(stderr, "[img] again (%d) %s\n", im->fails, im->src); enqueue(im); } /* failed (a network blip): asked for again, it tries again after 1.5, 3, 6, 12, 24 s */
     if (!im->wantTex) { im->wantTex = 1; if (im->state == 2 && !im->tex && !im->px) { im->state = 0; enqueue(im); } } /* it was loaded for its colours only: now load it to draw */
     return im; }
-  if (drawScale < 1) { w = (int)(w * drawScale + 0.999f); h = (int)(h * drawScale + 0.999f); radius *= drawScale; }
+  if (drawScale != 1) { w = (int)(w * drawScale + 0.999f); h = (int)(h * drawScale + 0.999f); radius *= drawScale; }
   im = calloc(1, sizeof *im); im->url = strdup(key); im->src = key == src ? im->url : strdup(src); im->hash = hs; im->w = w; im->h = h; im->fit = fit; im->radius = radius; im->lastUse = frameNo;
   im->wantTex = 1;
   im->next = table[hs % BUCKETS]; table[hs % BUCKETS] = im;

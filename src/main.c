@@ -1,3 +1,6 @@
+#include "core/form.h"
+#include "core/touch.h"
+#include "screens/phone.h"
 #include <stdint.h>
 #include <math.h>
 /* Origin, native. The window, the GL context, the frame loop; everything else is in
@@ -87,6 +90,7 @@ static void on_crash(int sig, siginfo_t *si, void *uc) {
 #include "ui/icon.h"
 #include "core/keys.h"
 #include "core/app.h"
+#include "core/bgtrailer.h"
 #include "core/pace.h"
 #include "core/stress.h"
 #include "core/nuvio.h"
@@ -163,6 +167,12 @@ static void run_script(const char *script, int frame) {
     if (f == frame && !strncmp(c + 1, "click ", 6)) { float x, y; if (sscanf(c + 7, "%f %f", &x, &y) == 2) { app_pointer_button(1, x, y); app_pointer_button(0, x, y); } continue; }
     if (f == frame && !strncmp(c + 1, "wheel ", 6)) { app_pointer_wheel(0, (float)atof(c + 7)); continue; }
     if (f == frame && !strncmp(c + 1, "text ", 5)) { app_text(c + 6); continue; } /* "400:text abc": typed on a keyboard */
+    /* a finger (phones): "300:fdown 200 500,302:fmove 200 300,304:fup 200 300" drags, "320:tap 100 200" taps; a
+       long press is an fdown left for 30 frames or more before its fup */
+    if (f == frame && !strncmp(c + 1, "fdown ", 6)) { float x, y; if (sscanf(c + 7, "%f %f", &x, &y) == 2) touch_down(x, y); continue; }
+    if (f == frame && !strncmp(c + 1, "fmove ", 6)) { float x, y; if (sscanf(c + 7, "%f %f", &x, &y) == 2) touch_move(x, y); continue; }
+    if (f == frame && !strncmp(c + 1, "fup ", 4)) { float x, y; if (sscanf(c + 5, "%f %f", &x, &y) == 2) touch_up(x, y); continue; }
+    if (f == frame && !strncmp(c + 1, "tap ", 4)) { float x, y; if (sscanf(c + 5, "%f %f", &x, &y) == 2) { touch_down(x, y); touch_up(x, y); } continue; }
     if (f == frame && !strncmp(c + 1, "hwheel ", 7)) { app_pointer_wheel((float)atof(c + 8), 0); continue; } /* "360:hwheel 1": sideways (right) */
     if (f == frame && !strncmp(c + 1, "rclick ", 7)) { float x, y; if (sscanf(c + 8, "%f %f", &x, &y) == 2 && !app_pointer_menu(x, y)) { app_key(K_BACK, 1, 0); app_key(K_BACK, 0, 0); } continue; }
     if (f == frame && !strncmp(c + 1, "press ", 6)) { float x, y; if (sscanf(c + 7, "%f %f", &x, &y) == 2) app_pointer_button(1, x, y); continue; } /* "press"/"release": a drag in between with "move" */
@@ -235,6 +245,8 @@ static void desktop_rate(SDL_Window *win) {
 }
 static Uint32 ptrMovedAt; static int curHid; /* the cursor hidden over a film that has the mouse still */
 #endif
+/* a phone: the finger being followed (others are ignored); the desktop preview's mouse plays the finger (SB_FORM=phone) */
+static SDL_FingerID fingerId; static int fingerOn, mouseFinger;
 int main(int argc, char **argv) {
   (void)argc; (void)argv;
   setlocale(LC_NUMERIC, "C");
@@ -301,6 +313,12 @@ int main(int argc, char **argv) {
   int dw, dh; GL_SIZE(win, &dw, &dh);
   fprintf(stderr, "[start] %s window %dx%d drawable %dx%d\n", plat_device_name(), w, h, dw, dh);
   if (!gfx_init(dw, dh)) return 1;
+  if (form_touch()) { /* a phone or a tablet: layout units are dp */
+#if SB_PREVIEW
+    form_set_density(w > 0 ? (float)dw / w * (getenv("SB_SHOW") ? 1.0f : (flags & SDL_WINDOW_ALLOW_HIGHDPI) ? 2.0f : 1.0f) : 1); /* (the hidden preview draws at twice the window) */
+#endif
+    gfx_touch_layout(form_density()); plat_orientation(0);
+    fprintf(stderr, "[form] %s, %.2f px per dp: canvas %.0fx%.0f dp\n", form_tablet() ? "tablet" : "phone", form_density(), SB_W, SB_H); }
   video_set_surface(dw, dh); /* the TV reads the video plane's rectangle in the drawable's pixels (720p light: 1280x720) */
 #if SB_PREVIEW
   if (SDL_GetWindowFlags(win) & SDL_WINDOW_HIDDEN) { /* a hidden window has no screen to draw to: draw into a picture the size the window would have */
@@ -310,7 +328,7 @@ int main(int argc, char **argv) {
   /* data + the services */
   char p[1100]; snprintf(p, sizeof p, "%s/cacert.pem", plat_asset_dir()); net_init(p);
   cache_prune_start(SB_CACHE_MB);
-  snprintf(p, sizeof p, "%s/cache", store_data_dir()); img_init(p); img_set_draw_scale(gfx_scale());
+  snprintf(p, sizeof p, "%s/cache", store_data_dir()); img_init(p); if (form_touch()) img_set_draw_scale_up(form_density()); else img_set_draw_scale(gfx_scale());
   if (memMb > 0) img_set_budget_mb(memMb < 1200 ? 40 : memMb < 3000 ? 128 : 192); /* pictures under the RAM the TV has (the shared atlas, backdrop and text add ~20 MB) */
   i18n_init(plat_asset_dir(), getenv("SB_LANG") ? getenv("SB_LANG") : store_get("uiLang", "auto")); /* SB_LANG=ar: development */
   if (!strcmp(store_get("netLogs", "false"), "true")) httpd_net_logs(1); /* "Logs over the network": the server is up from the start */
@@ -319,6 +337,7 @@ int main(int argc, char **argv) {
   app_init(); player_init();
   app_register(SCR_LOGIN, &loginScreen); app_register(SCR_HOME, &homeScreen); app_register(SCR_DISC, &discScreen); app_register(SCR_LIB, &libScreen);
   app_register(SCR_DETAIL, &detailScreen); app_register(SCR_SIM, &simScreen); app_register(SCR_CAT, &catScreen); app_register(SCR_COL, &colScreen); app_register(SCR_SEARCH, &searchScreen); app_register(SCR_SET, &setScreen); app_card_menu_hook = cwmenu_show;
+  if (form_touch()) phone_register(); /* a phone or a tablet: its own pages over the TV's */
   acct_restore_kept();
   { const char *a = getenv("SB_ACCT_ACTION"); if (a) { if (!strcmp(a, "switch")) acct_switch(); else if (!strcmp(a, "add")) acct_begin_add(); else if (!strcmp(a, "logout")) { sb_logout(); acct_restore_kept(); } } } /* development: tests/nuvio */
   if (sb_signed_in() || getenv("SB_SKIP_LOGIN")) { app_go(SCR_HOME, NULL, 1); splash_start(1, 0); } /* SB_SKIP_LOGIN: the default rows without an account (development) */
@@ -348,8 +367,21 @@ int main(int argc, char **argv) {
 #endif
         if (k) app_key(k, e.type == SDL_KEYDOWN, e.key.repeat); }
       else if (e.type == SDL_TEXTINPUT) app_text(e.text.text);
+      else if (form_touch() && (e.type == SDL_APP_WILLENTERBACKGROUND || e.type == SDL_APP_DIDENTERBACKGROUND)) phone_peek_shut_now(); /* a phone sent away: the card and its preview are gone when it comes back */
+      else if (form_touch() && (e.type == SDL_FINGERDOWN || e.type == SDL_FINGERMOTION || e.type == SDL_FINGERUP)) { /* a phone's finger, in window coordinates */
+        if (script) continue; int ww, wh; SDL_GetWindowSize(win, &ww, &wh); float x, y; to_layout(win, (int)(e.tfinger.x * ww), (int)(e.tfinger.y * wh), &x, &y);
+        if (e.type == SDL_FINGERDOWN) { if (fingerOn) continue; fingerOn = 1; fingerId = e.tfinger.fingerId; touch_down(x, y); }
+        else if (!fingerOn || e.tfinger.fingerId != fingerId) continue;
+        else if (e.type == SDL_FINGERMOTION) touch_move(x, y);
+        else { fingerOn = 0; touch_up(x, y); } }
+      else if (form_touch() && !script && (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP || e.type == SDL_MOUSEMOTION) && (e.type == SDL_MOUSEMOTION ? e.motion.which : e.button.which) != SDL_TOUCH_MOUSEID) { /* the preview's mouse as a finger */
+        float x, y; if (e.type == SDL_MOUSEMOTION) to_layout(win, e.motion.x, e.motion.y, &x, &y); else to_layout(win, e.button.x, e.button.y, &x, &y);
+        if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) { mouseFinger = 1; touch_down(x, y); }
+        else if (e.type == SDL_MOUSEMOTION && mouseFinger) touch_move(x, y);
+        else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT && mouseFinger) { mouseFinger = 0; touch_up(x, y); }
+        else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_RIGHT) { app_key(K_BACK, 1, 0); app_key(K_BACK, 0, 0); } }
       else if (script && (e.type == SDL_MOUSEMOTION || e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP || e.type == SDL_MOUSEWHEEL)) {} /* a scripted run: the real mouse stays out */
-      else if (e.type == SDL_MOUSEMOTION) { if (e.motion.x || e.motion.y) { float x, y; to_layout(win, e.motion.x, e.motion.y, &x, &y); app_pointer_move(x, y); }
+      else if (e.type == SDL_MOUSEMOTION) { if (e.motion.x || e.motion.y || e.motion.xrel || e.motion.yrel) { /* (a real move to the corner counts) */ float x, y; to_layout(win, e.motion.x, e.motion.y, &x, &y); app_pointer_move(x, y); }
 #if SB_WINDOWED
         ptrMovedAt = SDL_GetTicks(); if (curHid) { curHid = 0; SDL_ShowCursor(SDL_ENABLE); }
 #endif
@@ -376,7 +408,7 @@ int main(int argc, char **argv) {
         app_pointer_wheel((float)e.wheel.x, (float)e.wheel.y);
 #endif
       }
-      else if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) { GL_SIZE(win, &dw, &dh); gfx_resize(dw, dh); }
+      else if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) { GL_SIZE(win, &dw, &dh); gfx_resize(dw, dh); form_safe_refresh(); if (form_touch()) { touch_cancel(); fingerOn = 0; fprintf(stderr, "[form] surface %dx%d: canvas %.0fx%.0f\n", dw, dh, SB_W, SB_H); } }
 #if SB_WINDOWED
       else if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_DISPLAY_CHANGED && vsyncOn) desktop_rate(win);
 #endif
@@ -406,6 +438,13 @@ int main(int argc, char **argv) {
     if (frame == 90 && getenv("SB_PLAY_FROM")) play_from_addon(); /* development: the first stream an addon gives, as its row would play it */
     if (frame == 90 && getenv("SB_OPEN")) app_open_external(getenv("SB_OPEN"), ""); /* development: a title's page, SB_OPEN=stremio:///detail/movie/tt1228705 */
     if (frame == 90 && getenv("SB_PLAY")) { Stream st; memset(&st, 0, sizeof st); snprintf(st.url, sizeof st.url, "%s", getenv("SB_PLAY")); snprintf(st.name, sizeof st.name, "Dev\n1080p"); snprintf(st.title, sizeof st.title, "%s", getenv("SB_PLAY_TITLE") ? getenv("SB_PLAY_TITLE") : "Development stream HDR10 DDP 5.1"); snprintf(st.addon, sizeof st.addon, "Torrentio"); app_play(&st, getenv("SB_PLAY_TYPE") ? getenv("SB_PLAY_TYPE") : "movie", getenv("SB_PLAY_ID") ? getenv("SB_PLAY_ID") : "tt27369017", getenv("SB_PLAY_VID") ? getenv("SB_PLAY_VID") : "", 0); } /* development: play a stream straight away */
+    /* a phone at rest (no finger, nothing scrolling or loading, no film, nothing pressed for 1.5 s): the screen keeps its
+       last frame and the loop waits for input, drawing twice a second for what arrives by itself (a row, a picture
+       asked for by that draw brings the full rate back until it is in). A TV and a scripted run draw every frame */
+    if (form_touch() && !script && !shot) { static Uint32 lastDraw; int q, w2; img_queue_stats(&q, &w2); BgtState bs = bgt_state();
+      int rest = !touch_busy() && !player_open() && app_splash_done && app_idle() > 1.5f && !q && !w2 && (bs == BGT_OFF || bs == BGT_GONE);
+      if (rest && SDL_GetTicks() - lastDraw < 500) { SDL_WaitEventTimeout(NULL, 40); continue; }
+      lastDraw = SDL_GetTicks(); }
     Uint32 tCpu0 = SDL_GetTicks();
     text_frame_begin();
     app_tick(dt); splash_tick(dt);

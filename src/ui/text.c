@@ -223,7 +223,9 @@ void text_set_rtl(int r) { uiRtl = !!r; shapeRtl = uiRtl; }
 int text_rtl(void) { return uiRtl; }
 static unsigned frameNo;
 static Uint64 frameT0;
-void text_frame_begin(void) { budgetLines = 0; frameNo++; atlas_frame(); frameT0 = SDL_GetPerformanceCounter(); syncMs = 0; text_take(); }
+/* the surface's scale can change (a phone turning, a film's canvas on a phone, a desktop window resized): lines are
+   kept per scale (it is in their key), so the old ones are simply not found and age out */
+void text_frame_begin(void) { { float g = gfx_scale(); if (g > 0.05f && g != sscale) sscale = g; } budgetLines = 0; frameNo++; atlas_frame(); frameT0 = SDL_GetPerformanceCounter(); syncMs = 0; text_take(); }
 
 /* Inter's metrics scaled: ascent .969, descent .242 of the em (so the line box is ~1.21 em);
    Arabic lines use the same box so mixed layouts don't jump. Line height in the CSS was set per
@@ -560,8 +562,8 @@ static int fit_ellipsis(uint32_t *cps, int n, int px, int weight, float tracking
    text work) is still made at once, so a small change shows in the same frame. */
 #define TEXT_SYNC_MS 2.5
 #define TQ 256
-typedef struct { char *key; unsigned hash; char *utf8; int px, weight, rtl; float tracking, maxW; } TReq;
-typedef struct { char *key; unsigned hash; unsigned char *bmp; int w, h, asc, cut; float width; } TRes;
+typedef struct { char *key; unsigned hash; char *utf8; int px, weight, rtl; float tracking, maxW, scale; } TReq;
+typedef struct { char *key; unsigned hash; unsigned char *bmp; int w, h, asc, cut; float width, scale; } TRes;
 static TReq tq[TQ]; static int tqh, tqn; static TRes tr[TQ]; static int trn;
 static pthread_mutex_t tmu = PTHREAD_MUTEX_INITIALIZER; static pthread_cond_t tcv = PTHREAD_COND_INITIALIZER;
 static struct { char *key; unsigned hash; } pend[TQ]; static int npend;   /* asked of the thread, not back yet (drawing thread only) */
@@ -573,10 +575,10 @@ static void *text_worker(void *a) { plat_thread_background(4); (void)a;
   for (;;) {
     pthread_mutex_lock(&tmu); while (!tqn) pthread_cond_wait(&tcv, &tmu); TReq q = tq[tqh]; tqh = (tqh + 1) % TQ; tqn--; pthread_mutex_unlock(&tmu);
     shapeRtl = q.rtl;
-    int n; uint32_t *cps = to_cps(q.utf8, &n, 1); int spx = (int)(q.px * sscale + 0.5f); float str = q.tracking * sscale;
+    int n; uint32_t *cps = to_cps(q.utf8, &n, 1); float sc = q.scale; int spx = (int)(q.px * sc + 0.5f); float str = q.tracking * sc;
     Shaped sh = { 0 }; shape_line(&sh, cps, n, spx, q.weight, str); int cut = 0;
-    if (q.maxW > 0 && sh.width > q.maxW * sscale) { fit_ellipsis(cps, n, spx, q.weight, str, q.maxW * sscale, &sh); cut = 1; }
-    TRes r; memset(&r, 0, sizeof r); r.key = q.key; r.hash = q.hash; r.cut = cut; r.width = sh.width; r.bmp = raster_bitmap(&sh, spx, &r.w, &r.h, &r.asc);
+    if (q.maxW > 0 && sh.width > q.maxW * sc) { fit_ellipsis(cps, n, spx, q.weight, str, q.maxW * sc, &sh); cut = 1; }
+    TRes r; memset(&r, 0, sizeof r); r.key = q.key; r.hash = q.hash; r.cut = cut; r.width = sh.width; r.scale = sc; r.bmp = raster_bitmap(&sh, spx, &r.w, &r.h, &r.asc);
     shaped_free(&sh); free(cps); free(q.utf8);
     pthread_mutex_lock(&tmu); if (trn < TQ) tr[trn++] = r; else { free(r.key); free(r.bmp); } pthread_mutex_unlock(&tmu);
   }
@@ -585,7 +587,7 @@ static void *text_worker(void *a) { plat_thread_background(4); (void)a;
 static int text_ask(const char *key, unsigned h, const char *utf8, int px, int weight, float tracking, float maxW) {
   if (npend >= TQ) return 0;
   pthread_mutex_lock(&tmu); if (tqn >= TQ) { pthread_mutex_unlock(&tmu); return 0; }
-  TReq *q = &tq[(tqh + tqn) % TQ]; q->key = strdup(key); q->hash = h; q->utf8 = strdup(utf8); q->px = px; q->weight = weight; q->rtl = uiRtl; q->tracking = tracking; q->maxW = maxW; tqn++;
+  TReq *q = &tq[(tqh + tqn) % TQ]; q->key = strdup(key); q->hash = h; q->utf8 = strdup(utf8); q->px = px; q->weight = weight; q->rtl = uiRtl; q->tracking = tracking; q->maxW = maxW; q->scale = sscale; tqn++;
   pthread_cond_signal(&tcv); pthread_mutex_unlock(&tmu);
   pend[npend].key = strdup(key); pend[npend].hash = h; npend++;
   return 1;
@@ -595,7 +597,7 @@ static void text_take(void) { /* the thread's finished lines into the cache (upl
   for (int i = 0; i < n; i++) { TRes *r = &got[i]; pend_del(r->key, r->hash); int slot;
     if (!cache_find(r->key, r->hash, &slot) && !(cacheCount >= CACHE_N - 8 || slot < 0 ? (cache_evict(), cache_find(r->key, r->hash, &slot), slot < 0) : 0)) {
       SbLine line = { 0 }; AtlasSlot aslot; upload_line(r->bmp, r->w, r->h, r->asc, &line, &aslot);
-      line.width = r->width / sscale; line.w = (int)ceilf(line.w / sscale); line.h = (int)ceilf(line.h / sscale); line.baseline = (int)(line.baseline / sscale + 0.5f); line.ellipsis = r->cut;
+      float sc = r->scale > 0 ? r->scale : sscale; line.width = r->width / sc; line.w = (int)ceilf(line.w / sc); line.h = (int)ceilf(line.h / sc); line.baseline = (int)(line.baseline / sc + 0.5f); line.ellipsis = r->cut;
       Entry *e = &cache[slot]; e->key = r->key; r->key = NULL; e->hash = r->hash; e->line = line; e->lastUse = frameNo; e->used = 1; e->slot = aslot; cacheCount++; statRaster++; }
     free(r->key); free(r->bmp); }
 }
@@ -605,7 +607,7 @@ static char *key_int(char *p, long v) { char t[24]; int n = 0; unsigned long u =
 static long key_round(float f) { return (long)(f >= 0 ? f + 0.5f : f - 0.5f); }
 static char keybuf[4200];
 static void build_key(char *b, size_t cap, const char *utf8, int px, int weight, float tracking, float maxW) {
-  char *q = b; q = key_int(q, px); *q++ = '|'; q = key_int(q, weight); *q++ = '|'; q = key_int(q, key_round(tracking * 100)); *q++ = '|'; q = key_int(q, key_round(maxW)); *q++ = '|'; q = key_int(q, uiRtl); *q++ = '|';
+  char *q = b; q = key_int(q, px); *q++ = '|'; q = key_int(q, weight); *q++ = '|'; q = key_int(q, key_round(tracking * 100)); *q++ = '|'; q = key_int(q, key_round(maxW)); *q++ = '|'; q = key_int(q, uiRtl); *q++ = '|'; q = key_int(q, key_round(sscale * 256)); *q++ = '|';
   size_t n = strlen(utf8), room = cap - (size_t)(q - b) - 1; if (n > room) n = room; memcpy(q, utf8, n); q[n] = 0;
 }
 static const SbLine *text_line_(const char *utf8, int px, int weight, float tracking, float maxW);

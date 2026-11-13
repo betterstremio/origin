@@ -25,6 +25,7 @@
 #define SB_CAPS_FROM_ENV 1       /* what the display and decoders can do arrives in SB_TVCAPS at start */
 #define SB_P2P_LIB_ENV 1         /* the P2P engine is in the folder SB_LIBDIR names */
 #define SB_REMOTE_GUIDE 0        /* the first-start tour leaves out the remote's keys (user, 2026-11-10) */
+#define SB_ADAPTIVE_LAYOUT 1     /* the layout space follows the surface: 1920x1080 on a TV's 16:9 box, dp on a phone (core/form.h) */
 #define SB_FONT_DIR "/system/fonts"
 #define SB_FONTS_EXACT 0
 #define SB_FONT_SKIP_STYLES 1    /* about 250 files: weights and styles are left out, one face per script stays */

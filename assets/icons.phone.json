@@ -1,0 +1,9 @@
+{"ph_home": "<svg viewBox=\"0 0 24 24\" stroke-width=\"2\"><path d=\"M3.5 10.2L12 3.2l8.5 7V19.5a1.5 1.5 0 0 1-1.5 1.5h-4.5v-6.5h-5V21H5a1.5 1.5 0 0 1-1.5-1.5z\"/></svg>",
+ "ph_disc": "<svg viewBox=\"0 0 24 24\" stroke-width=\"2\"><path d=\"M21 12a9 9 0 1 1-18 0a9 9 0 1 1 18 0M15.8 8.2l-1.9 5.7-5.7 1.9 1.9-5.7z\"/></svg>",
+ "ph_search": "<svg viewBox=\"0 0 24 24\" stroke-width=\"2\"><path d=\"M18.5 11a7.5 7.5 0 1 1-15 0a7.5 7.5 0 1 1 15 0M20.5 20.5l-4.2-4.2\"/></svg>",
+ "ph_lib": "<svg viewBox=\"0 0 24 24\" stroke-width=\"2\"><path d=\"M6.5 3h11A1.5 1.5 0 0 1 19 4.5V21l-7-4.2L5 21V4.5A1.5 1.5 0 0 1 6.5 3z\"/></svg>",
+ "ph_back": "<svg viewBox=\"0 0 24 24\" stroke-width=\"2.2\"><path d=\"M15 18.5L8.5 12L15 5.5\"/></svg>",
+ "ph_close": "<svg viewBox=\"0 0 24 24\" stroke-width=\"2.2\"><path d=\"M18 6L6 18M6 6l12 12\"/></svg>",
+ "ph_more": "<svg viewBox=\"0 0 24 24\" stroke-width=\"3\"><path d=\"M12 5h.01M12 12h.01M12 19h.01\"/></svg>",
+ "ph_info": "<svg viewBox=\"0 0 24 24\" stroke-width=\"2\"><path d=\"M21 12a9 9 0 1 1-18 0a9 9 0 1 1 18 0M12 16.5v-5M12 8h.01\"/></svg>",
+ "ph_down": "<svg viewBox=\"0 0 24 24\" stroke-width=\"2.2\"><path d=\"M6 9.5l6 6 6-6\"/></svg>"}

@@ -52,6 +52,15 @@ int plat_install_start(const char *url, const char *sha256, const char *version)
 int plat_install_poll(char *msg, int cap);
 /* n random bytes from the system (tokens, keys); 1 when all came */
 int plat_random(void *buf, int n);
+/* phones and tablets (core/form.h); no-ops elsewhere:
+   the screen's turn (0 = as the device browses: a phone upright, a tablet either way; 1 = sideways, for a film),
+   the system bars hidden (a film) or shown, a short buzz under the finger (a long press), the system bars' and a
+   cutout's room in surface pixels, and a link opened in the device's browser or the app that owns it */
+void plat_orientation(int landscape);
+void plat_immersive(int on);
+void plat_haptic(void);
+void plat_safe_area(int *top, int *bottom, int *left, int *right);
+int  plat_open_url(const char *url);
 #if SB_PLAT_GL
 /* where the platform makes the GL surface itself (target.h): the context on window w (NULL on failure), the swap, the
    swap interval, and the surface's size in pixels */

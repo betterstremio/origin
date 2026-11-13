@@ -32,6 +32,9 @@
 #include "screens/splash.h"
 #include "core/castlink.h"
 #include <SDL2/SDL.h>
+#include "core/form.h"
+#include "core/touch.h"
+#include "screens/phone.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -258,6 +261,10 @@ static void toast_draw(void) {
   int keyG = !strcmp(toastKey, "\001back"); /* the remote's Back key, drawn */
   if (toastKey[0]) keyW = keyG ? 38 + 14 - 6 : 24 + text_width(toastKey, 21, 600, 0) + 14 - 6;
   float w = 56 + kindW + keyW + tw, h = 72, x = SB_W / 2 - w / 2, y = SB_H - 64 - h + 36 * (1 - a);
+  if (form_touch() && !player_open()) { /* a phone: a smaller pill above the tab bar, its words as wide as the screen allows */
+    float pw = text_width(toastMsg, 14, 600, 0) + 36; if (pw > SB_W - 32) pw = SB_W - 32; float px = SB_W / 2 - pw / 2, py = phone_bottom() - 60 + 16 * (1 - a);
+    gfx_opacity_push(a); gfx_shadow(px, py + 8, pw, 44, 22, 24, BLACK_A(110)); gfx_rrect(px, py, pw, 44, 22, RGB(0x2a, 0x27, 0x35));
+    text_draw(toastMsg, SB_W / 2, py + 22 - text_line_height(14) / 2.0f, 14, 600, WHITE_A(240), 0, pw - 28, ALIGN_CENTER); gfx_opacity_pop(); return; }
   gfx_opacity_push(a);
   gfx_shadow(x, y + 16, w, h, 18, 40, BLACK_A(115));
   gfx_rrect(x, y, w, h, 18, RGB(0x1f, 0x1c, 0x28)); gfx_ring(x, y, w, h, 18, 1, WHITE_A(15));
@@ -744,7 +751,16 @@ void app_go(Scr s, const void *params, int noStack) {
   text_gc();
   topnav_paint();
 }
+/* a phone's tab: the stack of pages starts again from it */
+void app_go_tab(Scr s) { nback = 0; navf.kind = NAV_NONE; if (s != SCR) app_go(s, NULL, 1); }
 void app_back(void) {
+  if (form_touch()) { /* a phone: the sheet, the page's own step back, the last page, Home, then Back twice leaves */
+    if (app_overlay) { app_overlay->key(K_BACK); return; }
+    if (screens[SCR] && screens[SCR]->key && screens[SCR]->key(K_BACK)) return;
+    if (SCR == SCR_LOGIN) return;
+    if (nback) { Scr prev = backStack[--nback]; navf.kind = NAV_BACKZ; navf.x = backX[nback]; navf.y = backY[nback]; app_go(prev, NULL, 1); return; }
+    if (SCR != SCR_HOME) { app_go(SCR_HOME, NULL, 1); return; }
+    exit_ask(); return; }
   if (topNav.want >= 0) { topnav_flush(1); Scr cur = tab_scr(); for (int j = 0; j < 5; j++) if (chipScr(j) == cur) topNav.idx = j; topnav_paint(); return; } /* Back while the pill travels: it returns */
   if (app_overlay) { app_overlay->key(K_BACK); return; }
   if (SCR == SCR_LOGIN) { if (screens[SCR] && screens[SCR]->key) screens[SCR]->key(K_BACK); return; }
@@ -763,6 +779,7 @@ void app_open_external(const char *url, const char *name) {
   if (!strncmp(url, "stremio:///detail/", 18)) { char t[300]; snprintf(t, sizeof t, "%s", url + 18); char *ty = t, *id = strchr(t, '/'); if (id) { *id++ = 0; char *vid = strchr(id, '/'); if (vid) *vid++ = 0;
       DetailParams p; memset(&p, 0, sizeof p); snprintf(p.it.type, sizeof p.it.type, "%s", ty); snprintf(p.it.id, sizeof p.it.id, "%s", id); if (vid && *vid) { snprintf(p.it.videoId, sizeof p.it.videoId, "%s", vid); p.openStreams = 1; }
       if (*ty && *id) { app_go(SCR_DETAIL, &p, 0); return; } } }
+  if (form_touch()) { if (!plat_open_url(url)) toast(T("Could not open the link"), 2000, NULL); return; } /* a phone: its own browser */
   char nm[120]; snprintf(nm, sizeof nm, "%.*s", (int)strcspn(name ? name : "", "\n"), name ? name : "");
   QrCardOpts o; memset(&o, 0, sizeof o); o.title = T("Open on another device"); o.sub = nm[0] ? nm : NULL; o.url = url; qrcard_show(&o);
 }
@@ -995,7 +1012,7 @@ void app_init(void) {
 static void amb_bake(void);
 void app_tick(float dt) {
   DT = dt; NOW = SDL_GetTicks() / 1000.0; FRAME++;
-  ptr_frame();
+  ptr_frame(); touch_tick();
   { static int swelled; if (app_hold_progress() > 0 && !swelled) { swelled = 1; sound_play(SND_HOLD); } else if (!okHold.down) swelled = 0; } /* holding OK: a low swell as the line starts round */
   if (okHold.down && !okHold.menu && (NOW - okHold.at) * 1000 >= HOLD_MS) { okHold.menu = 1; menuGuard = 1; orbs_pulse(ORB_HOLD, 1); if (app_card_menu_hook) app_card_menu_hook(&okHold.item); }
   timer_tick(&xin, dt); timer_tick(&xmvT, dt); timer_tick(&xoutT, dt);
@@ -1004,7 +1021,8 @@ void app_tick(float dt) {
   curKey = 0; /* (a page switch later in the frame is not a key's) */
   { extern void board_col_tick(void); board_col_tick(); } btr_tick(dt); welcome_tick(); lift_tick(dt); tabs_warm_tick();
   { static int greeted; if (!greeted && app_splash_done) { greeted = 1; sound_play(SND_START); } } /* start-up: one very faint sound */
-  { static int wasP; int po = player_open(); if (po != wasP) { wasP = po; if (po) sound_play(SND_PLAY); sound_quiet(po); } } /* into the player: one faint sound, then the film has the audio alone */
+  { static int wasP; int po = player_open(); if (po != wasP) { wasP = po; if (po) sound_play(SND_PLAY); sound_quiet(po);
+      if (form_touch()) { plat_orientation(po); plat_immersive(po); gfx_film_layout(po && !form_tablet() ? 1600 : 0); gfx_touch_layout(po ? 0 : form_density()); } } } /* into the player: one faint sound, then the film has the audio alone; a phone turns sideways for it, its bars go, and the canvas is the TV's (back upright after) */
   castlink_tick(dt); /* (a phone drives the film too: before the app rests under it) */
   player_tick(dt); if (player_open() && player_cover() >= 0.999f) return; /* the app rests while the film plays (not while the player fades over it or away from it) */
   if (screens[SCR] && screens[SCR]->tick) screens[SCR]->tick(dt);
@@ -1096,7 +1114,8 @@ static GLuint lg_tex(float x, float y, float w, float h, float *u0, float *v0, f
 static void page_draw(void) {
   if (welcome_covers() && app_overlay && app_overlay->draw) { app_overlay->draw(); return; } /* the guide's page hides all of it */
   static const char *skip = (const char *)1; if (skip == (const char *)1) skip = getenv("SB_SKIP"); /* development: SB_SKIP=bg,bar,screen,amb leaves parts out, to time what each costs */
-  if (!skip || !strstr(skip, "bg")) bg_draw(); glass_draw(); if (!ambGuide && (!skip || !strstr(skip, "amb"))) ambient_draw();
+  int ph = form_touch() && phone_owns(SCR); /* a phone's own page: no TV backdrop, glows or top bar */
+  if (!ph) { if (!skip || !strstr(skip, "bg")) bg_draw(); glass_draw(); if (!ambGuide && (!skip || !strstr(skip, "amb"))) ambient_draw(); }
   if (screens[SCR] && screens[SCR]->draw && (!skip || !strstr(skip, "screen"))) { float a = app_screen_alpha(); if (xoutT.on) a *= ease_apply(EASE_CSS_EASEIN, timer_x(&xoutT)); /* under a page leaving by Back: it comes up as that one goes, never both at once */ if (a < 1) gfx_opacity_push(a);
     int mv = xmvT.on && xmv.kind && !sx_flying(); /* the hand-over's move: the incoming screen as a whole, one transform (not while a logo flies across: its landing spot must hold still, or it dips and comes back) */
     if (mv) { float k = ease_apply(EASE_CSS_EASEOUT, timer_x(&xmvT));
@@ -1106,7 +1125,7 @@ static void page_draw(void) {
     if (mv) { if (xmv.kind == NAV_SLIDE) gfx_offset_pop(); else gfx_scale_pop(); }
     if (a < 1) gfx_opacity_pop(); }
   if (xoutT.on && screens[xoutScr] && screens[xoutScr]->out) { int hn = hit_count(); sx_ghost(1); screens[xoutScr]->out(timer_x(&xoutT)); sx_ghost(0); hit_trim(hn); } /* seen leaving, never pointed at */
-  if (!skip || !strstr(skip, "bar")) topnav_draw();
+  if (form_touch()) phone_bars_draw(); else if (!skip || !strstr(skip, "bar")) topnav_draw();
   for (int k = 0; k < nseenOv; k++) if (seenOv[k] != app_overlay && seenOv[k]->draw) seenOv[k]->draw(); /* closing ones (they draw nothing once gone) */
   if (app_overlay && app_overlay->draw) app_overlay->draw();
 }
@@ -1121,7 +1140,7 @@ void app_draw_under(void) {
 void app_draw(void) {
   occOn = occNOn; occX = occNX; occY = occNY; occW = occNW; occH = occNH; occNOn = 0; /* (last frame's still panel) */
   { const Hit *o = PTR.on && !player_open() ? hit_at(PTR.x, PTR.y) : NULL; PTR.hasOver = o != NULL; if (o) PTR.over = *o; } /* what is under the pointer, before this frame's rectangles replace last frame's */
-  hit_begin(); sx_frame_begin(); sx_layer(0);
+  hit_begin(); touch_begin_frame(); sx_frame_begin(); sx_layer(0);
   /* the player fades in over the page and, leaving, fades off it onto the page: the page is drawn under it only
      while it does not cover it all (the video plane itself never fades: the art and the controls above it do) */
   if (player_open() && saver_covers()) { saver_draw(); return; } /* (over a paused film: the screensaver alone) */

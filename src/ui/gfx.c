@@ -138,13 +138,23 @@ int gfx_init(int w, int h) {
 static int vpX, vpY, vpW, vpH, winH; /* viewport in GL coordinates */
 #if SB_ADAPTIVE_LAYOUT
 float gfx_layout_w = 1920.0f, gfx_layout_h = 1080.0f;
+/* a phone or a tablet (core/form.h): one layout unit is one dp, so the canvas is the screen's size in dp (about
+   412x915 upright); 0 = the 16:9 design widened to the surface (a film on a phone, a desktop window, a TV) */
+static float touchDp, filmW; static int lastW, lastH;
+void gfx_touch_layout(float density) { if (density == touchDp) return; touchDp = density; if (lastW > 0) gfx_resize(lastW, lastH); }
+/* a film on a phone: the TV's player drawn on a narrower canvas (1600 wide instead of 2400 on a 20:9 phone), so its
+   words and buttons come out about half as large again: a finger's size, read at arm's length. 720 high at least */
+void gfx_film_layout(float designW) { if (designW == filmW) return; filmW = designW; if (lastW > 0) gfx_resize(lastW, lastH); }
+float gfx_touch_dp(void) { return touchDp; }
 #endif
 void gfx_resize(int w, int h) {
   if (w <= 0 || h <= 0) return;
   winH = h; int vw = w, vh = h;
 #if SB_ADAPTIVE_LAYOUT
-  SbLayout layout = layout_for_surface(w, h);
-  gfx_layout_w = layout.w; gfx_layout_h = layout.h;
+  lastW = w; lastH = h;
+  if (touchDp > 0) { gfx_layout_w = w / touchDp; gfx_layout_h = h / touchDp; }
+  else if (filmW > 0) { float k = filmW / w; if (h * k < 720) k = 720.0f / h; gfx_layout_w = w * k; gfx_layout_h = h * k; }
+  else { SbLayout layout = layout_for_surface(w, h); gfx_layout_w = layout.w; gfx_layout_h = layout.h; }
 #else
   if (h > 0 && (long)w * 9 > (long)h * 16) vw = (int)((long)h * 16 / 9); else if (w > 0 && (long)w * 9 < (long)h * 16) vh = (int)((long)w * 9 / 16);
 #endif

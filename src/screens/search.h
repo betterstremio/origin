@@ -18,4 +18,11 @@ int  search_key_row_len(int r);                       /* keys in row r (3 in the
 int  search_key_index(int r, int c);                  /* the key at row r, place c */
 void search_key_rc(int ki, int *r, int *c);
 void search_key_pos(int ki, float *x, float *y, float *w); /* from the keyboard's top left, left to right */
+/* phones (screens/phone_search.c) */
+const char *search_query(void);
+void search_set_query(const char *q);
+const ItemList *search_results(void);
+int  search_busy(void);
+int  search_sug_list(const char **out, int max);
+void search_now(void);           /* Enter: ask at once, without waiting for the typing to pause */
 #endif
