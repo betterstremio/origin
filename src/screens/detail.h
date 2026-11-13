@@ -3,7 +3,7 @@
 #include "core/app.h"
 extern Screen detailScreen;
 void detail_open_streams(const char *vid);
-void detail_refresh_watched(void);   /* after a watched change elsewhere */
+void detail_refresh_watched(void); /* after a watched change elsewhere */
 void detail_paint_lib(void);
 const char *detail_id(void);
 /* a title's trailer in the player (the title page's button, the card menu) */

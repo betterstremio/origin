@@ -133,6 +133,8 @@ tools/release.sh build X.Y.Z                   # every package from empty folder
 
 Android tests on the emulator: `python tools/android/test/run.py --build` (after `tools/android/test/media.sh`). The script's header says what it needs.
 
+Code style: the C code follows `.clang-format` at the repo root, with clang-format 19.1.7 (`pip install clang-format==19.1.7`). Run `tools/format.sh` before you commit; `tools/format.sh --check` lists the files that still need it. `third_party/` keeps its upstream style.
+
 ## Support
 - [ko-fi.com/blueee123](https://ko-fi.com/blueee123)
 

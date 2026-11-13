@@ -5,7 +5,7 @@
 #ifndef SB_COMPAT_H
 #define SB_COMPAT_H
 #ifndef _POSIX_THREAD_SAFE_FUNCTIONS
-#define _POSIX_THREAD_SAFE_FUNCTIONS 200112L   /* localtime_r, gmtime_r */
+#define _POSIX_THREAD_SAFE_FUNCTIONS 200112L /* localtime_r, gmtime_r */
 #endif
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,11 +32,13 @@ int sb_rename(const char *from, const char *to);
 #ifndef S_ISLNK
 #define S_ISLNK(m) 0
 #endif
-static inline unsigned sb_uid(void) { return 0; }
+static inline unsigned sb_uid(void) {
+  return 0;
+}
 #define geteuid sb_uid
 #define getuid sb_uid
 char *strcasestr(const char *hay, const char *needle);
-char *strndup(const char *s, size_t n);   /* (libass calls it too) */
+char *strndup(const char *s, size_t n); /* (libass calls it too) */
 #define timegm _mkgmtime
 #define _SC_PAGESIZE 30
 #define _SC_NPROCESSORS_ONLN 84

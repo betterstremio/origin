@@ -7,43 +7,47 @@
 #include "core/stremio.h"
 
 typedef enum {
-  BGT_OFF = 0,   /* nothing */
-  BGT_WAIT,      /* idle: looking the trailer up */
-  BGT_LOAD,      /* loading behind the art (not shown yet) */
-  BGT_SHOW,      /* playing: the art uncovers it, the boards dim */
-  BGT_GONE       /* stopped and off screen; the decoder is let go in a pause of the remote */
+  BGT_OFF = 0, /* nothing */
+  BGT_WAIT, /* idle: looking the trailer up */
+  BGT_LOAD, /* loading behind the art (not shown yet) */
+  BGT_SHOW, /* playing: the art uncovers it, the boards dim */
+  BGT_GONE /* stopped and off screen; the decoder is let go in a pause of the remote */
 } BgtState;
 
 /* what the boards see, once a frame */
 typedef struct {
-  float idle;           /* seconds since the last key (app_idle()) */
-  int   browsing;       /* Home, Discover or the Library is the screen */
-  const Item *focused;  /* the card under the highlight, NULL when none (or the top bar has the focus) */
-  int   blocked;        /* the top bar, a sheet or menu, the player or the splash is up */
-  int   spotlight;      /* Discover's spotlight is showing: it moves on by itself */
-  int   shedding;       /* frames run late (the pace stepped down): no trailer for now */
-  const Item *next;     /* the card to the right of the focus (a clip's link is made ready ahead), NULL when none */
-  const Item *near[10]; int nnear; /* the cards around it (their clips are looked up ahead) */
-  int   hero;           /* it plays in the billboard: the larger picture */
+  float idle; /* seconds since the last key (app_idle()) */
+  int browsing; /* Home, Discover or the Library is the screen */
+  const Item *focused; /* the card under the highlight, NULL when none (or the top bar has the focus) */
+  int blocked; /* the top bar, a sheet or menu, the player or the splash is up */
+  int spotlight; /* Discover's spotlight is showing: it moves on by itself */
+  int shedding; /* frames run late (the pace stepped down): no trailer for now */
+  const Item *next; /* the card to the right of the focus (a clip's link is made ready ahead), NULL when none */
+  const Item *near[10];
+  int nnear; /* the cards around it (their clips are looked up ahead) */
+  int hero; /* it plays in the billboard: the larger picture */
 } BgtView;
 
 typedef struct {
   void (*load)(const char *url, const char *mime, const char *titleId, void *ud); /* start playing it behind the art */
-  void (*hide)(int now, void *ud);  /* pause it at once; now = 0: it was showing, the art fades back over it first (0.46 s) */
-  void (*unload)(void *ud);         /* release the decoder */
+  void (*hide)(int now,
+               void *ud); /* pause it at once; now = 0: it was showing, the art fades back over it first (0.46 s) */
+  void (*unload)(void *ud); /* release the decoder */
   void *ud;
 } BgtHooks;
 
 void bgt_init(const BgtHooks *h);
-void bgt_tick(const BgtView *v);    /* once a frame, from whatever screen is up */
-void bgt_key(void);                 /* any key or pointer action: it stops at once */
-void bgt_release_now(void);         /* the player is about to load: hidden and unloaded now, no fade */
-void bgt_playing(void);             /* the backend shows its first frame */
-void bgt_ended(void);               /* it ended or failed */
+void bgt_tick(const BgtView *v); /* once a frame, from whatever screen is up */
+void bgt_key(void); /* any key or pointer action: it stops at once */
+void bgt_release_now(void); /* the player is about to load: hidden and unloaded now, no fade */
+void bgt_playing(void); /* the backend shows its first frame */
+void bgt_ended(void); /* it ended or failed */
 BgtState bgt_state(void);
-void   bgt_addons_limited(const char *addon, const char *how); /* an addon said its rate limit is reached: its previews pause, IMDb plays instead */
-int    bgt_fast(void);              /* the title or an IMDb clip: shown as soon as it plays steadily */
-int    bgt_clip(void);              /* what loads is the title itself (not a trailer): silent, started past the credits */
-double bgt_clip_seek(double dur);   /* where a clip starts, once its length is known */
-double bgt_clip_start(void);        /* where a clip is asked to begin before its length is known */
+void bgt_addons_limited(
+    const char *addon,
+    const char *how); /* an addon said its rate limit is reached: its previews pause, IMDb plays instead */
+int bgt_fast(void); /* the title or an IMDb clip: shown as soon as it plays steadily */
+int bgt_clip(void); /* what loads is the title itself (not a trailer): silent, started past the credits */
+double bgt_clip_seek(double dur); /* where a clip starts, once its length is known */
+double bgt_clip_start(void); /* where a clip is asked to begin before its length is known */
 #endif

@@ -6,15 +6,15 @@
 #define SB_QRCARD_H
 
 typedef struct {
-  const char *title, *sub;      /* already translated */
-  const char *url;              /* what the code opens; NULL or "" = no network address (the card says so) */
-  int (*check)(void *ud);       /* asked every 1.5 s: 1 = done (the tick); NULL = never */
+  const char *title, *sub; /* already translated */
+  const char *url; /* what the code opens; NULL or "" = no network address (the card says so) */
+  int (*check)(void *ud); /* asked every 1.5 s: 1 = done (the tick); NULL = never */
   const char *doneTitle, *doneSub; /* the tick's words (doneSub may be NULL) */
-  float doneHold;               /* seconds the tick stays before the card goes */
-  void (*onClose)(void *ud);    /* once it is closed, however that happened */
-  int (*paste)(void *ud);       /* desktop (SB_WINDOWED): the card takes the key from the clipboard instead of showing a code
-                                   (Enter, Ctrl+V or its button); 1 = being checked (check() is asked more often) */
-  const char *link;             /* desktop: where to get a key, opened in the browser from the card */
+  float doneHold; /* seconds the tick stays before the card goes */
+  void (*onClose)(void *ud); /* once it is closed, however that happened */
+  int (*paste)(void *ud); /* desktop (SB_WINDOWED): the card takes the key from the clipboard instead of showing a code
+                             (Enter, Ctrl+V or its button); 1 = being checked (check() is asked more often) */
+  const char *link; /* desktop: where to get a key, opened in the browser from the card */
   void *ud;
 } QrCardOpts;
 

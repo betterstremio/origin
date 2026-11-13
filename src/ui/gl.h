@@ -3,11 +3,11 @@
 #ifndef SB_GL_H
 #define SB_GL_H
 #if !SB_GL_ES
-#  define GL_SILENCE_DEPRECATION 1
-#  include <OpenGL/gl.h>
-#  define SB_GLSL_PRECISION ""
+#define GL_SILENCE_DEPRECATION 1
+#include <OpenGL/gl.h>
+#define SB_GLSL_PRECISION ""
 #else
-#  include <GLES2/gl2.h>
-#  define SB_GLSL_PRECISION "precision mediump float;\n"
+#include <GLES2/gl2.h>
+#define SB_GLSL_PRECISION "precision mediump float;\n"
 #endif
 #endif

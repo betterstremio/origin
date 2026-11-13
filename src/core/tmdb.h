@@ -11,50 +11,63 @@
 #define SB_TMDB_H
 #include "cJSON.h"
 
-typedef struct { int s, e; const char *name, *overview; } TmdbEp;
 typedef struct {
-  const char *name, *overview, *logo, *poster;   /* "" when TMDB has none in the app's language */
-  const char *genres[8]; int ngenres;             /* TMDB's genre names, in the app's language */
-  int light;                                      /* a row's lookup: no episode list (the page asks again) */
-  const TmdbEp *eps; int neps;                    /* sorted by season, episode; TMDB's stand-in names left out */
+  int s, e;
+  const char *name, *overview;
+} TmdbEp;
+typedef struct {
+  const char *name, *overview, *logo, *poster; /* "" when TMDB has none in the app's language */
+  const char *genres[8];
+  int ngenres; /* TMDB's genre names, in the app's language */
+  int light; /* a row's lookup: no episode list (the page asks again) */
+  const TmdbEp *eps;
+  int neps; /* sorted by season, episode; TMDB's stand-in names left out */
 } TmdbLoc;
 
 enum { TMDB_OFF = 0, TMDB_PENDING, TMDB_READY, TMDB_NONE };
 /* how long a screen holds its English art back for the translation, as the page does */
-#define TMDB_WAIT_CARD 0.7f   /* a card near the cursor: its translated poster */
-#define TMDB_WAIT_HERO 0.7f   /* the hero */
-#define TMDB_WAIT_PAGE 1.5f   /* a title page */
+#define TMDB_WAIT_CARD 0.7f /* a card near the cursor: its translated poster */
+#define TMDB_WAIT_HERO 0.7f /* the hero */
+#define TMDB_WAIT_PAGE 1.5f /* a title page */
 
-void tmdb_init(void);                 /* after store_init and i18n_init; otherwise done on first use */
-int  tmdb_has_key(void);
-int  tmdb_builtin(void);            /* this build carries the app's own key: nobody needs to add one */
-void tmdb_key_clear(void);            /* "Remove the TMDB key" */
+void tmdb_init(void); /* after store_init and i18n_init; otherwise done on first use */
+int tmdb_has_key(void);
+int tmdb_builtin(void); /* this build carries the app's own key: nobody needs to add one */
+void tmdb_key_clear(void); /* "Remove the TMDB key" */
 /* a key from the clipboard (fromNuvio 0) or from the Nuvio account (1), checked with TMDB on a thread, then kept and
    used at once. The account's key never replaces one the user added, nor comes back after "Remove". 1: being checked */
 enum { TK_NONE = 0, TK_CHECKING, TK_KEPT, TK_BAD = -1, TK_NET = -2 };
-enum { TKO_NOT_A_KEY = 0, TKO_CHECKING = 1, TKO_SAME = 2 }; /* what an offer did: nothing (not a key, or not wanted), sent to TMDB, or the key in use already */
-int  tmdb_key_offer(const char *k, int fromNuvio);
-int  tmdb_key_check_state(void);      /* the last offer: TK_* */
-int  tmdb_key_from_nuvio(void);       /* the key in use came from the Nuvio account */
+enum {
+  TKO_NOT_A_KEY = 0,
+  TKO_CHECKING = 1,
+  TKO_SAME = 2
+}; /* what an offer did: nothing (not a key, or not wanted), sent to TMDB, or the key in use already */
+int tmdb_key_offer(const char *k, int fromNuvio);
+int tmdb_key_check_state(void); /* the last offer: TK_* */
+int tmdb_key_from_nuvio(void); /* the key in use came from the Nuvio account */
 /* changes whenever lookups start again (a key added or removed, another language): screens drop what they
    applied */
 unsigned tmdb_generation(void);
-int  tmdb_wanted(const char *id);     /* the UI is not English, there is a key, and it is an IMDb id */
+int tmdb_wanted(const char *id); /* the UI is not English, there is a key, and it is an IMDb id */
 
 /* the title in the app's language: NULL while unknown (then it is asked for), when TMDB has nothing for it
    or when lookups are off. light = 1 for rows (no episodes); 0 for a title page (a series' episodes too). */
 const TmdbLoc *tmdb_loc(const char *type, const char *id, int light);
-int  tmdb_state(const char *type, const char *id, int light);   /* TMDB_OFF / PENDING / READY / NONE; asks too */
-void tmdb_first(const char *type, const char *id, int light);   /* the focused title goes ahead of the queue */
+int tmdb_state(const char *type, const char *id, int light); /* TMDB_OFF / PENDING / READY / NONE; asks too */
+void tmdb_first(const char *type, const char *id, int light); /* the focused title goes ahead of the queue */
 
 /* the wait pattern: a screen keeps one TmdbWait per thing it holds back (the focused card, the hero, the page).
    1 = go ahead (the translation is in, there is none, lookups are off, or maxSec went by since this id was
    first asked here); 0 = keep waiting (draw the placeholder). A new id restarts the clock and goes first. */
-typedef struct { char id[24]; int light; double at; } TmdbWait;
-int  tmdb_wait(TmdbWait *w, const char *type, const char *id, int light, float maxSec);
+typedef struct {
+  char id[24];
+  int light;
+  double at;
+} TmdbWait;
+int tmdb_wait(TmdbWait *w, const char *type, const char *id, int light, float maxSec);
 
 /* one episode's name / overview ("" when there is none); 0 when the episode is unknown */
-int  tmdb_episode(const TmdbLoc *L, int season, int episode, const char **name, const char **overview);
+int tmdb_episode(const TmdbLoc *L, int season, int episode, const char **name, const char **overview);
 /* applies a lookup to a meta (once per language, idempotent): description, genres (the English kept in
    "_genresEn"), episode titles and overviews in place; the name, logo and poster beside the English ones
    ("locName", "locLogo", "locPoster") because the library takes its name and poster from the meta */

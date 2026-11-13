@@ -6,7 +6,7 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #ifndef NOGDI
-#define NOGDI       /* (wingdi.h's RGB would replace the app's) */
+#define NOGDI /* (wingdi.h's RGB would replace the app's) */
 #endif
 #ifndef NOMINMAX
 #define NOMINMAX

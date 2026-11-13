@@ -9,36 +9,41 @@
    convenience (len excludes the NUL) and is freed after the callback returns. */
 typedef void (*NetCb)(int status, const unsigned char *body, size_t len, void *ud);
 
-int      net_init(const char *caBundlePath);  /* caBundlePath may be NULL */
+int net_init(const char *caBundlePath); /* caBundlePath may be NULL */
 unsigned net_get(const char *url, NetCb cb, void *ud);
-/* a file's size from one 1-byte range request (body = the byte count as text, status 0 when unknown); the body is never read */
-unsigned net_file(const char *path, NetCb cb, void *ud);  /* a local file read (and JSON parsed) off the drawing thread: 200 or 404 */
+/* a file's size from one 1-byte range request (body = the byte count as text, status 0 when unknown); the body is never
+ * read */
+unsigned net_file(const char *path, NetCb cb,
+                  void *ud); /* a local file read (and JSON parsed) off the drawing thread: 200 or 404 */
 unsigned net_size(const char *url, NetCb cb, void *ud);
 /* a link's final address: its redirects followed with a 1-byte request (a debrid link is made on its first request:
    asked ahead, the player then gets an address that answers at once); body = that address, status = its answer */
-unsigned net_resolve(const char *url, NetCb cb, void *ud);   /* (on the previews' lane) */
+unsigned net_resolve(const char *url, NetCb cb, void *ud); /* (on the previews' lane) */
 /* a GET on the previews' lane: workers of their own, so a card's preview never holds up a title page */
-unsigned net_post_bg(const char *url, const char *body, const char *contentType, const char *headers, int timeoutMs, NetCb cb, void *ud); /* (a POST on the previews' lane) */
+unsigned net_post_bg(const char *url, const char *body, const char *contentType, const char *headers, int timeoutMs,
+                     NetCb cb, void *ud); /* (a POST on the previews' lane) */
 unsigned net_get_bg(const char *url, int timeoutMs, NetCb cb, void *ud);
-unsigned net_get_hdr(const char *url, const char *extraHeader, NetCb cb, void *ud);  /* several: one per line */
+unsigned net_get_hdr(const char *url, const char *extraHeader, NetCb cb, void *ud); /* several: one per line */
 unsigned net_post_json(const char *url, const char *json, NetCb cb, void *ud);
 /* a POST with its own headers: one "Name: value" per line ("\n" between them); a User-Agent among them
    replaces the app's. contentType NULL or "" sends none of ours. net_post_hdr_t: a timeout other than 20 s */
-unsigned net_post_hdr_t(const char *url, const char *body, const char *contentType, const char *headers, int timeoutMs, NetCb cb, void *ud);
+unsigned net_post_hdr_t(const char *url, const char *body, const char *contentType, const char *headers, int timeoutMs,
+                        NetCb cb, void *ud);
 /* a POST / PUT of raw bytes (safe from any thread); headers: one "Name: value" per line, or NULL */
-unsigned net_send(const char *method, const char *url, const char *headers, const void *body, size_t len, int timeoutMs, NetCb cb, void *ud);
+unsigned net_send(const char *method, const char *url, const char *headers, const void *body, size_t len, int timeoutMs,
+                  NetCb cb, void *ud);
 /* a GET allowed to take longer (or shorter) than the usual 20 s, e.g. stream addons that resolve debrid links */
 unsigned net_get_timeout(const char *url, int timeoutMs, NetCb cb, void *ud);
-void     net_cancel(unsigned id);
-void     net_cancel_queued(unsigned id);   /* only if it has not started: a running one finishes (its connection stays) */
-void     net_pump(void);           /* delivers finished requests; call once per frame */
+void net_cancel(unsigned id);
+void net_cancel_queued(unsigned id); /* only if it has not started: a running one finishes (its connection stays) */
+void net_pump(void); /* delivers finished requests; call once per frame */
 /* inside a callback: the JSON body, already parsed on the network worker (else parsed now); the caller owns the tree */
 struct cJSON *net_json(const unsigned char *body);
-void     net_json_free(struct cJSON *j);   /* a parsed answer freed off the drawing thread */
-int      net_pending(void);
+void net_json_free(struct cJSON *j); /* a parsed answer freed off the drawing thread */
+int net_pending(void);
 /* synchronous fetch for worker threads of other modules (images); returns malloc'd body or NULL */
 unsigned char *net_fetch_sync(const char *url, size_t *len, int *status, int timeoutMs);
-void net_keep_this_thread(void);   /* this worker's net_fetch_sync calls reuse their connections */
+void net_keep_this_thread(void); /* this worker's net_fetch_sync calls reuse their connections */
 /* the same with one extra request header ("Authorization: Bearer ..."), NULL for none */
 unsigned char *net_fetch_sync_hdr(const char *url, const char *extraHeader, size_t *len, int *status, int timeoutMs);
 
@@ -46,13 +51,14 @@ unsigned char *net_fetch_sync_hdr(const char *url, const char *extraHeader, size
    while nothing comes; returning 0 stops the download. Returns the HTTP status of a finished download, 0 when it
    failed, -1 when the sink stopped it. */
 typedef int (*NetSink)(const unsigned char *p, size_t n, void *ud);
-int      net_stream_sync(const char *url, int timeoutMs, NetSink sink, void *ud);
+int net_stream_sync(const char *url, int timeoutMs, NetSink sink, void *ud);
 
 /* A GET (head: a HEAD) passed on as it arrives, with extra request headers (one "Name: value" per line): hs gets each
    header line of every hop (a status line starts a hop), sink the body as for net_stream_sync; it gives up after
-   stallSec seconds without a byte. Worker threads only. The HTTP status, 0 when it failed, -1 when the sink stopped it */
+   stallSec seconds without a byte. Worker threads only. The HTTP status, 0 when it failed, -1 when the sink stopped it
+ */
 typedef void (*NetHdrSink)(const char *line, void *ud);
-int      net_pipe_sync(const char *url, const char *headers, int head, NetHdrSink hs, NetSink sink, void *ud, int stallSec);
+int net_pipe_sync(const char *url, const char *headers, int head, NetHdrSink hs, NetSink sink, void *ud, int stallSec);
 
 /* Ranged reads on one kept-alive connection (worker threads only: it blocks). net_range_get reads
    [start, start+len) into *out (malloc'd, *got bytes; a short read returns what came) and the file's
@@ -60,6 +66,7 @@ int      net_pipe_sync(const char *url, const char *headers, int head, NetHdrSin
 enum { NR_OK = 0, NR_NORANGE, NR_HTTP, NR_BUSY, NR_TIMEOUT, NR_NET };
 typedef struct NetRange NetRange;
 NetRange *net_range_new(void);
-int       net_range_get(NetRange *r, const char *url, long long start, long len, unsigned char **out, long *got, long long *total, int *httpStatus, int timeoutMs);
-void      net_range_free(NetRange *r);
+int net_range_get(NetRange *r, const char *url, long long start, long len, unsigned char **out, long *got,
+                  long long *total, int *httpStatus, int timeoutMs);
+void net_range_free(NetRange *r);
 #endif

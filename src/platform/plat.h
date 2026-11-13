@@ -9,7 +9,8 @@ void plat_pre_init(const char *appId);
 /* after the window exists */
 void plat_post_window(SDL_Window *w);
 /* where the bundled assets are (fonts, i18n) and where to keep data (settings, caches) */
-void plat_cursor_visible(int on); /* the TV's own pointer, which it draws itself: shown or hidden now (no-op where there is none) */
+void plat_cursor_visible(
+    int on); /* the TV's own pointer, which it draws itself: shown or hidden now (no-op where there is none) */
 const char *plat_asset_dir(void);
 const char *plat_data_dir(void);
 /* the window size to ask for; fullscreen on TVs */
@@ -22,7 +23,8 @@ int plat_text_input(void);
 const char *plat_device_name(void);
 /* the device's RAM in MB (0 when unknown): picks the picture budget and the drawing size */
 int plat_mem_total_mb(void);
-void plat_thread_background(int nice);  /* the calling thread yields to the drawing thread (and threads it starts inherit it) */
+void plat_thread_background(
+    int nice); /* the calling thread yields to the drawing thread (and threads it starts inherit it) */
 /* an SDL event as the app's life sees it: 1 = back in front (a relaunch, a return from another app),
    -1 = sent to the back, 0 = neither */
 int plat_lifecycle(const SDL_Event *e);
@@ -45,10 +47,11 @@ int plat_panel_lines(void);
 /* 1 when the remote has the red and green keys (every LG remote; some Android TV remotes, no Google TV or Fire TV one):
    the guide and the notices name them only then */
 int plat_color_keys(void);
-/* where the platform has its own package installer (SB_PLAT_INSTALLER in target.h): downloads the package, checks its SHA-256
-   (lower-case hex) and hands it to the installer, which may ask the user once; 0 = could not start */
+/* where the platform has its own package installer (SB_PLAT_INSTALLER in target.h): downloads the package, checks its
+   SHA-256 (lower-case hex) and hands it to the installer, which may ask the user once; 0 = could not start */
 int plat_install_start(const char *url, const char *sha256, const char *version);
-/* where it is: 0 = on its way (msg: progress, may be ""), 1 = with the installer (msg says so), -1 = failed (msg: why) */
+/* where it is: 0 = on its way (msg: progress, may be ""), 1 = with the installer (msg says so), -1 = failed (msg: why)
+ */
 int plat_install_poll(char *msg, int cap);
 /* n random bytes from the system (tokens, keys); 1 when all came */
 int plat_random(void *buf, int n);
@@ -60,7 +63,7 @@ void plat_orientation(int landscape);
 void plat_immersive(int on);
 void plat_haptic(void);
 void plat_safe_area(int *top, int *bottom, int *left, int *right);
-int  plat_open_url(const char *url);
+int plat_open_url(const char *url);
 #if SB_PLAT_GL
 /* where the platform makes the GL surface itself (target.h): the context on window w (NULL on failure), the swap, the
    swap interval, and the surface's size in pixels */
@@ -71,9 +74,11 @@ void plat_gl_size(SDL_Window *w, int *pw, int *ph);
 void plat_gl_destroy(void *ctx);
 #endif
 #if SB_WINDOWED
-void plat_fullscreen_toggle(void);   /* a desktop window: fullscreen (borderless, the monitor's own mode) and back */
-int plat_fullscreen_on(void);        /* ... and whether it is now */
-void plat_live_draw(void (*fn)(void)); /* a frame drawn by fn while the window's border is dragged (the app's loop waits then) */
-const char *plat_country(void);     /* the country the user set in the system (two letters, "IE"), or NULL: the locale's is used */
+void plat_fullscreen_toggle(void); /* a desktop window: fullscreen (borderless, the monitor's own mode) and back */
+int plat_fullscreen_on(void); /* ... and whether it is now */
+void plat_live_draw(
+    void (*fn)(void)); /* a frame drawn by fn while the window's border is dragged (the app's loop waits then) */
+const char *
+plat_country(void); /* the country the user set in the system (two letters, "IE"), or NULL: the locale's is used */
 #endif
 #endif

@@ -10,7 +10,7 @@ char *logscrub_line(const char *line);
    path parts, emails, IP addresses, info hashes shortened (malloc'd) */
 char *logscrub_share(const char *text);
 /* 4 characters from a 32-letter alphabet, from the system's random source; 0 when it cannot be read */
-int   logseal_code(char out[5]);
+int logseal_code(char out[5]);
 /* the page left on the relay, base64 of SBL3 | one-time key (65) | iv (12) | tag (16) | AES-256-GCM(gzip(text)):
    sealed to the developer's P-256 public key (65 bytes, uncompressed), key = sha256("stremioorigin-logs-v1|" + code +
    "|" + one-time key + shared secret), AAD = "SBL3|" + code. The gzip keeps the newest part under 40 000 bytes

@@ -3,8 +3,8 @@
 #ifndef SB_SAVER_H
 #define SB_SAVER_H
 void saver_tick(float dt);
-int  saver_on(void);        /* showing (keys wake it) */
-int  saver_covers(void);    /* fully in: the page under it need not be drawn */
-void saver_draw(void);      /* over everything (also while it fades away) */
+int saver_on(void); /* showing (keys wake it) */
+int saver_covers(void); /* fully in: the page under it need not be drawn */
+void saver_draw(void); /* over everything (also while it fades away) */
 void saver_stop(void);
 #endif

@@ -1,0 +1,30 @@
+# C style for src/, tests/ and tools/. Run tools/format.sh to apply it.
+# Pinned to clang-format 19.1.7 (pip install clang-format==19.1.7):
+# other versions can format a few constructs differently.
+BasedOnStyle: LLVM
+Language: Cpp
+IndentWidth: 2
+ContinuationIndentWidth: 4
+ColumnLimit: 120
+BreakBeforeBraces: Attach
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Never
+AllowShortCaseLabelsOnASingleLine: false
+AlignTrailingComments:
+  Kind: Never
+AlignConsecutiveMacros: None
+AlignEscapedNewlines: Left
+PointerAlignment: Right
+SortIncludes: Never
+IncludeBlocks: Preserve
+ReflowComments: true
+IndentPPDirectives: None
+SpaceAfterCStyleCast: false
+Cpp11BracedListStyle: false
+MaxEmptyLinesToKeep: 1
+InsertNewlineAtEOF: true
+ForEachMacros: [cJSON_ArrayForEach]
+BreakStringLiterals: false
+SpaceBeforeParens: ControlStatementsExceptControlMacros

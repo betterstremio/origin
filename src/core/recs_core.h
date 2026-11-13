@@ -16,63 +16,79 @@
 #include "cJSON.h"
 
 #define RECS_MAX_SEEDS 15
-#define RECS_LIST 20          /* one /recommendations page */
+#define RECS_LIST 20 /* one /recommendations page */
 #define RECS_MAX_CAND 400
-#define RECS_GENRES 64        /* TMDB genre ids are < 11000; they are folded into this many slots */
+#define RECS_GENRES 64 /* TMDB genre ids are < 11000; they are folded into this many slots */
 #define RECS_HALF_LIFE_D 21.0
-#define RECS_ROW_FLOOR 0.72     /* a because-you-watched row stops (after 8) below this share of its best score */
+#define RECS_ROW_FLOOR 0.72 /* a because-you-watched row stops (after 8) below this share of its best score */
 
 typedef struct {
-  int tmdb; char kind;                /* 'm' movie, 't' tv */
+  int tmdb;
+  char kind; /* 'm' movie, 't' tv */
   char title[128], poster[64], backdrop[64], date[12], lang[4], overview[600];
   int genres[8], ng, adult;
-  float vote; int votes; float pop;
+  float vote;
+  int votes;
+  float pop;
   /* filled by recs_rank */
-  double score, seedPart; int bestSeed; int nSeeds;
+  double score, seedPart;
+  int bestSeed;
+  int nSeeds;
 } RecCand;
 
 typedef struct {
-  int tmdb; char kind; char title[128];
-  int genres[8], ng; char lang[4];
-  double w;                           /* recs_seed_weight */
-  const RecCand *list; int n;         /* its /recommendations, in TMDB's order */
-  const RecCand *disc; int nd;        /* popular titles in its language and main genre (/discover): TMDB's
-                                         recommendations for Indian titles are mostly Western, this list is not */
+  int tmdb;
+  char kind;
+  char title[128];
+  int genres[8], ng;
+  char lang[4];
+  double w; /* recs_seed_weight */
+  const RecCand *list;
+  int n; /* its /recommendations, in TMDB's order */
+  const RecCand *disc;
+  int nd; /* popular titles in its language and main genre (/discover): TMDB's
+             recommendations for Indian titles are mostly Western, this list is not */
 } RecSeed;
 
-typedef struct { double seed, genre, lang, quality, fresh, old, disc; } RecWeights;
-extern const RecWeights RECS_W;       /* see recs_core.c */
+typedef struct {
+  double seed, genre, lang, quality, fresh, old, disc;
+} RecWeights;
+extern const RecWeights RECS_W; /* see recs_core.c */
 
 typedef struct {
-  char langs[8][4]; int nlangs;       /* the languages picked in Settings ("hi", "en") */
-  float langPick[8];                  /* per langs[i]: 1 main, 0.6 second, 0 not chosen by the user (Top picks gives a chosen one a floor) */
-  const int *exclude; int nexclude;   /* TMDB ids (kind folded in: recs_key) already watched or dismissed */
-  long today;                         /* days since 1970, for "fresh" */
+  char langs[8][4];
+  int nlangs; /* the languages picked in Settings ("hi", "en") */
+  float langPick[8]; /* per langs[i]: 1 main, 0.6 second, 0 not chosen by the user (Top picks gives a chosen one a
+                        floor) */
+  const int *exclude;
+  int nexclude; /* TMDB ids (kind folded in: recs_key) already watched or dismissed */
+  long today; /* days since 1970, for "fresh" */
   int allowAdult;
-  int minMovieAge;                    /* days: films out in cinemas more recently than this are left out (0: none) */
+  int minMovieAge; /* days: films out in cinemas more recently than this are left out (0: none) */
 } RecPrefs;
 
 /* a seed's weight from what the library says */
 double recs_seed_weight(double ageDays, double fracWatched, int markedWatched, int isSeries, int episodesWatched);
 /* one key for a TMDB id and its kind (movie and tv ids overlap) */
-int  recs_key(int tmdb, char kind);
+int recs_key(int tmdb, char kind);
 /* a TMDB result array (/recommendations, /similar, /discover, /trending) into candidates; kind 0 = read
    "media_type" per entry. Returns the count kept (people and entries without art are skipped). */
-int  recs_parse(const cJSON *results, char kind, RecCand *out, int max);
+int recs_parse(const cJSON *results, char kind, RecCand *out, int max);
 /* "2026-03-14" -> days since 1970 (0 when unreadable) */
 long recs_days(const char *ymd);
 
 /* merges the seeds' lists, scores, drops excluded / adult / duplicate titles, and sorts best first.
    Diversity: within the first 20, at most 4 come from the same best seed. Returns the count in out. */
-int  recs_rank(const RecSeed *seeds, int ns, const RecPrefs *p, RecCand *out, int max);
+int recs_rank(const RecSeed *seeds, int ns, const RecPrefs *p, RecCand *out, int max);
 /* "Because you watched <seed>": that seed's own list, scored the same way, minus the ids in skip
    (e.g. the billboard's). */
-int  recs_rank_seed(const RecSeed *seed, const RecSeed *all, int ns, const RecPrefs *p, const int *skip, int nskip, RecCand *out, int max);
+int recs_rank_seed(const RecSeed *seed, const RecSeed *all, int ns, const RecPrefs *p, const int *skip, int nskip,
+                   RecCand *out, int max);
 /* a popular list (Top 10) filtered by the prefs' exclusions and adult flag, kept in its own order */
-int  recs_filter(const RecCand *in, int n, const RecPrefs *p, RecCand *out, int max);
+int recs_filter(const RecCand *in, int n, const RecPrefs *p, RecCand *out, int max);
 /* Top 10 from one popular list per language (main language first): taken in turn, so the main language
    is not drowned by globally popular English titles; duplicates and excluded titles are skipped */
-int  recs_interleave(const RecCand *const *lists, const int *n, int nlists, const RecPrefs *p, RecCand *out, int max);
+int recs_interleave(const RecCand *const *lists, const int *n, int nlists, const RecPrefs *p, RecCand *out, int max);
 
 /* =====================================================================================================
    Home at Netflix size (recs-PLAN-v2.md): the whole page is decided here, from pure functions.
@@ -106,65 +122,92 @@ int  recs_interleave(const RecCand *const *lists, const int *n, int nlists, cons
        the next call (a static table lookup is fine).
    ===================================================================================================== */
 
-#define RECS_KW 24            /* keyword ids kept per seed */
-#define RECS_ROW_CARDS 40     /* most cards a row may hand to the page builder (the page shows at most RECS_PAGE_CARDS) */
+#define RECS_KW 24 /* keyword ids kept per seed */
+#define RECS_ROW_CARDS 40 /* most cards a row may hand to the page builder (the page shows at most RECS_PAGE_CARDS) */
 #define RECS_PAGE_CARDS 20
-#define RECS_PAGE_MAX 64      /* most rows on a page */
-#define RECS_PAGE_IN 128      /* most candidate rows the page builder looks at */
+#define RECS_PAGE_MAX 64 /* most rows on a page */
+#define RECS_PAGE_IN 128 /* most candidate rows the page builder looks at */
 #define RECS_MAX_LANGS 3
-#define RECS_AGE_LIST (24 * 3600)   /* max ages for the defs' caches */
+#define RECS_AGE_LIST (24 * 3600) /* max ages for the defs' caches */
 #define RECS_AGE_CHART (12 * 3600)
 #define RECS_AGE_SEED (7 * 24 * 3600) /* the caller uses this for the seed-details request */
 
 /* ---- A. seed details ---- */
-typedef struct { int id; char name[40]; } RecPerson;
 typedef struct {
-  int tmdb; char kind;                /* kind 'm' | 't' (set by the caller before recs_parse_seed) */
-  char title[96]; char lang[4];       /* original_language */
-  int genres[8], ng;                  /* TMDB genre ids of THIS kind (tv genres for a series) */
-  int year;                           /* release / first air year, 0 if unknown */
-  char imdb[16];                      /* "tt..." or "" */
-  int kw[RECS_KW], nkw;               /* keyword ids */
-  RecPerson cast[3]; int ncast;       /* the first three billed */
-  RecPerson dir[2]; int ndir;         /* directors (crew job "Director"); for a series created_by */
-  double w;                           /* recs_seed_weight, set by the caller */
-  double ageDays;                     /* days since last watched, set by the caller (orders "most recent") */
-  RecCand *recs; int nrecs;           /* recommendations.results (TMDB order), points into the caller's buffer */
-  RecCand *sim; int nsim;             /* similar.results */
-  const RecCand *own; int nown;       /* optional: the seed's own-language list = the parsed answer of its RF_BYW row (set by the
-                                         caller once fetched); recs_top_picks uses it, because TMDB's lists for Indian titles are mostly Western */
+  int id;
+  char name[40];
+} RecPerson;
+typedef struct {
+  int tmdb;
+  char kind; /* kind 'm' | 't' (set by the caller before recs_parse_seed) */
+  char title[96];
+  char lang[4]; /* original_language */
+  int genres[8], ng; /* TMDB genre ids of THIS kind (tv genres for a series) */
+  int year; /* release / first air year, 0 if unknown */
+  char imdb[16]; /* "tt..." or "" */
+  int kw[RECS_KW], nkw; /* keyword ids */
+  RecPerson cast[3];
+  int ncast; /* the first three billed */
+  RecPerson dir[2];
+  int ndir; /* directors (crew job "Director"); for a series created_by */
+  double w; /* recs_seed_weight, set by the caller */
+  double ageDays; /* days since last watched, set by the caller (orders "most recent") */
+  RecCand *recs;
+  int nrecs; /* recommendations.results (TMDB order), points into the caller's buffer */
+  RecCand *sim;
+  int nsim; /* similar.results */
+  const RecCand *own;
+  int nown; /* optional: the seed's own-language list = the parsed answer of its RF_BYW row (set by the
+               caller once fetched); recs_top_picks uses it, because TMDB's lists for Indian titles are mostly Western
+             */
 } RecSeedX;
 /* Parses the answer for one seed. kind 'm' or 't' (the JSON differs: keywords.keywords vs keywords.results,
    title vs name). Fills everything above except w and ageDays (left as the caller set them). The lists are
    written into recsBuf / simBuf (caller-owned, at least maxRecs / maxSim entries, RECS_LIST each is enough).
    Returns 1 on success, 0 if root is not an object with an id. */
-int recs_parse_seed(const cJSON *root, char kind, RecSeedX *out, RecCand *recsBuf, int maxRecs, RecCand *simBuf, int maxSim);
+int recs_parse_seed(const cJSON *root, char kind, RecSeedX *out, RecCand *recsBuf, int maxRecs, RecCand *simBuf,
+                    int maxSim);
 
 /* ---- B. taste ---- */
 #define RECS_T_KW 64
 #define RECS_T_PEOPLE 48
 typedef struct {
-  double wsum;                                    /* sum of the seeds' weights */
-  int gid[RECS_GENRES]; double gw[RECS_GENRES]; int ng; double gmax;
-  char lang[16][4]; double lw[16]; int nl;
-  double kindw[2];                                /* [0] movies, [1] series */
-  int kw[RECS_T_KW]; double kww[RECS_T_KW]; int nkw;
-  int pid[RECS_T_PEOPLE]; double pw[RECS_T_PEOPLE]; char pname[RECS_T_PEOPLE][40]; char pdir[RECS_T_PEOPLE]; int np;
-                                                  /* a person is one entry per (id, director or not) */
+  double wsum; /* sum of the seeds' weights */
+  int gid[RECS_GENRES];
+  double gw[RECS_GENRES];
+  int ng;
+  double gmax;
+  char lang[16][4];
+  double lw[16];
+  int nl;
+  double kindw[2]; /* [0] movies, [1] series */
+  int kw[RECS_T_KW];
+  double kww[RECS_T_KW];
+  int nkw;
+  int pid[RECS_T_PEOPLE];
+  double pw[RECS_T_PEOPLE];
+  char pname[RECS_T_PEOPLE][40];
+  char pdir[RECS_T_PEOPLE];
+  int np;
+  /* a person is one entry per (id, director or not) */
 } RecTaste;
 /* shares by genre / language / kind / keyword / person, all weighted by the seeds' w (seeds with w <= 0 are
    ignored). Cast get w * (1 - 0.15 * billing position), directors w. */
-void   recs_taste_build(const RecSeedX *s, int ns, RecTaste *t);
-double recs_taste_lang(const RecTaste *t, const char *lang);   /* share of the weighted history in this language, 0..1 */
-double recs_taste_genre(const RecTaste *t, int genre);         /* this genre's weight relative to the top genre, 0..1 */
-double recs_taste_kind(const RecTaste *t, char kind);          /* share of the history that is 'm' or 't', 0..1 */
+void recs_taste_build(const RecSeedX *s, int ns, RecTaste *t);
+double recs_taste_lang(const RecTaste *t, const char *lang); /* share of the weighted history in this language, 0..1 */
+double recs_taste_genre(const RecTaste *t, int genre); /* this genre's weight relative to the top genre, 0..1 */
+double recs_taste_kind(const RecTaste *t, char kind); /* share of the history that is 'm' or 't', 0..1 */
 /* per-title taste score (higher is better; about -0.2 .. 1): 0.45 genre fit + 0.3 language share +
    0.15 quality damped under 200 votes + 0.1 freshness (0 at 2 years) - 0.02 per year past 12 (max 10 years) */
 double recs_title_score(const RecTaste *t, const RecCand *c, long today);
 
 /* ---- C. which languages get rows (PLAN section 5) ---- */
-typedef struct { char code[4]; int strong; float pick; } RecLang;  /* "hi"; strong = full set of row kinds, else the weak set;
-                                                                    pick = the user chose it: 1 main, 0.6 second, 0 not chosen */
+typedef struct {
+  char code[4];
+  int strong;
+  float pick;
+} RecLang; /* "hi"; strong = full set of row kinds, else the weak set;
+            pick = the user chose it: 1 main, 0.6 second, 0 not chosen */
 /* explicitCsv: Settings > For You > Main and Second language ("hi,en", main first) or ""/NULL. regionCsv: the region's
    languages ("hi,en"). audio: the default audio language as 2 letters ("en") or ""/NULL. Rules:
      - explicit list non-empty: exactly those, in that order, all strong, at most 3; pick 1 for the first, 0.6 after
@@ -172,9 +215,10 @@ typedef struct { char code[4]; int strong; float pick; } RecLang;  /* "hi"; stro
        weak = the region's languages not already in; the order is strong..., then weak...; at most 3.
    Weak languages get fewer row kinds: no "may have missed", no decade rows, fewer genre rows.
    Returns the count (0..3) written to out. */
-int recs_langs_allowed(const char *explicitCsv, const char *regionCsv, const char *audio, const RecTaste *t, RecLang out[RECS_MAX_LANGS]);
-/* a second language chosen while the main one is Automatic: added (or raised) with pick 0.6 and strong; when the list is
-   full it takes the place of the last language nobody chose. Returns the new count. */
+int recs_langs_allowed(const char *explicitCsv, const char *regionCsv, const char *audio, const RecTaste *t,
+                       RecLang out[RECS_MAX_LANGS]);
+/* a second language chosen while the main one is Automatic: added (or raised) with pick 0.6 and strong; when the list
+   is full it takes the place of the last language nobody chose. Returns the new count. */
 int recs_langs_add_pick(RecLang out[RECS_MAX_LANGS], int n, const char *code, float pick);
 /* the languages the engine can name (the Settings lists): count, and code i ("hi") */
 int recs_lang_count(void);
@@ -182,30 +226,45 @@ const char *recs_lang_code(int i);
 
 /* ---- D. candidate rows ---- */
 typedef enum {
-  RF_LANG_GENRE, RF_ACCLAIM, RF_GEMS, RF_NEW, RF_DECADE, RF_PERSON, RF_MOOD, RF_SEASON, RF_PROVIDER,
-  RF_CHART, RF_TREND, RF_BYW, RF_PERSONAL, RF_FAMILIES
+  RF_LANG_GENRE,
+  RF_ACCLAIM,
+  RF_GEMS,
+  RF_NEW,
+  RF_DECADE,
+  RF_PERSON,
+  RF_MOOD,
+  RF_SEASON,
+  RF_PROVIDER,
+  RF_CHART,
+  RF_TREND,
+  RF_BYW,
+  RF_PERSONAL,
+  RF_FAMILIES
 } RecFamily;
-#define RECS_F_RANK 1   /* Top 10 numerals: keep TMDB order, exempt from the "first six cards" rule (still counted) */
-#define RECS_F_KEEP 2   /* keep the order the caller gives (Because you watched, Top picks): no re-ranking by taste */
+#define RECS_F_RANK 1 /* Top 10 numerals: keep TMDB order, exempt from the "first six cards" rule (still counted) */
+#define RECS_F_KEEP 2 /* keep the order the caller gives (Because you watched, Top picks): no re-ranking by taste */
 typedef struct {
-  unsigned char family; char kind;      /* RecFamily; 'm', 't' or 0 (mixed: the answer has media_type per entry) */
-  unsigned char flags;                  /* RECS_F_* */
-  char lang[4];                         /* the language a language row is for, else "" */
-  float affinity;                       /* how well the row fits this person, 0..~2 (page builder's greedy input) */
-  long maxAge;                          /* seconds the cached answer stays good */
-  int seed;                             /* RF_BYW: index into RecRowCtx.seeds, else -1 */
-  char title[96];                       /* already translated */
-  char key[96];                         /* cache key; includes region / languages where the request depends on them */
-  char path[400];                       /* what follows https://api.themoviedb.org/3 ; "" = no request (RF_PERSONAL) */
+  unsigned char family;
+  char kind; /* RecFamily; 'm', 't' or 0 (mixed: the answer has media_type per entry) */
+  unsigned char flags; /* RECS_F_* */
+  char lang[4]; /* the language a language row is for, else "" */
+  float affinity; /* how well the row fits this person, 0..~2 (page builder's greedy input) */
+  long maxAge; /* seconds the cached answer stays good */
+  int seed; /* RF_BYW: index into RecRowCtx.seeds, else -1 */
+  char title[96]; /* already translated */
+  char key[96]; /* cache key; includes region / languages where the request depends on them */
+  char path[400]; /* what follows https://api.themoviedb.org/3 ; "" = no request (RF_PERSONAL) */
 } RecRowDef;
 typedef struct {
-  const char *region;                   /* "IE" (watch_region and the provider table) */
-  long today;                           /* days since 1970; the date filters and the month for seasonal rows come from it */
-  const RecLang *langs; int nlangs;     /* from recs_langs_allowed */
-  const RecTaste *taste;                /* from recs_taste_build */
-  const RecSeedX *seeds; int nseeds;    /* for the Because-you-watched rows (needs recs/sim filled) */
-  int lowMem;                           /* 1: fewer rows per family, at most 3 Because-you-watched, 12 mood rows */
-  const char *(*tr)(const char *);      /* translate callback or NULL */
+  const char *region; /* "IE" (watch_region and the provider table) */
+  long today; /* days since 1970; the date filters and the month for seasonal rows come from it */
+  const RecLang *langs;
+  int nlangs; /* from recs_langs_allowed */
+  const RecTaste *taste; /* from recs_taste_build */
+  const RecSeedX *seeds;
+  int nseeds; /* for the Because-you-watched rows (needs recs/sim filled) */
+  int lowMem; /* 1: fewer rows per family, at most 3 Because-you-watched, 12 mood rows */
+  const char *(*tr)(const char *); /* translate callback or NULL */
 } RecRowCtx;
 /* Fills out with the candidate rows, best families first: RF_PERSONAL, RF_BYW (up to 5 most recent seeds with
    >= 8 recs+similar), RF_CHART x2, RF_TREND, then lang-genre / acclaim / gems / new / decade, person (at most
@@ -237,16 +296,32 @@ int recs_byw_rank(const RecSeedX *seed, const RecPrefs *p, const RecCand *own, i
 int recs_top_picks(const RecSeedX *s, int ns, const RecTaste *t, const RecPrefs *p, int window, RecCand *out, int max);
 
 /* ---- G. page builder ---- */
-typedef struct { const RecRowDef *def; const RecCand *cards; int n; } RecRowIn;   /* a candidate row and what was fetched for it */
-typedef struct { short in; short n; unsigned char idx[RECS_PAGE_CARDS]; } RecPageRow; /* in = index into the input rows, idx = card indices in display order */
-typedef struct { RecPageRow rows[RECS_PAGE_MAX]; int n; } RecPage;
 typedef struct {
-  const RecTaste *taste; long today;
-  int maxRows;                           /* 36 normally, 20 on low-memory devices (clamped to RECS_PAGE_MAX) */
-  const int *bill; int nbill;            /* recs_key of the billboard's titles: counted as shown once, first-six */
-  const int *exclude; int nexclude;      /* recs_key of watched / dismissed titles: never shown */
-  int allowAdult; int minMovieAge;       /* as RecPrefs */
-  const RecLang *langs; int nlangs;      /* optional: the languages with pick > 0 lift their cards and keep their rows spread down the page */
+  const RecRowDef *def;
+  const RecCand *cards;
+  int n;
+} RecRowIn; /* a candidate row and what was fetched for it */
+typedef struct {
+  short in;
+  short n;
+  unsigned char idx[RECS_PAGE_CARDS];
+} RecPageRow; /* in = index into the input rows, idx = card indices in display order */
+typedef struct {
+  RecPageRow rows[RECS_PAGE_MAX];
+  int n;
+} RecPage;
+typedef struct {
+  const RecTaste *taste;
+  long today;
+  int maxRows; /* 36 normally, 20 on low-memory devices (clamped to RECS_PAGE_MAX) */
+  const int *bill;
+  int nbill; /* recs_key of the billboard's titles: counted as shown once, first-six */
+  const int *exclude;
+  int nexclude; /* recs_key of watched / dismissed titles: never shown */
+  int allowAdult;
+  int minMovieAge; /* as RecPrefs */
+  const RecLang *langs;
+  int nlangs; /* optional: the languages with pick > 0 lift their cards and keep their rows spread down the page */
 } RecPageCtx;
 /* Chooses and orders the rows. Rules:
    - cards that are excluded, adult (unless allowed), unreleased or in cinemas too recently are dropped (not

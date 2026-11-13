@@ -11,14 +11,26 @@ static const GUID kIidEnum = { 0xA95664D2, 0x9614, 0x4F35, { 0xA7, 0x46, 0xDE, 0
 static const GUID kIidClient = { 0x1CB9AD4C, 0xDBFA, 0x4C32, { 0xB1, 0x78, 0xC2, 0xF5, 0x68, 0xA7, 0x03, 0xB2 } };
 
 int win_audio_channels(void) {
-  int n = 0; IMMDeviceEnumerator *en = NULL; IMMDevice *dev = NULL; IAudioClient *ac = NULL; WAVEFORMATEX *wf = NULL;
+  int n = 0;
+  IMMDeviceEnumerator *en = NULL;
+  IMMDevice *dev = NULL;
+  IAudioClient *ac = NULL;
+  WAVEFORMATEX *wf = NULL;
   HRESULT ci = CoInitializeEx(NULL, COINIT_MULTITHREADED);
-  if (SUCCEEDED(CoCreateInstance(&kClsEnum, NULL, CLSCTX_ALL, &kIidEnum, (void **)&en)) && SUCCEEDED(en->lpVtbl->GetDefaultAudioEndpoint(en, eRender, eConsole, &dev)) &&
-      SUCCEEDED(dev->lpVtbl->Activate(dev, &kIidClient, CLSCTX_ALL, NULL, (void **)&ac)) && SUCCEEDED(ac->lpVtbl->GetMixFormat(ac, &wf))) n = wf->nChannels;
-  if (wf) CoTaskMemFree(wf);
-  if (ac) ac->lpVtbl->Release(ac);
-  if (dev) dev->lpVtbl->Release(dev);
-  if (en) en->lpVtbl->Release(en);
-  if (SUCCEEDED(ci)) CoUninitialize();
+  if (SUCCEEDED(CoCreateInstance(&kClsEnum, NULL, CLSCTX_ALL, &kIidEnum, (void **)&en)) &&
+      SUCCEEDED(en->lpVtbl->GetDefaultAudioEndpoint(en, eRender, eConsole, &dev)) &&
+      SUCCEEDED(dev->lpVtbl->Activate(dev, &kIidClient, CLSCTX_ALL, NULL, (void **)&ac)) &&
+      SUCCEEDED(ac->lpVtbl->GetMixFormat(ac, &wf)))
+    n = wf->nChannels;
+  if (wf)
+    CoTaskMemFree(wf);
+  if (ac)
+    ac->lpVtbl->Release(ac);
+  if (dev)
+    dev->lpVtbl->Release(dev);
+  if (en)
+    en->lpVtbl->Release(en);
+  if (SUCCEEDED(ci))
+    CoUninitialize();
   return n;
 }

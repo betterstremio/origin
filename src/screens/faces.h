@@ -10,5 +10,5 @@ typedef void (*FaceCb)(int i, const char *id, const char *img, void *ud);
 /* a new lookup for up to 9 names; any earlier one stops answering */
 void faces_find(const char *const *names, int n, FaceCb cb, void *ud);
 void faces_cancel(void);
-void faces_tick(void);   /* the retries' clock: once a frame from the screen that asked */
+void faces_tick(void); /* the retries' clock: once a frame from the screen that asked */
 #endif
