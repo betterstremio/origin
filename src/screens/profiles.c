@@ -15,6 +15,7 @@
 #include "core/stremio.h"
 #include "core/store.h"
 #include "ui/gfx.h"
+#include "ui/img.h"
 #include "ui/text.h"
 #include "ui/widgets.h"
 #include "ui/osk.h"
@@ -88,12 +89,18 @@ static int key(int k) {
 static void tick(float dt) { osk_tick(&P.osk, dt); float a = dt * 14 > 1 ? 1 : dt * 14; for (int i = 0; i < MAXP; i++) P.foc[i] += ((i == P.idx && !P.pinMode ? 1.0f : 0.0f) - P.foc[i]) * a; }
 static void h_foc(int i, int b) { (void)b; if (!P.pinMode) P.idx = i; else P.pad = i; }
 static void h_act(int i, int b) { (void)b; if (!P.open) return; if (P.pinMode) pad_press(i); else { P.idx = i; choose(i); } }
-static void disc(float x, float y, float D, unsigned color, const char *name, float foc, int lock) {
+/* the profile's picture in its circle (as Nuvio: the whole picture, cropped round); 0 while it loads or when there is none */
+int profile_avatar_draw(const char *av, float x, float y, float D) {
+  GLuint t = av && *av ? img_get_shaped(av, (int)D, (int)D, D / 2, 1) : 0; if (t) gfx_image(t, x, y, D, D, 0, WHITE_A(255), 0, 0, 1, 1); return t != 0;
+}
+static void disc(float x, float y, float D, unsigned color, const char *name, const char *av, float foc, int lock) {
   float s = 1 + 0.08f * foc, cx = x + D / 2, cy = y + D / 2; gfx_scale_push(s, s, cx, cy);
   if (foc > 0.01f) gfx_ring(x - 10, y - 10, D + 20, D + 20, (D + 20) / 2, 5, WHITE_A((int)(240 * foc)));
-  gfx_rrect(x, y, D, D, D / 2, RGB((color >> 16) & 255, (color >> 8) & 255, color & 255)); gfx_rrect_v(x, y, D, D, D / 2, WHITE_A(50), WHITE_A(0));
-  char ini[8] = { 0 }; { const unsigned char *u = (const unsigned char *)name; int len = !*u ? 0 : (*u & 0x80) ? ((*u & 0xe0) == 0xc0 ? 2 : (*u & 0xf0) == 0xe0 ? 3 : 4) : 1; memcpy(ini, name, (size_t)len); } if (ini[0] >= 'a' && ini[0] <= 'z') ini[0] -= 32;
-  float px = D * 0.46f; text_draw(ini, cx, cy - text_line_height(px) / 2, px, 800, WHITE_A(255), 0, 0, ALIGN_CENTER);
+  gfx_rrect(x, y, D, D, D / 2, RGB((color >> 16) & 255, (color >> 8) & 255, color & 255));
+  if (!profile_avatar_draw(av, x, y, D)) { /* no picture (yet): the colour's sheen and the initial */
+    gfx_rrect_v(x, y, D, D, D / 2, WHITE_A(50), WHITE_A(0));
+    char ini[8] = { 0 }; { const unsigned char *u = (const unsigned char *)name; int len = !*u ? 0 : (*u & 0x80) ? ((*u & 0xe0) == 0xc0 ? 2 : (*u & 0xf0) == 0xe0 ? 3 : 4) : 1; memcpy(ini, name, (size_t)len); } if (ini[0] >= 'a' && ini[0] <= 'z') ini[0] -= 32;
+    float px = D * 0.46f; text_draw(ini, cx, cy - text_line_height(px) / 2, px, 800, WHITE_A(255), 0, 0, ALIGN_CENTER); }
   gfx_scale_pop();
   int ph = form_touch(); float ny = y + D + (ph ? 10 : 34); int npx = ph ? 15 : 32;
   text_draw(name, cx, ny, npx, foc > 0.5f ? 700 : 500, WHITE_A(foc > 0.5f ? 255 : 190), 0, D + 40, ALIGN_CENTER);
@@ -124,12 +131,12 @@ static void draw(void) {
     text_draw(T("Who\xe2\x80\x99s watching?"), SB_W / 2, y0 - 64, 26, 800, WHITE_A(255), -0.4f, SB_W - 32, ALIGN_CENTER);
     for (int i = 0; i < n; i++) { NvProfile p; int real = nv_profile_get(i, &p); int r = i / 3, c = i % 3, inRow = r == rows - 1 ? n - r * 3 : cols; float rw = inRow * D + (inRow - 1) * G;
       float px = SB_W / 2 - rw / 2 + c * (D + G), py = y0 + r * RH; (void)W;
-      if (real) disc(px, py, D, p.color, p.name, 0, p.pin); else add_tile(px, py, D, 0); if (P.open) hit_act(px, py, D, D + 30, h_act, i, 0); }
+      if (real) disc(px, py, D, p.color, p.name, p.avatar, 0, p.pin); else add_tile(px, py, D, 0); if (P.open) hit_act(px, py, D, D + 30, h_act, i, 0); }
   } else if (!P.pinMode) {
     int n = tile_count(); float D = n <= 5 ? 190 : 140, G = n <= 5 ? 64 : 40, W = n * D + (n - 1) * G, x = SB_W / 2 - W / 2, y = SB_H / 2 - D / 2 - 30;
     text_draw(T("Who\xe2\x80\x99s watching?"), SB_W / 2, y - 150, 60, 700, WHITE_A(255), -0.5f, 0, ALIGN_CENTER);
     for (int i = 0; i < n; i++) { NvProfile p; int real = nv_profile_get(i, &p); float px = app_rtl() ? x + W - D - i * (D + G) : x + i * (D + G);
-      if (real) disc(px, y, D, p.color, p.name, P.foc[i], p.pin); else add_tile(px, y, D, P.foc[i]); if (P.open) hit_add(px, y, D, D, h_foc, h_act, i, 0); }
+      if (real) disc(px, y, D, p.color, p.name, p.avatar, P.foc[i], p.pin); else add_tile(px, y, D, P.foc[i]); if (P.open) hit_add(px, y, D, D, h_foc, h_act, i, 0); }
   } else {
     static const char *const L[12] = { "1", "2", "3", "4", "5", "6", "7", "8", "9", "<", "0", "OK" };
     int ph = form_touch(); float K = ph ? 0.6f : 1; /* a phone: the same pad, smaller, and no highlight (a finger presses the key itself) */

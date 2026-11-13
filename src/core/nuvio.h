@@ -26,7 +26,9 @@ void nv_login_email(const char *email, const char *password, NvDoneCb cb, void *
 /* profiles: index is Nuvio's profile_index (1 = the primary). cb may be NULL */
 void nv_pull_profiles(NvDoneCb cb, void *ud);
 int  nv_profile_count(void);
-typedef struct { int index; char name[64]; unsigned color; int pin; int primaryAddons; } NvProfile;
+/* avatar: the picture's address (the profile's own, or one of Nuvio's catalogue by its id), "" when it has none or the
+   catalogue has not come yet: the colour and initial then */
+typedef struct { int index; char name[64]; unsigned color; int pin; int primaryAddons; char avatar[400]; } NvProfile;
 int  nv_profile_get(int i, NvProfile *out);
 int  nv_profile_current(void);           /* 0 when none chosen yet */
 const char *nv_profile_name(void);

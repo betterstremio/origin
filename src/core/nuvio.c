@@ -129,7 +129,7 @@ void nv_scope(int index, char *out, size_t cap) { /* the file names of a profile
 }
 void nv_logout(void) {
   if (store_get("nvAccess", NULL) && !lost) post("/auth/v1/logout", NULL, BEAR_USER, NULL, NULL);
-  static const char *const k[] = { "nvAccess", "nvRefresh", "nvExp", "nvUser", "nvProfiles", "nvProfile", "nvOwner", "acctKind" };
+  static const char *const k[] = { "nvAccess", "nvRefresh", "nvExp", "nvUser", "nvProfiles", "nvProfile", "nvOwner", "acctKind", "nvAvCat", "nvAvAt" };
   for (unsigned i = 0; i < sizeof k / sizeof *k; i++) store_remove(k[i]);
   for (int i = 0; i < NSCOPED; i++) store_remove(SCOPED[i]);
   syncGen++; store_scope_forget("nv-"); store_flush(); lost = 0; lib_invalidate(); recs_account_changed();
@@ -241,6 +241,23 @@ static void on_locks(int st, const cJSON *j, void *ud) {
     store_set_node("nvProfiles", ps); store_flush(); }
   if (x->cb) x->cb(1, NULL, x->ud); free(x);
 }
+/* Nuvio's avatar catalogue (get_avatar_catalog, public): a profile keeps only the picture's id, the catalogue gives its
+   file in the "avatars" bucket. Kept as {id: path}; asked again when a profile's id is missing from it, at most every 15 min
+   (Nuvio's own refresh), else once a day. Supporters' pictures (a private bucket) are not shown: colour and initial then */
+#define AVATAR_URL_PATH "/storage/v1/object/public/avatars/"
+static double avAskedAt;
+static void on_avatars(int st, const cJSON *j, void *ud) {
+  (void)ud; if (st != 200 || !cJSON_IsArray(j)) return; cJSON *m = cJSON_CreateObject(); const cJSON *r;
+  cJSON_ArrayForEach(r, j) { const char *id = js_str(r, "id", ""), *sp = js_str(r, "storage_path", ""); if (*id && *sp && !cJSON_GetObjectItemCaseSensitive(m, id)) cJSON_AddStringToObject(m, id, sp); }
+  store_set_node("nvAvCat", m); char t[24]; snprintf(t, sizeof t, "%.0f", (double)time(NULL)); store_set("nvAvAt", t); store_flush();
+}
+static void avatars_pull(void) {
+  const cJSON *cat = store_node("nvAvCat"), *p; int missing = 0; double now = (double)time(NULL), mono = SDL_GetTicks() / 1000.0;
+  cJSON_ArrayForEach(p, store_node("nvProfiles")) { const char *aid = js_str(p, "aid", ""); if (*aid && !js_str(p, "au", NULL) && !js_str(cat, aid, NULL)) missing = 1; }
+  if (!missing && cat && now - atof(store_get("nvAvAt", "0")) < 86400) return;
+  if (avAskedAt && mono - avAskedAt < 900) return; avAskedAt = mono;
+  rpc("get_avatar_catalog", NULL, on_avatars, NULL);
+}
 static void on_profiles(int st, const cJSON *j, void *ud) {
   Box *x = ud;
   if (st != 200 || !cJSON_IsArray(j)) { if (x->cb) x->cb(store_node("nvProfiles") != NULL, st == 401 ? "signed out" : "Couldn\xe2\x80\x99t load your profiles", x->ud); free(x); return; }
@@ -248,9 +265,11 @@ static void on_profiles(int st, const cJSON *j, void *ud) {
   cJSON_ArrayForEach(row, j) { int idx = (int)js_num(row, "profile_index", 0); if (idx < 1) continue; cJSON *p = cJSON_CreateObject();
     char nm[64]; snprintf(nm, sizeof nm, "%s", js_str(row, "name", "")); if (!nm[0]) snprintf(nm, sizeof nm, "Profile %d", idx);
     cJSON_AddNumberToObject(p, "i", idx); cJSON_AddStringToObject(p, "name", nm); cJSON_AddNumberToObject(p, "color", hex_color(js_str(row, "avatar_color_hex", NULL)));
-    cJSON_AddBoolToObject(p, "pin", 0); cJSON_AddBoolToObject(p, "pa", idx != 1 && js_bool(row, "uses_primary_addons", 0)); cJSON_AddItemToArray(out, p); }
+    cJSON_AddBoolToObject(p, "pin", 0); cJSON_AddBoolToObject(p, "pa", idx != 1 && js_bool(row, "uses_primary_addons", 0));
+    const char *aid = js_str(row, "avatar_id", ""), *au = js_str(row, "avatar_url", ""); if (*aid) cJSON_AddStringToObject(p, "aid", aid); if (*au) cJSON_AddStringToObject(p, "au", au);
+    cJSON_AddItemToArray(out, p); }
   if (!cJSON_GetArraySize(out)) { cJSON *p = cJSON_CreateObject(); cJSON_AddNumberToObject(p, "i", 1); cJSON_AddStringToObject(p, "name", "Profile 1"); cJSON_AddNumberToObject(p, "color", 0x1E88E5); cJSON_AddBoolToObject(p, "pin", 0); cJSON_AddBoolToObject(p, "pa", 0); cJSON_AddItemToArray(out, p); }
-  store_set_node("nvProfiles", out); store_flush();
+  store_set_node("nvProfiles", out); store_flush(); avatars_pull();
   rpc("sync_pull_profile_locks", NULL, on_locks, x);
 }
 static void on_owner(int st, const cJSON *j, void *ud) { /* whose rows these are: the account the profile data belongs to */
@@ -263,6 +282,10 @@ int nv_profile_count(void) { const cJSON *a = store_node("nvProfiles"); return c
 int nv_profile_get(int i, NvProfile *o) {
   const cJSON *p = cJSON_GetArrayItem(store_node("nvProfiles"), i); if (!p) return 0; memset(o, 0, sizeof *o);
   o->index = (int)js_num(p, "i", 1); snprintf(o->name, sizeof o->name, "%s", js_str(p, "name", "")); o->color = (unsigned)js_num(p, "color", 0x1E88E5); o->pin = js_bool(p, "pin", 0); o->primaryAddons = js_bool(p, "pa", 0);
+  const char *au = js_str(p, "au", ""), *sp = js_str(store_node("nvAvCat"), js_str(p, "aid", ""), NULL);
+  if (!strncmp(au, "http", 4)) snprintf(o->avatar, sizeof o->avatar, "%s", au);
+  else if (sp && !strncmp(sp, "http", 4)) snprintf(o->avatar, sizeof o->avatar, "%s", sp);
+  else if (sp && *sp) { init(); snprintf(o->avatar, sizeof o->avatar, "%s" AVATAR_URL_PATH "%s", nvUrl, sp + (*sp == '/')); }
   return 1;
 }
 int nv_profile_current(void) { return atoi(store_get("nvProfile", "0")); }

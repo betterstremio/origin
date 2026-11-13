@@ -337,7 +337,8 @@ static void prof_draw(void) {
   float W = text_width("00:00", 38, 600, -0.6f), D = 64, x = SB_W - 48 - FS_ROOM - W - 26 - 18 - D, y = 50 - D / 2; int foc = profFoc && topNav.active;
   hit_add_nav(x, y, D, D, NULL, prof_act, 0, 0);
   if (foc) gfx_ring(x - 6, y - 6, D + 12, D + 12, (D + 12) / 2, 3, WHITE_A(235));
-  gfx_rrect(x, y, D, D, D / 2, RGB((p.color >> 16) & 255, (p.color >> 8) & 255, p.color & 255)); gfx_rrect_v(x, y, D, D, D / 2, WHITE_A(50), WHITE_A(0));
+  gfx_rrect(x, y, D, D, D / 2, RGB((p.color >> 16) & 255, (p.color >> 8) & 255, p.color & 255)); if (profile_avatar_draw(p.avatar, x, y, D)) return;
+  gfx_rrect_v(x, y, D, D, D / 2, WHITE_A(50), WHITE_A(0));
   char ini[8] = { 0 }; { const unsigned char *u = (const unsigned char *)p.name; int len = !*u ? 0 : (*u & 0x80) ? ((*u & 0xe0) == 0xc0 ? 2 : (*u & 0xf0) == 0xe0 ? 3 : 4) : 1; memcpy(ini, p.name, (size_t)len); } if (ini[0] >= 'a' && ini[0] <= 'z') ini[0] -= 32;
   text_draw(ini, x + D / 2, y + D / 2 - text_line_height(30) / 2, 30, 800, WHITE_A(255), 0, 0, ALIGN_CENTER);
 }

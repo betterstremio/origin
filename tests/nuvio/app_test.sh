@@ -34,6 +34,7 @@ run signin "100:up,130:right,620:right,660:ok" 1300
 check "signed in as Kids" "s.get('nvProfile')=='2' and s.get('acctKind')=='nuvio'"
 check "Kids' library and watched came down" "'tt0317219' in shown and lib.get('tt0114709',{}).get('state',{}).get('timesWatched')==1"
 check "Kids' addons" "nadd==1"
+check "the avatar catalogue kept, Sam's picture shown on the picker" "(s.get('nvAvCat') or {}).get('av1')=='animals/av1.png' and 'avatar' in k"
 check "nothing pushed back from a fresh sign-in" "not any(x.startswith('sync_push') or x.startswith('sync_delete') for x in k)"
 # 3. start again: the picker over Home; Left + OK = Sam, new on this device: the loading screen
 ctl "dead=1"

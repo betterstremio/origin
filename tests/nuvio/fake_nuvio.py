@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """A small stand-in for Nuvio's server, for tests/nuvio/app_test.sh. Everything sent to it goes to LOG, one JSON line each.
 Control: GET /ctl?dead=1 (the third addon's manifest dies), ?dead=0, ?fail=N (the next N calls answer 500),
-?expire=1 (the next user call answers 401), ?refuse=1 (refreshing the session is refused)."""
-import json, sys, time, threading
+?expire=1 (the next user call answers 401), ?refuse=1 (refreshing the session is refused).
+Avatars: Sam's avatar_id "av1" is in get_avatar_catalog, its picture at /storage/v1/object/public/avatars/animals/av1.png
+(an orange disc with a yellow band, on white)."""
+import json, sys, time, threading, struct, zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 PORT, LOG = int(sys.argv[1]), sys.argv[2]
@@ -17,6 +19,16 @@ LIB = {1: [{"content_id": "tt0111161", "content_type": "movie", "name": "Shawsha
        2: [{"content_id": "tt0317219", "content_type": "movie", "name": "Cars", "poster": "", "added_at": 1700000000000}], 3: []}
 PROG = {1: [{"content_id": "tt0468569", "content_type": "movie", "video_id": "tt0468569", "position": 600000, "duration": 9000000, "last_watched": 1795000000000, "progress_key": "tt0468569"}], 2: [], 3: []}
 WAT = {1: [], 2: [{"content_id": "tt0114709", "content_type": "movie", "title": "Toy Story", "watched_at": 1795000000000}], 3: []}
+def avatar_png(n=128):
+    rows = b""
+    for y in range(n):
+        rows += bytes(1)
+        for x in range(n):
+            d = ((x - n / 2) ** 2 + (y - n / 2) ** 2) ** 0.5
+            rows += bytes((250, 250, 248) if d > n * 0.46 else (255, 214, 0) if y > n * 0.62 else (245, 121, 0))
+    ch = lambda t, d: struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+    return bytes.fromhex("89504e470d0a1a0a") + ch(b"IHDR", struct.pack(">IIBBBBB", n, n, 8, 2, 0, 0, 0)) + ch(b"IDAT", zlib.compress(rows)) + ch(b"IEND", b"")
+AVATAR = avatar_png()
 def tokens(): return {"access_token": "user-token", "refresh_token": "r1", "expires_in": 3600, "user": {"id": "owner-123", "email": "fake@example.test"}}
 class H(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
@@ -39,6 +51,8 @@ class H(BaseHTTPRequestHandler):
                 for k, v in q.items(): S[k] = int(v[0])
                 if "list" in q: PROFILES[:] = BASE[:int(q["list"][0])]
             return self.out(200, S)
+        if u.path == "/storage/v1/object/public/avatars/animals/av1.png":
+            self.note("avatar", 1); self.send_response(200); self.send_header("Content-Type", "image/png"); self.send_header("Content-Length", str(len(AVATAR))); self.end_headers(); return self.wfile.write(AVATAR)
         if u.path.endswith("/manifest.json"):
             name = u.path.split("/")[1]; self.note("manifest", name)
             if name == "dead" and S["dead"]: return self.out(500, {})
@@ -76,6 +90,7 @@ class H(BaseHTTPRequestHandler):
             return self.out(200, [{"status": st, "poll_interval_seconds": 2}])
         if fn == "get_sync_owner": return self.out(200, "owner-123")
         if fn == "sync_pull_profiles": return self.out(200, PROFILES)
+        if fn == "get_avatar_catalog": self.note("avatars", 1); return self.out(200, [{"id": "av1", "display_name": "Bao", "storage_path": "animals/av1.png", "category": "animals", "sort_order": 1, "is_active": True, "bg_color": "#FF7900"}])
         if fn == "sync_pull_profile_locks": return self.out(200, [{"profile_index": 3, "pin_enabled": True}])
         if fn == "verify_profile_pin": self.note("pin", b.get("p_pin")); return self.out(200, b.get("p_pin") == "1234")
         if fn == "sync_pull_library": self.note("pull_lib", prof); return self.out(200, LIB.get(prof, []) if not b.get("p_offset") else [])
