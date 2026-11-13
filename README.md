@@ -67,7 +67,15 @@ Settings > For You has the rest: recommendations on or off, Home layout, region,
 ### LG webOS
 For LG TVs running webOS 3 or later (ARM). See [Compatibility](docs/compatibility.md).
 
-Download the `.ipk` from [Releases](https://github.com/betterstremio/origin/releases) and install it on a TV in Developer Mode.
+With [Homebrew Channel](https://github.com/webosbrew/webos-homebrew-channel) on the TV, add this repository in its Settings:
+
+```
+https://betterstremio.github.io/webos/apps.json
+```
+
+Origin then shows up in the Homebrew Channel app list and installs from there, with no computer needed. New versions show up there too.
+
+Or download the `.ipk` from [Releases](https://github.com/betterstremio/origin/releases) and install it on a TV in Developer Mode.
 
 ### Android TV, Google TV and Fire TV
 Android 7.0 or later, on ARM (64-bit or 32-bit). For phones, see the next section.
