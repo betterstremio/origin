@@ -70,11 +70,19 @@ For LG TVs running webOS 3 or later (ARM). See [Compatibility](docs/compatibilit
 Download the `.ipk` from [Releases](https://github.com/betterstremio/origin/releases) and install it on a TV in Developer Mode.
 
 ### Android TV, Google TV and Fire TV
-Android 7.0 or later, on ARM (64-bit or 32-bit). Phones are not supported.
+Android 7.0 or later, on ARM (64-bit or 32-bit). For phones, see the next section.
 
 1. Download the APK from [Releases](https://github.com/betterstremio/origin/releases): `_android-arm64.apk` for most devices, `_android-armv7.apk` for Fire TV sticks and older boxes. `_android.apk` holds both and works anywhere.
 2. Allow installs from the app you open it with. Android asks the first time. The Downloader app can fetch the APK from the release link and install it. On Fire TV, first turn on Settings > My Fire TV > Developer options > Install unknown apps for Downloader.
 3. Open the app, choose Stremio or Nuvio at the top, and sign in by scanning the code with your phone, or with your email.
+
+### Android phones and tablets (beta)
+Android 7.0 or later.
+
+1. Download `tv.stremioorigin.app_<version>_android-phone-beta.apk` from [Releases](https://github.com/betterstremio/origin/releases) and open it. Android asks once to allow installs from your browser or file manager.
+2. Open the app and sign in with your browser on the same phone, or with your email.
+
+It is the same app as the TV one, with its own touch screens on a phone: rows you swipe, a card with a preview when you hold a title, and films that play sideways. Reviews, More like this and right-to-left languages are not there yet.
 
 ### Windows
 Windows 10 or 11, 64-bit.

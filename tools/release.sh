@@ -20,6 +20,9 @@ g() {   # git for this checkout, also from WSL when the worktree's link is a Win
 }
 FILES=("${APPID}_${V}_arm.ipk" "${APPID}_${V}_arm.ipk.sha256" "${APPID}_${V}_android-arm64.apk" "${APPID}_${V}_android-armv7.apk" "${APPID}_${V}_android.apk"
        "${APPID}_${V}_windows_setup.exe" "${APPID}_${V}_windows_setup.exe.sha256" "${APPID}_${V}_windows_portable.zip")
+# phones (from 2.1.7, beta): the same APK as _android.apk under a name that says what it is for. The TV names stay as
+# they are: installed apps find their update by them (src/core/update.c takes only <appid>_<x.y.z><SB_PKG_KIND>)
+FILES+=("${APPID}_${V}_android-phone-beta.apk")
 
 case "$CMD" in
 build)
@@ -33,6 +36,7 @@ build)
   OUT="$D" bash "$ROOT/packaging/webos/pack.sh" --clean
   bash "$ROOT/tools/android/build-apk.sh" --clean
   for k in android-arm64 android-armv7 android; do cp "$BUILD_ROOT/android/apk/${APPID}_${V}_$k.apk" "$D/"; done
+  cp "$D/${APPID}_${V}_android.apk" "$D/${APPID}_${V}_android-phone-beta.apk"
   OUT="$D" bash "$ROOT/packaging/windows/pack.sh" --clean   # (setup, its .sha256, the portable zip)
   want="$(tr -d '[:space:]' < "$ROOT/packaging/android/release-cert.sha256")"
   for f in "$D"/*.apk; do
