@@ -163,6 +163,8 @@ static LONG WINAPI on_fault(EXCEPTION_POINTERS *x) { /* a fault nobody turned in
 void plat_pre_init(const char *appId) {
   _fmode = _O_BINARY; /* files read and written byte for byte, never with line ends translated */
   SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2); /* (the manifest says so too) */
+  if (getenv("SB_CPUS") && atoi(getenv("SB_CPUS")) > 0) /* development: N cores only (a stick's slow CPU, roughly) */
+    SetProcessAffinityMask(GetCurrentProcess(), (DWORD_PTR)((1ull << atoi(getenv("SB_CPUS"))) - 1));
   std_streams();
   crashErr = GetStdHandle(STD_ERROR_HANDLE);
   prevFilter = SetUnhandledExceptionFilter(on_fault);

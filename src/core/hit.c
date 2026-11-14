@@ -78,7 +78,7 @@ static Hit *add(float x, float y, float w, float h, HitFn focus, HitFn act, int 
   return t;
 }
 void hit_peek_last(void) {
-#if SB_WINDOWED
+#if SB_WINDOWED || SB_POINTER
   if (n > 0)
     hits[n - 1].peek = 1;
 #endif

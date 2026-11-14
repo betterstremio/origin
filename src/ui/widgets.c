@@ -493,9 +493,9 @@ int ph_hold(void) {
 
 /* ---- cards ---- */
 static char cardKey[80]; /* the card drawn now: "poster:<id>" (a poster flies to the title page's cover) */
-static void card_art(const char *src, float x, float y, float w, float h, float r, int wide, int loadArt, int *shown) {
+static void card_art(const char *src, float x, float y, float w, float h, float r, int fit, int loadArt, int *shown) {
   *shown = 0;
-  int fit = wide ? 1 : 0;
+  int wide = fit == 1;
   GLuint tex = 0; /* posters fill the card as they are; wide art is cover-cropped */
   if (src && *src && (loadArt || img_shaped_loaded(src, (int)w, (int)h, r, fit)))
     tex = img_get_shaped(src, (int)w, (int)h, r, fit);
@@ -518,6 +518,7 @@ static void card_art(const char *src, float x, float y, float w, float h, float 
 }
 void card_prep(CardPrep *cp, const Item *it, int wide, const char *artOverride) {
   cp->lg = i18n_gen();
+  cp->crop = 0;
   cp->lbl[0] = cp->left[0] = 0;
   cp->leftW = 0;
   if (artOverride) {
@@ -573,7 +574,19 @@ static int card_body(const Item *it, const CardPrep *cp, float x, float y, float
     card_prep(&own, it, wide, NULL);
     cp = &own;
   } /* a card without its own: resolved here, as before */
-  card_art(cp->art, x, y, w, h, CARD_R, wide, loadArt, &shown);
+  if (cp->crop && !img_shaped_loaded(cp->art, (int)w, (int)h, CARD_R, 3)) {
+    if (loadArt && img_idle())
+      img_get_shaped(cp->art, (int)w, (int)h, CARD_R, 3); /* the sharp one, once nothing else waits */
+    card_art(cp->pre, x, y, w, h, CARD_R, 3, loadArt, &shown); /* the quick one meanwhile */
+  } else {
+    card_art(cp->art, x, y, w, h, CARD_R, cp->crop ? 3 : wide ? 1 : 0, loadArt, &shown);
+    if (cp->crop && strcmp(cp->pre, cp->art))
+      img_drop_shaped(cp->pre, (int)w, (int)h, CARD_R, 3); /* the sharp one is in: the quick one goes */
+  }
+  if (shown < 0 && cp->crop) { /* no wide picture to cut it from: the poster */
+    char pu[512];
+    card_art(sb_poster_of(it, pu, sizeof pu), x, y, w, h, CARD_R, 0, loadArt, &shown);
+  }
   gfx_clip_push(x, y, w, h);
   if (shown < 0)
     text_draw_wrapped(it->name[0] ? it->name : it->id, app_rtl() ? x + w - 16 : x + 16, y + 16, w - 32, 6, 28, 400,
@@ -664,7 +677,6 @@ void focus_tick(FocusPop *f, float dt) {
 #define LIFT_N 32
 #define LIFT 0.09f /* how much it grows (clearly: the focused card must stand out at a glance) */
 #define LIFT_DUR 0.24f /* in and out */
-#define GLARE_DUR 0.55f /* the glare's one pass */
 typedef struct {
   unsigned long long key;
   Tween k;
@@ -747,17 +759,7 @@ void lift_end(unsigned long long key, float x, float y, float w, float h, float 
     float k = e->k.v;
     gfx_rrect_v(x, y, w, h, r, WHITE_A((int)(24 * k)),
                 WHITE_A(0)); /* the glass: light from above, faint, in the shape itself */
-    float p = (float)((app_now() - e->t0) / GLARE_DUR);
-    /* the glare's one pass, then it rests, faint, near the far edge for as long as the focus stays: the focused card is
-       plain to see */
-    if (e->on) {
-      float q = ease_apply(EASE_IN_OUT, p < 0   ? 0
-                                        : p > 1 ? 1
-                                                : p),
-            pos = -0.2f + 1.0f * q,
-            al = 78 * q + 110 * sinf(3.14159f * q); /* bright as it crosses, settling to its faint rest */
-      gfx_glare(x, y, w, h, r, pos, WHITE_A((int)(al * k)));
-    }
+    /* (no glare passing over the focused card: the user found it out of place) */
   }
   gfx_scale_pop();
 }

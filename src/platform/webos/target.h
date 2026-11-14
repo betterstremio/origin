@@ -8,6 +8,7 @@
 #define SB_HAS_CAST 1 /* the cast receiver */
 #define SB_HAS_DTS 1 /* DTS and TrueHD converted on the device (libsbdts) */
 #define SB_GL_ES 1
+#define SB_POINTER 1 /* the Magic Remote's pointer: rows hold still under it (board.c) */
 #define SB_TV_PACER 1 /* the loop paces itself and finds the panel's refresh rate */
 #define SB_CACHE_MB 40 /* the app partition is small and shared with every app's install */
 #define SB_IMG_BUDGET_MB 40 /* the TVs have little memory to spare */

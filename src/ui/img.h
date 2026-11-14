@@ -16,6 +16,14 @@ GLuint img_get(const char *url, int w, int h, float *aspect);
 GLuint img_get_shaped(const char *url, int w, int h, float radius, int fit);
 int img_shaped_loaded(const char *url, int w, int h, float radius, int fit);
 int img_shaped_failed(const char *url, int w, int h, float radius, int fit);
+/* fit 3: a poster card cut from a wide picture, at its subject (Netflix's way): the window of the picture's 16:9
+   middle. Where the subject is (0..1 across that middle; -1 until the crop is in), and where a window cw wide starts in
+   a picture rw wide for it: the open card puts its 16:9 picture so that the crop's part of it stays where it was */
+float img_shaped_focal(const char *url, int w, int h, float radius, int fit);
+float img_crop_left(float focal, float rw, float cw);
+int img_idle(void); /* no picture waits to load */
+GLuint img_get_sized(const char *url, int w, int h, float *aspect); /* its own copy at this size */
+void img_drop_shaped(const char *url, int w, int h, float radius, int fit); /* its texture freed now (not wanted) */
 int img_palette(const char *url, int w, int h, int alpha, Palette *out); /* 1 ready, 0 loading, -1 failed */
 int img_failed(const char *url); /* 1 when the picture could not be loaded */
 int img_loaded(const char *url); /* 1 when ready */

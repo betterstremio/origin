@@ -2036,6 +2036,9 @@ int app_scroll_hold(void) {
   return 0;
 #endif
 }
+int app_ptr_hold(void) {
+  return PTR.hold;
+} /* the focus came from hovering, on any screen with a pointer (a TV's Magic Remote too) */
 int app_ptr_pressing(void) {
   return PTR.down == 1;
 } /* the OK being handled is the pointer's button */
@@ -2143,10 +2146,10 @@ static void ptr_frame(void) {
     PTR.dirty = 1;
     return;
   } /* the page is still moving under the pointer */
-#if SB_WINDOWED
   if (d->peek)
     return; /* only peeking: a click brings it in */
-  PTR.hold = 1;
+  PTR.hold = 1; /* (a TV's rows hold still under the pointer too: app_ptr_hold) */
+#if SB_WINDOWED
   curKey = K_RIGHT;
   idle_touch();
   curKey = 0; /* a new element under the pointer: as an arrow's step for the trailers and the card's clock, not every
@@ -2251,14 +2254,12 @@ void app_pointer_button(int down, float x, float y) {
     if (d->shield || !d->focus)
       return;
     PTR.hold = 0;
-#if SB_WINDOWED
     if (d->peek) {
       d->focus(d->a, d->b);
       ptr_keep(d);
       PTR.down = 4;
       return;
     } /* peeking: the click brings it into view, the next one opens it */
-#endif
     d->focus(d->a, d->b);
     ptr_keep(d);
     PTR.down = 1;

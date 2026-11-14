@@ -63,6 +63,7 @@ typedef struct {
   float hk;
   double closeAt;
   Tween off, a;
+  Tween pos; /* where the row stands, in cards (the focus, gliding there): its layout comes from it (row_lay) */
   FocusPop pop;
   int popCol;
   Nudge nudge;
@@ -328,20 +329,19 @@ static Row *row_add(Board *b, const char *title, int wide, int label) {
   r->recsIdx = -1;
   r->popCol = -1;
   tween_set(&r->off, 0);
+  tween_set(&r->pos, 0);
   tween_set(&r->a, 1);
   return r;
 }
+/* as on Netflix: the focused card keeps its place at the row's start and the row slides under it, one card a press,
+   all the way to its last card. A pointer's hover moves no row: the card opens where it is (a hovered card would
+   otherwise slide away from under the pointer, and the next one under it would take the focus, and so on) */
 static void slide_row_k(Row *r, int force) {
-  float w = step_of(r);
-  int vis = (int)((SB_W - 96) / w);
-  int k = r->col - (vis - 2);
-  if (k < 0)
-    k = 0;
-  float off = k * w;
-  if (r->col <= 0)
-    off = 0;
-  if (force || !app_scroll_hold())
-    tween_to(&r->off, off, 0.18f, EASE_ROW); /* (a desktop's hover: the row stays where it is) */
+  float off = r->col > 0 ? r->col * step_of(r) : 0;
+  if (force || !app_ptr_hold()) {
+    tween_to(&r->off, off, 0.18f, EASE_ROW);
+    tween_to(&r->pos, r->col > 0 ? (float)r->col : 0, 0.18f, EASE_ROW);
+  }
   if (r->popCol != r->col) {
     r->popCol = r->col;
     focus_pop(&r->pop);
@@ -1479,6 +1479,37 @@ static void cine_details(Board *b, float x, float y, int rtl) {
     text_draw_wrapped(v->desc, x, y + 44, CINE_DESC_W, 2, DESC_PX, 400, WHITE_A(210), 0, align, DESC_LH);
   gfx_opacity_pop();
 }
+#define CROP_LOGO_W 260
+#define CROP_LOGO_H 88
+/* a poster card cut from its wide picture: the title's logo at its foot (as Netflix's), over a soft shade; the name
+   when there is no logo. Only over the cut picture (a card that fell back to its poster has its own words) */
+static void crop_logo(const Item *it, const CardPrep *cp, float x, float y, float w, float h, float a) {
+  if (!cp || !cp->crop || a <= 0.01f ||
+      !(img_shaped_loaded(cp->art, (int)w, (int)h, CARD_R, 3) || img_shaped_loaded(cp->pre, (int)w, (int)h, CARD_R, 3)))
+    return;
+  int rtl = app_rtl();
+  char lu[512];
+  float lw, lh;
+  GLuint lt;
+  logo_src(it, lu, sizeof lu);
+  gfx_rrect_v(x, y + h * 0.5f, w, h * 0.5f, CARD_R, RGBA(0, 0, 0, 0), RGBA(0, 0, 0, (int)(175 * a)));
+  float asp = 0;
+  lt = lu[0] && (img_idle() || img_shaped_loaded(lu, CROP_LOGO_W, CROP_LOGO_H, 0, -1))
+           ? img_get_sized(lu, CROP_LOGO_W, CROP_LOGO_H, &asp)
+           : 0; /* (asked while nothing
+                                                                                                     waits) */ /* (a quarter of the open card's: a row of them) */
+  if (lt && asp > 0) {
+    lw = w - 40;
+    lh = lw / asp;
+    if (lh > 110) {
+      lh = 110;
+      lw = lh * asp;
+    }
+    gfx_image(lt, rtl ? x + w - 20 - lw : x + 20, y + h - 22 - lh, lw, lh, 0, WHITE_A((int)(255 * a)), 0, 0, 1, 1);
+  } else if (!lu[0] || img_failed(lu))
+    text_draw(it->name, rtl ? x + w - 20 : x + 20, y + h - 22 - text_line_height(28), 28, 800, WHITE_A((int)(255 * a)),
+              -0.2f, w - 40, rtl ? ALIGN_RIGHT : ALIGN_LEFT);
+}
 /* the open card's own logo and badges (cinematic Home) */
 static void cine_card_art(const Item *it, float ox, float cy, float ow, float ch, float ek, int rtl) {
   gfx_rrect_v(ox, cy + ch * 0.45f, ow, ch * 0.55f, CARD_R, RGBA(0, 0, 0, 0), RGBA(0, 0, 0, (int)(190 * ek)));
@@ -1625,6 +1656,7 @@ static void board_enter_k(Board *b) {
   for (int i = 0; i < b->n; i++) {
     slide_row(&b->rows[i]);
     tween_set(&b->rows[i].off, b->rows[i].off.to);
+    tween_set(&b->rows[i].pos, b->rows[i].pos.to);
   }
   tween_set(&b->hostY, 0);
   b->fastBg = 1;
@@ -1933,9 +1965,25 @@ static void card_focus(int r, int c) {
 static void card_open_tick(Board *b, float dt) {
   const Row *r = b->rowIdx < b->n ? &b->rows[b->rowIdx] : NULL;
   int here = r && r->col < r->items.n && focusOn(b) && !app_overlay;
+  if (here && b->exp.to >= 1 && b->expRow != b->rowIdx && !r->wide && !r->ntiles) {
+    b->expRow = b->rowIdx;
+    b->expCol = r->col;
+    tween_set(&b->exp, 0);
+    tween_to(&b->exp, 1, 0.2f, EASE_STD);
+  } /* up or down from an open card: the new row's first place opens as the rows move (as Netflix's) */
+  if (here && b->cine && b->kind == 0 && !r->wide && !r->ntiles) {
+    b->expRow = b->rowIdx;
+    b->expCol = r->col;
+    if (b->exp.v < 1 || b->exp.to < 1)
+      tween_set(&b->exp, 1);
+    return;
+  } /* the cinematic Home's poster rows: the first place is open the moment the row has the focus (slot_row) */
+  int along = here && b->exp.to >= 1 && b->expRow == b->rowIdx && !r->wide;
+  if (along)
+    b->expCol = r->col; /* as Netflix's: along the row the first place stays open (row_lay passes it on) */
   if (b->exp.v > 0.001f && (!here || b->expRow != b->rowIdx || b->expCol != r->col))
     tween_set(&b->exp, 0); /* moved: shut at once, the row must not lag behind the remote */
-  if (here && app_trailer_idle() > (b->cine ? cine_open_after() : CARD_OPEN_AFTER) &&
+  if (here && (along || app_trailer_idle() > (b->cine ? cine_open_after() : CARD_OPEN_AFTER)) &&
       (b->cine || strcmp(store_get("bgTrailer", "true"),
                          "false"))) { /* (the setting read only once it could matter: not every frame) */
     if (b->exp.to < 1) {
@@ -2084,6 +2132,7 @@ static void board_tick(float dt) {
         r->hk = 1 - ease_apply(EASE_CSS_EASE, k);
     }
     tween_tick(&r->off, dt);
+    tween_tick(&r->pos, dt);
     focus_tick(&r->pop, dt);
     nudge_tick(&r->nudge, dt);
     int gone = i < vi, show = i == vi || i == nx;
@@ -2163,6 +2212,14 @@ static const CardPrep *row_prep(Row *r, int i, int near, int *hold, int *changed
   const char *art = card_art(r, &r->items.items[i], near, lb, sizeof lb, hold, &fin);
   if (!r->cpSt[i] || art) {
     card_prep(cp, &r->items.items[i], r->wide, art);
+    char bu[512]; /* as Netflix's: a poster card is its wide picture cut at the subject (opening uncovers the rest) */
+    if (!r->wide && !r->ntiles && sb_bg_card(&r->items.items[i], bu, sizeof bu)[0]) {
+      snprintf(cp->art, sizeof cp->art, "%s", bu);
+      if (!sb_bg_small(&r->items.items[i], cp->pre, sizeof cp->pre)[0])
+        snprintf(cp->pre, sizeof cp->pre, "%s", bu);
+      cp->crop =
+          1; /* (pre: the small picture's crop first, fetched ahead; art: the sharp one when the queue is idle) */
+    }
     if (changed)
       *changed = 1;
   }
@@ -2193,8 +2250,14 @@ static void row_prefetch(Row *r, int slot, int from, int to) {
       continue;
     if (r->cpSt[i] != 1)
       wait = 1;
-    if ((!same || ch2) && cp->pre[0])
-      img_get_shaped(cp->pre, cw, ch, CARD_R, fit);
+    if ((!same || ch2) && cp->pre[0] && !(cp->crop && img_shaped_loaded(cp->art, cw, ch, CARD_R, 3)))
+      img_get_shaped(cp->pre, cw, ch, CARD_R, cp->crop ? 3 : fit); /* (not the quick crop once the sharp one is in) */
+    if (cp->crop && img_idle() && img_shaped_loaded(cp->pre, cw, ch, CARD_R, 3)) {
+      char lu[512];
+      logo_src(&r->items.items[i], lu, sizeof lu);
+      if (lu[0])
+        img_get_sized(lu, CROP_LOGO_W, CROP_LOGO_H, NULL);
+    } /* its logo too */
   }
   r->pfWait[slot] = (unsigned char)wait;
 }
@@ -2202,11 +2265,23 @@ static void row_prefetch(Row *r, int slot, int from, int to) {
    top left corner (it comes and goes with the trailer) */
 /* a desktop: a card the pointer may only bring into view by a click (another row, the spotlight in focus, or one
    whose opening would run past the screen's edge) */
+static int slot_row(const Board *b, const Row *r, int ri);
 static void card_peek(Board *b, const Row *r, int ri, int i, float x, float cw, int opens) {
+  if (i != r->col && slot_row(b, r, ri)) {
+    hit_peek_last(); /* (the slot's row: a pointer brings a card into the box by a click, it never moves the row) */
+    return;
+  }
 #if SB_WINDOWED
   int focused = focusOn(b) && ri == b->rowIdx && i == r->col;
   if (spotOn(b) || ri != b->rowIdx ||
       (opens && !focused && !r->wide && (app_rtl() ? x + cw - CARD_OPEN_W < 24 : x + CARD_OPEN_W > SB_W - 24)))
+    hit_peek_last();
+#elif SB_POINTER
+  /* a TV's pointer: in the focused row, a card cut by the screen's edge or one whose opening would run past it */
+  int focused = focusOn(b) && ri == b->rowIdx && i == r->col;
+  if (ri == b->rowIdx && !focused &&
+      (x < 0 || x + cw > SB_W ||
+       (opens && !r->wide && (app_rtl() ? x + cw - CARD_OPEN_W < 24 : x + CARD_OPEN_W > SB_W - 24))))
     hit_peek_last();
 #else
   (void)b;
@@ -2218,20 +2293,23 @@ static void card_peek(Board *b, const Row *r, int ri, int i, float x, float cw, 
   (void)opens;
 #endif
 }
-#if SB_WINDOWED
-/* a desktop: round arrows at the ends of the row in view, while the pointer is over it; a click turns a page of cards
- */
+#if SB_WINDOWED || SB_POINTER
+/* a pointer (a desktop, a TV's Magic Remote): round arrows at the ends of the row in view, while the pointer is over
+   it; a click turns a page of cards, the first new one in the focused card's place */
 static void row_page(int ri, int dir) {
   Board *b = cur();
   if (!b || ri >= b->n)
     return;
   Row *r = &b->rows[ri];
-  int vis = (int)((SB_W - 96) / step_of(r)), n = vis > 1 ? vis - 1 : 1, c = r->col + dir * n, last = col_last(r);
+  int vis = (int)((SB_W - 96) / step_of(r)), n = vis > 1 ? vis - 1 : 1, last = col_last(r),
+      c = (int)(r->off.to / step_of(r) + 0.5f) + dir * n; /* (from the first card in view: a hover may have moved the
+                                                               focus without moving the row) */
   if (c < 0)
     c = 0;
   if (c > last)
     c = last;
-  if (c == r->col) {
+  float moved = r->off.to - c * step_of(r);
+  if (c == r->col && moved < 0.5f && moved > -0.5f) {
     nudge_start(&r->nudge, dir > 0 ? K_RIGHT : K_LEFT);
     return;
   }
@@ -2278,6 +2356,152 @@ static void row_arrows(Board *b, Row *r, int ri, float cy, float ch) {
   }
 }
 #endif
+/* the row's cards as it slides (as Netflix's): the open card keeps the row's first place; while the row glides one card
+   along, the card leaving that place closes as the one coming into it opens, so the place stays open throughout. pos
+   between cards k and k+1 (t of the way): k is (1-t) open, k+1 t open, and the row has moved t of (a card and k's
+   width then). A focus away from pos (a pointer's hover holds the row): that card opens where it stands */
+typedef struct {
+  float off; /* card i stands at 48 + lay_x(i) */
+  int a, b; /* the cards open (b: -1 for none), and how wide they open beyond a card */
+  float exA, exB, wA, wB;
+  int slot; /* the cinematic Home's poster row in focus: a box open at the first place, the row moving under it */
+  float shift; /* (slot) how far the row still has to go, the cards' glide */
+} RowLay;
+/* the cinematic Home's focused poster row, as Netflix's: its first place is a box that stays open (open the moment
+   the row has the focus); left and right move the row under it, the box changes title in the same glide */
+static int slot_row(const Board *b, const Row *r, int ri) {
+  return b->cine && b->kind == 0 && cur() == b && focusOn((Board *)b) && ri == b->rowIdx && !r->wide && !r->ntiles &&
+         b->expRow == ri && b->exp.to >= 1;
+}
+static void row_lay(const Board *b, const Row *r, int ri, RowLay *L) {
+  float step = step_of(r), p = r->pos.v, open = 0;
+  if (cur() == b && focusOn((Board *)b) && ri == b->rowIdx && ri == b->expRow && !r->ntiles)
+    open = b->exp.v;
+  int k = (int)p;
+  if (p < 0)
+    p = 0, k = 0;
+  float t = p - k;
+  if (t < 1e-4f && r->col == k - 1) {
+    k--;
+    t = 1;
+  } /* (the first moment of a step back) */
+  float E = (r->wide ? 0 : CARD_OPEN_W - card_w(r)) * open;
+  L->slot = slot_row(b, r, ri);
+  L->shift = 0;
+  if (L->slot) {
+    L->a = r->col;
+    L->b = -1;
+    L->wA = 1;
+    L->wB = 0;
+    L->exA = CARD_OPEN_W - card_w(r);
+    L->exB = 0;
+    L->off = r->col * step;
+    L->shift = (r->col - p) * step;
+    return;
+  }
+  if (r->col == k || r->col == k + 1) {
+    L->a = k;
+    L->b = k + 1;
+    L->wA = 1 - t;
+    L->wB = t;
+    L->off = k * step + t * (step + (1 - t) * E);
+  } else {
+    L->a = r->col;
+    L->b = -1;
+    L->wA = 1;
+    L->wB = 0;
+    L->off = p * step;
+  }
+  L->exA = L->wA * E;
+  L->exB = L->wB * E;
+}
+static float lay_x(const RowLay *L, int i, float step) {
+  if (L->slot)
+    return i == L->a ? 0 : (i - L->a) * step + (i > L->a ? L->exA : 0) + L->shift;
+  return i * step - L->off + (i > L->a ? L->exA : 0) + (L->b >= 0 && i > L->b ? L->exB : 0);
+}
+static float lay_ex(const RowLay *L, int i) {
+  return i == L->a ? L->exA : i == L->b ? L->exB : 0;
+}
+static float lay_w(const RowLay *L, int i) {
+  return i == L->a ? L->wA : i == L->b ? L->wB : 0;
+}
+/* a poster card opening (or, beside the focus as the row slides, closing): its picture as the card widens, ox..ox+ow,
+   from x where it stood; the focused one times its sharp picture (the log, the soft fade-in) */
+static void card_wide(Board *b, const Row *r, const Item *it, const CardPrep *cp, float x, float ox, float ow, float cy,
+                      float cw, float ch, float ek, int rtl, int focused) {
+  /* a card cut from its wide picture opens as Netflix's: the same picture widens around the part it showed */
+  int crop = cp && cp->crop && !r->wide;
+  const char *cu = crop && img_shaped_loaded(cp->art, (int)cw, (int)ch, CARD_R, 3) ? cp->art : crop ? cp->pre : "";
+  float fc = crop ? img_shaped_focal(cu, (int)cw, (int)ch, CARD_R, 3) : -1; /* (the same from either: 64 columns) */
+  if (fc < 0 || ek <= 0.001f) {
+    card_draw_prep(it, cp, x, cy, cw, ch, r->wide, r->label, 1);
+    crop_logo(it, cp, x, cy, cw, ch, clampf(1 - 3 * ek, 0, 1));
+  }
+  if (ek > 0.001f) {
+    char bu[512];
+    int fw = r->wide ? (int)cw : (int)CARD_OPEN_W;
+    if (sb_bg_card(it, bu, sizeof bu)[0]) {
+      GLuint bt = img_get_shaped(bu, fw, (int)ch, CARD_R,
+                                 1); /* a size of its own, loaded once: it is uncovered as the card widens */
+      char su[512];
+      GLuint sm = !r->wide && sb_bg_small(it, su, sizeof su)[0]
+                      ? img_get_shaped(su, WIDE_SM_W, WIDE_SM_H, CARD_R * 0.4f, 1)
+                      : 0;
+      float wx = rtl ? ox + ow - fw : ox, L = 0;
+      if (fc >= 0) { /* the crop's part of the picture moves from where the card was to its place in the open card */
+        float t = (float)fw > cw ? (ow - cw) / ((float)fw - cw) : 1;
+        L = img_crop_left(fc, (float)fw, cw);
+        wx = rtl ? ox + ow - fw + ((float)fw - cw - L) * (1 - t) : ox - L * (1 - t);
+      }
+      double wn = app_now();
+      if (focused && sm && !b->wideSt)
+        b->wideSt = app_trailer_idle() + 1e-3; /* (how long after the key each came: the log below) */
+      if (focused && bt && !b->wideBt) {
+        b->wideBt = wn - (ek < 0.3f ? 1 : 0);
+        fprintf(stderr, "[card] wide picture %.2f s after the key (stand-in %.2f s, card %s)\n", app_trailer_idle(),
+                b->wideSt, ek >= 0.999f ? "already open" : "opening");
+      }
+      float sk =
+          !bt ? 0
+          : focused
+              ? clampf((float)((wn - b->wideBt) / 0.18), 0, 1)
+              : 1; /* the sharp one: over the stand-in, softly; there before the card opened: nothing to see change */
+      if (fc >= 0) { /* the stand-in at the sides, the crop where it was, the sharp picture over both once in */
+        GLuint ct = img_get_shaped(cu, (int)cw, (int)ch, CARD_R, 3);
+        gfx_clip_push(ox, cy, ow, ch);
+        if (sm && sk < 1) {
+          gfx_opacity_push(ek);
+          ph_picture(sm, wx, cy, (float)fw, ch, CARD_R, WHITE_A(255));
+          gfx_opacity_pop();
+        }
+        if (ct && sk < 1)
+          ph_picture(ct, wx + L, cy, cw, ch, CARD_R, WHITE_A(255));
+        if (bt) {
+          gfx_opacity_push(sk);
+          ph_picture(bt, wx, cy, (float)fw, ch, CARD_R, WHITE_A(255));
+          gfx_opacity_pop();
+        }
+        gfx_clip_pop();
+        crop_logo(it, cp, wx + L, cy, cw, ch, clampf(1 - 3 * ek, 0, 1));
+      } else if (sm || bt) {
+        gfx_clip_push(ox, cy, ow, ch);
+        if (sm && sk < 1) {
+          gfx_opacity_push(ek);
+          ph_picture(sm, wx, cy, (float)fw, ch, CARD_R, WHITE_A(255));
+          gfx_opacity_pop();
+        }
+        if (bt) {
+          gfx_opacity_push(sm ? ek * sk : ek * ek);
+          ph_picture(bt, wx, cy, (float)fw, ch, CARD_R, WHITE_A(255));
+          gfx_opacity_pop();
+        }
+        gfx_clip_pop();
+      }
+    }
+  } else if (focused)
+    b->wideBt = b->wideSt = 0;
+}
 static void row_draw(Board *b, Row *r, int ri, float y, int near, float rowA) {
   int rtl = app_rtl();
   float lh = text_line_height(31);
@@ -2298,14 +2522,18 @@ static void row_draw(Board *b, Row *r, int ri, float y, int near, float rowA) {
             rtl ? ALIGN_RIGHT : ALIGN_LEFT);
   if (ta < 1)
     gfx_opacity_pop();
-  float cy = y + 18 + lh + 26, step = step_of(r), off = r->off.v, cw = card_w(r), ch = card_h(r);
+  RowLay L;
+  row_lay(b, r, ri, &L);
+  float cy = y + 18 + lh + 26, step = step_of(r), off = L.off, cw = card_w(r), ch = card_h(r);
   int i0 = (int)(off / step) - 1, i1 = (int)((off + SB_W - 48) / step) + 1;
   if (i0 < 0)
     i0 = 0;
   if (i1 > r->items.n - 1)
     i1 = r->items.n - 1;
-  float ek = active && ri == b->expRow && r->col == b->expCol && !r->ntiles ? b->exp.v : 0,
-        ex = r->wide ? 0 : (CARD_OPEN_W - cw) * ek; /* the card open: this much wider; the ones after it make room */
+  float ek = active && ri == b->expRow && r->col == b->expCol && !r->ntiles
+                 ? b->exp.v * (r->wide ? 1 : lay_w(&L, r->col))
+                 : 0,
+        ex = r->wide ? 0 : lay_ex(&L, r->col); /* the card open: this much wider; the ones after it make room */
   if (ca < 1)
     gfx_opacity_push(ca);
   prep_check(r);
@@ -2329,17 +2557,29 @@ static void row_draw(Board *b, Row *r, int ri, float y, int near, float rowA) {
   float rk0 = r->rank ? RANK_W : 0;
   if (r->rank)
     for (int i = i0; i <= i1 && i < 10; i++) {
-      float sx = 48 + i * step - off + (i > r->col ? ex : 0);
+      float sx = 48 + lay_x(&L, i, step);
       rank_draw(i + 1, rtl ? SB_W - sx : sx + rk0 + 34, cy, ch);
     }
   for (int i = i0; i <= i1; i++) {
-    float x = 48 + i * step - off + rk0 + (rem && i >= b->remIdx ? step * (1 - rk) : 0) + (i > r->col ? ex : 0);
+    float x = 48 + lay_x(&L, i, step) + rk0 + (rem && i >= b->remIdx ? step * (1 - rk) : 0);
     if (rtl)
       x = SB_W - x - cw; /* (the ones after it close the gap) */
     int load = near && i >= r->col - 2 && i < r->col + 9;
     if (active && i == r->col) {
       hit_add(rtl ? x - ex : x, cy, cw + ex, ch, card_focus, NULL, ri, i);
       card_peek(b, r, ri, i, x, cw, 1);
+      continue;
+    }
+    float exi = lay_ex(&L, i);
+    if (exi > 0.5f) { /* beside the focus as the row slides: the card leaving the first place, closing */
+      int hold;
+      const CardPrep *cp = row_prep(r, i, load, &hold, NULL);
+      float ox = rtl ? x - exi : x, ow = cw + exi, eki = exi / (CARD_OPEN_W - cw);
+      hit_add(ox, cy, ow, ch, card_focus, NULL, ri, i);
+      gfx_rrect(ox, cy, ow, ch, CARD_R, RGB(0x0c, 0x0b, 0x11));
+      card_wide(b, r, &r->items.items[i], cp, x, ox, ow, cy, cw, ch, eki, rtl, 0);
+      if (b->cine)
+        cine_card_art(&r->items.items[i], ox, cy, ow, ch, eki, rtl);
       continue;
     }
     hit_add(x, cy, cw, ch, card_focus, NULL, ri, i);
@@ -2349,6 +2589,7 @@ static void row_draw(Board *b, Row *r, int ri, float y, int near, float rowA) {
     unsigned long long lk = lift_key(r, i);
     lift_begin(lk, 0, 0, x, cy, cw, ch, CARD_R); /* (the one the focus just left settles back) */
     card_draw_prep(&r->items.items[i], cp, x, cy, cw, ch, r->wide, r->label, !hold && (load || near));
+    crop_logo(&r->items.items[i], cp, x, cy, cw, ch, 1);
     lift_end(lk, x, cy, cw, ch, CARD_R);
   }
   if (ca < 1)
@@ -2380,7 +2621,7 @@ static void row_draw(Board *b, Row *r, int ri, float y, int near, float rowA) {
     }
   }
   if (active && r->col < r->items.n) {
-    float x = 48 + r->col * step - off + rk0 + (rem && r->col >= b->remIdx ? step * (1 - rk) : 0);
+    float x = 48 + lay_x(&L, r->col, step) + rk0 + (rem && r->col >= b->remIdx ? step * (1 - rk) : 0);
     if (rtl)
       x = SB_W - x - cw;
     float ox = rtl ? x - ex : x, ow = cw + ex; /* (mirrored, it opens to the left) */
@@ -2394,51 +2635,26 @@ static void row_draw(Board *b, Row *r, int ri, float y, int near, float rowA) {
                  0.06f * (1 - ek)); /* (still when open: the video's rectangle cannot scale with it) */
     if (ex > 0)
       gfx_rrect(ox, cy, ow, ch, CARD_R, RGB(0x0c, 0x0b, 0x11));
-    card_draw_prep(&r->items.items[r->col], cp, x, cy, cw, ch, r->wide, r->label, 1);
-    if (ek > 0.001f) {
-      char bu[512];
-      int fw = r->wide ? (int)cw : (int)CARD_OPEN_W;
-      if (sb_bg_card(&r->items.items[r->col], bu, sizeof bu)[0]) {
-        GLuint bt = img_get_shaped(bu, fw, (int)ch, CARD_R,
-                                   1); /* a size of its own, loaded once: it is uncovered as the card widens */
-        char su[512];
-        GLuint sm = !r->wide && sb_bg_small(&r->items.items[r->col], su, sizeof su)[0]
-                        ? img_get_shaped(su, WIDE_SM_W, WIDE_SM_H, CARD_R * 0.4f, 1)
-                        : 0;
-        float wx = rtl ? ox + ow - fw : ox;
-        double wn = app_now();
-        if (sm && !b->wideSt)
-          b->wideSt = app_trailer_idle() + 1e-3; /* (how long after the key each came: the log below) */
-        if (bt && !b->wideBt) {
-          b->wideBt = wn - (ek < 0.3f ? 1 : 0);
-          fprintf(stderr, "[card] wide picture %.2f s after the key (stand-in %.2f s, card %s)\n", app_trailer_idle(),
-                  b->wideSt, ek >= 0.999f ? "already open" : "opening");
-        }
-        float sk =
-            bt ? clampf((float)((wn - b->wideBt) / 0.18), 0, 1)
-               : 0; /* the sharp one: over the stand-in, softly; there before the card opened: nothing to see change */
-        if (sm || bt) {
-          gfx_clip_push(ox, cy, ow, ch);
-          if (sm && sk < 1) {
-            gfx_opacity_push(ek);
-            ph_picture(sm, wx, cy, (float)fw, ch, CARD_R, WHITE_A(255));
-            gfx_opacity_pop();
-          }
-          if (bt) {
-            gfx_opacity_push(sm ? ek * sk : ek * ek);
-            ph_picture(bt, wx, cy, (float)fw, ch, CARD_R, WHITE_A(255));
-            gfx_opacity_pop();
-          }
-          gfx_clip_pop();
-        }
-      }
+    float sd = L.slot ? (r->col - r->pos.v) : 0; /* the slot: the title before, under the new one fading in */
+    int pv = r->col + (sd > 0 ? -1 : 1);
+    sd = sd < 0 ? -sd : sd;
+    sd = sd > 1 ? 1 : sd;
+    if (sd > 0.01f && pv >= 0 && pv < r->items.n) {
+      int hp2;
+      const CardPrep *cpv = row_prep(r, pv, 1, &hp2, NULL);
+      card_wide(b, r, &r->items.items[pv], cpv, x, ox, ow, cy, cw, ch, 1, rtl, 0);
+      cine_card_art(&r->items.items[pv], ox, cy, ow, ch, sd, rtl);
+      gfx_opacity_push(1 - sd);
     } else
-      b->wideBt = b->wideSt = 0;
+      sd = 0;
+    card_wide(b, r, &r->items.items[r->col], cp, x, ox, ow, cy, cw, ch, ek, rtl, 1);
+    if (sd > 0)
+      gfx_opacity_pop();
     if (hp > 0)
       hold_trace_draw(x, cy, cw, ch, CARD_R, ease_apply(EASE_IN_OUT, hp));
     lift_end(lk, ox, cy, ow, ch, CARD_R);
     if (b->cine && ek > 0.001f)
-      cine_card_art(&r->items.items[r->col], ox, cy, ow, ch, ek, rtl);
+      cine_card_art(&r->items.items[r->col], ox, cy, ow, ch, ek * (1 - sd), rtl);
     if (ek >= 0.999f) {
       btr_card_rect(ox, cy + b->hostY.v + (spotk(b) ? b->spotY.v : 0), ow, ch);
       float va = btr_card_alpha();
@@ -2508,7 +2724,7 @@ static void row_draw(Board *b, Row *r, int ri, float y, int near, float rowA) {
         gfx_opacity_pop();
     }
   }
-#if SB_WINDOWED
+#if SB_WINDOWED || SB_POINTER
   if (active && ra > 0.5f)
     row_arrows(b, r, ri, cy, ch);
 #endif
@@ -2603,7 +2819,9 @@ static int first_cards(Board *b, int nrows) {
         continue;
       }
       int cw = (int)card_w(row), ch = (int)card_h(row),
-          fit = row->wide ? 1 : 0; /* the same shaped picture the card draws */
+          fit = row->wide  ? 1
+                : cp->crop ? 3
+                           : 0; /* the same shaped picture the card draws */
       img_get_shaped(src, cw, ch, CARD_R, fit);
       if (img_shaped_loaded(src, cw, ch, CARD_R, fit) || img_shaped_failed(src, cw, ch, CARD_R, fit))
         got++;
@@ -2751,7 +2969,9 @@ static int board_origin(float *x, float *y) {
   for (int i = 0; i < b->rowIdx; i++)
     if (!b->rows[i].hidden)
       cy += row_h(&b->rows[i]);
-  float cw = card_w(r), ch = card_h(r), cx = 48 + r->col * step_of(r) - r->off.v + (r->rank ? RANK_W : 0);
+  RowLay L;
+  row_lay(b, r, b->rowIdx, &L);
+  float cw = card_w(r), ch = card_h(r), cx = 48 + lay_x(&L, r->col, step_of(r)) + (r->rank ? RANK_W : 0);
   if (app_rtl())
     cx = SB_W - cx - cw;
   *x = cx + cw / 2;
@@ -2793,6 +3013,7 @@ void board_rebuild(void) {
   for (int i = 0; i < b->n; i++) {
     slide_row(&b->rows[i]);
     tween_set(&b->rows[i].off, b->rows[i].off.to);
+    tween_set(&b->rows[i].pos, b->rows[i].pos.to);
   }
   hero_soon(b, 70);
 }

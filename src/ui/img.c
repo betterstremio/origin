@@ -99,6 +99,70 @@ static void round_corners(unsigned char *px, int w, int h, float r) {
     }
 }
 
+/* fit 3, a poster card cut from a wide picture (as Netflix's): the card's window of the picture's 16:9 middle, at the
+   subject, so that the card opening wide (to 16:9) only uncovers the rest of the same picture */
+#define OPEN_ASPECT (16.0f / 9.0f)
+#define SUBJ_WIN 0.375f /* the window the subject is looked for in: a 300-wide card of an 800-wide picture */
+/* where the subject of a picture is, as a fraction of its width: the window with the most detail and skin, on a
+   64x36 copy (the bottom quarter, often ground or words, counts half; the middle is preferred a little) */
+static float subject_x(const unsigned char *px, int w, int h, float rx, float ry, float rw, float rh) {
+  enum { TW = 64, TH = 36 };
+  unsigned char *t = resample(px, w, h, rx, ry, rw, rh, TW, TH);
+  if (!t)
+    return 0.5f;
+  float col[TW] = { 0 };
+  for (int y = 1; y < TH; y++)
+    for (int x = 1; x < TW; x++) {
+      const unsigned char *p = t + ((size_t)y * TW + x) * 4, *l = p - 4, *u = p - TW * 4;
+      int r = p[0], g = p[1], b = p[2], mx = r > g ? (r > b ? r : b) : (g > b ? g : b),
+          mn = r < g ? (r < b ? r : b) : (g < b ? g : b);
+      int lum = (2 * r + 5 * g + b) / 8, ll = (2 * l[0] + 5 * l[1] + l[2]) / 8, lu = (2 * u[0] + 5 * u[1] + u[2]) / 8;
+      int edge = abs(lum - ll) + abs(lum - lu);
+      int skin = r > 95 && g > 40 && b > 20 && mx - mn > 15 && abs(r - g) > 15 && r > g && r > b;
+      col[x] += (y < TH * 3 / 4 ? 1.0f : 0.5f) * (float)(edge + (skin ? 40 : 0));
+    }
+  free(t);
+  int win = (int)(TW * SUBJ_WIN + 0.5f), best = (TW - win) / 2;
+  float bestV = -1;
+  for (int s0 = 0; s0 + win <= TW; s0++) {
+    float v = 0, c = (s0 + win / 2.0f) / TW;
+    for (int x = s0; x < s0 + win; x++)
+      v += col[x];
+    v *= 1 - 0.5f * fabsf(c - 0.5f);
+    if (v > bestV) {
+      bestV = v;
+      best = s0;
+    }
+  }
+  return (best + win / 2.0f) / TW;
+}
+/* how far into a picture rw wide a window cw wide starts, to sit on the subject at focal (the same sum everywhere) */
+float img_crop_left(float focal, float rw, float cw) {
+  float l = focal * rw - cw / 2;
+  return l < 0 ? 0 : l > rw - cw ? rw - cw : l;
+}
+/* the subject's place, kept beside the cache (a crop read back from the cache must know where it was cut) */
+static void focal_write(const char *src, float f) {
+  char k[2300], v[16];
+  snprintf(k, sizeof k, "fx:%s", src);
+  int n = snprintf(v, sizeof v, "%.4f", f);
+  cache_write(k, (const unsigned char *)v, (size_t)n);
+}
+static float focal_read(const char *src) {
+  char k[2300];
+  snprintf(k, sizeof k, "fx:%s", src);
+  size_t len = 0;
+  unsigned char *d = cache_read(k, 14 * 86400, &len);
+  if (!d)
+    return -1;
+  char v[16];
+  size_t n = len < sizeof v - 1 ? len : sizeof v - 1;
+  memcpy(v, d, n);
+  v[n] = 0;
+  free(d);
+  float f = (float)atof(v);
+  return f >= 0 && f <= 1 ? f : -1;
+}
 typedef struct Img {
   char *url;
   unsigned hash;
@@ -106,6 +170,7 @@ typedef struct Img {
   char *src;
   int fit;
   float radius; /* the picture's own address; fit -1 = as it is, else the shape (img_get_shaped) */
+  float focal; /* fit 3: where the subject is, across the picture's 16:9 middle (0..1; -1 not known) */
   int state; /* 0 queued, 1 loading, 2 ready, 3 failed */
   unsigned char *px;
   int pw, ph, pch; /* decoded pixels waiting for upload */
@@ -241,6 +306,8 @@ static int small_load(Img *im) {
   char key[2400];
   snprintf(key, sizeof key, "sm:%dx%d:%s", im->w, im->h, im->url);
   size_t len = 0;
+  if (im->fit == 3 && (im->focal = focal_read(im->src)) < 0)
+    return 0; /* (a crop without its subject's place: made again from the picture) */
   unsigned char *data = cache_read(key, 14 * 86400, &len);
   if (!data)
     return 0;
@@ -341,8 +408,9 @@ static void decode_part(Img *im, unsigned char *data, size_t len, int fromNet, c
   } /* metahub serves WebP */
   else
     px = stbi_load_from_memory(data, (int)len, &w, &h, &ch, 4);
-  if (px && fromNet)
-    cache_write(key, data, len);
+  if (px && fromNet && im->fit != 3 && !(im->fit < 0 && im->w * im->h <= 260 * 88))
+    cache_write(key, data, len); /* (not the big original behind a card's crop or a card's logo: only what they keep,
+                                    saved small below; a full original each would push the cards out of a TV's cache) */
   free(data);
   if (!px) {
     fprintf(stderr, "[img] undecodable %s\n", im->src);
@@ -360,7 +428,22 @@ static void decode_part(Img *im, unsigned char *data, size_t len, int fromNet, c
   }
   if (im->fit >= 0) { /* the exact box: crop (or stretch), scale, round the corners */
     float cx = 0, cy = 0, cw = (float)w, ch = (float)h, ba = (float)im->w / im->h, ta = (float)w / h;
-    if (im->fit > 0) {
+    if (im->fit == 3) { /* the card's window of the picture's 16:9 middle, where its subject is */
+      float rx = 0, ry = 0, rw = (float)w, rh = (float)h;
+      if (ta > OPEN_ASPECT) {
+        rw = h * OPEN_ASPECT;
+        rx = (w - rw) / 2;
+      } else if (ta < OPEN_ASPECT) {
+        rh = w / OPEN_ASPECT;
+        ry = (h - rh) / 2;
+      }
+      im->focal = subject_x(px, w, h, rx, ry, rw, rh);
+      focal_write(im->src, im->focal);
+      cw = rh * ba;
+      ch = rh;
+      cy = ry;
+      cx = rx + img_crop_left(im->focal, rw, cw);
+    } else if (im->fit > 0) {
       if (ta > ba) {
         cw = h * ba;
         cx = (w - cw) / 2;
@@ -532,6 +615,7 @@ static Img *request_as(const char *key, const char *src, int w, int h, int fit, 
   im->w = w;
   im->h = h;
   im->fit = fit;
+  im->focal = -1;
   im->radius = radius;
   im->lastUse = frameNo;
   im->wantTex = 1;
@@ -592,6 +676,12 @@ int img_shaped_loaded(const char *url, int w, int h, float radius, int fit) {
   Img *im = find(k, fnv(k));
   return im && im->tex;
 }
+float img_shaped_focal(const char *url, int w, int h, float radius, int fit) {
+  char k[2300];
+  shaped_key(k, sizeof k, url, w, h, radius, fit);
+  Img *im = find(k, fnv(k));
+  return im && im->tex ? im->focal : -1;
+}
 int img_shaped_failed(const char *url, int w, int h, float radius, int fit) {
   char k[2300];
   shaped_key(k, sizeof k, url, w, h, radius, fit);
@@ -606,6 +696,18 @@ GLuint img_get(const char *url, int w, int h, float *aspect) {
     *aspect = im->aspect > 0 ? im->aspect : (float)w / h;
   return im->tex;
 }
+GLuint img_get_sized(const char *url, int w, int h, float *aspect) {
+  if (!url || !*url)
+    return 0;
+  char k[2300];
+  Img *im = request_as(shaped_key(k, sizeof k, url, w, h, 0, -1), url, w, h, -1, 0);
+  if (aspect)
+    *aspect = im->aspect > 0 ? im->aspect : (float)w / h;
+  return im->tex;
+} /* a picture at a size of its own (img_get keeps one size per address: the first asked) */
+int img_idle(void) {
+  return qn == 0;
+} /* nothing waits to load: room for what only makes things nicer (a sharp card, its logo) */
 int img_has_room(void) {
   return usedBytes < budgetBytes / 100 * 85;
 } /* (divided first: times 85 overflows a 32-bit long, and the answer was always no) */
@@ -833,6 +935,21 @@ void img_pump(void) {
     up_band(im, cap);
     return;
   }
+}
+void img_drop_shaped(const char *url, int w, int h, float radius, int fit) {
+  if (!url || !*url)
+    return;
+  char k[2300];
+  shaped_key(k, sizeof k, url, w, h, radius, fit);
+  Img *i = find(k, fnv(k));
+  if (!i || !i->tex || i->pin)
+    return;
+  gfx_tex_recycle(i->tex, i->pw, i->ph, i->pch, 1);
+  i->tex = 0;
+  usedBytes -= i->bytes;
+  i->bytes = 0;
+  i->state = 2;
+  i->wantTex = 0; /* (asked again, it comes back from its small copy) */
 }
 void img_release_unused(int keepMb) {
   long keep = keepMb > 0 ? (long)keepMb * 1024 * 1024 : budgetBytes;

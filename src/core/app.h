@@ -188,6 +188,7 @@ void app_pointer_system(int show); /* the TV showed / hid its cursor */
 int app_pointer_menu(float x, float y); /* a desktop's right button: the card menu there (1), or nothing to show (0) */
 void app_menu_key(void); /* the keyboard's menu key: the focused card's menu */
 int app_ptr_pressing(void); /* the OK being handled is the pointer's button, not a key */
+int app_ptr_hold(void); /* the focus came from hovering (a desktop or a TV's pointer): rows keep their place */
 int app_scroll_hold(void); /* a desktop: the focus came from hovering, the page keeps its scroll */
 int app_ptr_over(float x, float y, float w, float h); /* the pointer is shown and inside that rectangle */
 int app_ptr_hovers(void (*focus)(int, int),

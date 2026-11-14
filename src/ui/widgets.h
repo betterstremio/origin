@@ -41,6 +41,8 @@ typedef struct {
   char art[512], pre[512], lbl[300], left[64];
   float leftW;
   unsigned lg;
+  int crop; /* a poster card cut from a wide picture (img fit 3): pre the small one (quick, first), art the sharp one
+              (asked only while no picture waits); the poster if neither can be had */
 } CardPrep;
 void card_prep(CardPrep *cp, const Item *it, int wide, const char *artOverride);
 int card_draw_prep(const Item *it, const CardPrep *cp, float x, float y, float w, float h, int wide, int label,
