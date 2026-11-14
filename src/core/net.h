@@ -63,10 +63,20 @@ int net_pipe_sync(const char *url, const char *headers, int head, NetHdrSink hs,
 /* Ranged reads on one kept-alive connection (worker threads only: it blocks). net_range_get reads
    [start, start+len) into *out (malloc'd, *got bytes; a short read returns what came) and the file's
    total size (-1 unknown). Returns NR_OK or why it failed. */
-enum { NR_OK = 0, NR_NORANGE, NR_HTTP, NR_BUSY, NR_TIMEOUT, NR_NET };
+enum { NR_OK = 0, NR_NORANGE, NR_HTTP, NR_BUSY, NR_TIMEOUT, NR_NET, NR_MOVED };
 typedef struct NetRange NetRange;
 NetRange *net_range_new(void);
 int net_range_get(NetRange *r, const char *url, long long start, long len, unsigned char **out, long *got,
                   long long *total, int *httpStatus, int timeoutMs);
 void net_range_free(NetRange *r);
+/* Redirects are followed by default. Off (a link already resolved): a 3xx returns NR_MOVED, its Location in
+   net_range_location. net_range_url: the address the last good read came from, redirects followed. net_range_why:
+   the last failure in curl's words (hosts only). net_range_conns: connections opened over the handle's reads.
+   net_range_info: once, the libcurl and receive buffer in use, to the log. */
+void net_range_follow(NetRange *r, int on);
+const char *net_range_url(NetRange *r);
+const char *net_range_location(NetRange *r);
+const char *net_range_why(NetRange *r);
+long net_range_conns(NetRange *r);
+void net_range_info(void);
 #endif

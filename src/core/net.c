@@ -25,6 +25,7 @@ static CURLcode (*f_global_init)(long);
 static void (*f_easy_reset)(CURL *); /* (optional: without it every request opens its own connection, as before) */
 static CURLSH *(*f_share_init)(void);
 static CURLSHcode (*f_share_setopt)(CURLSH *, CURLSHoption, ...); /* (optional too) */
+static curl_version_info_data *(*f_version_info)(CURLversion); /* (optional: the log only) */
 static char caPath[1024];
 /* "StremioOrigin/1.0.0 (webOS; native)": the running version, the platform it runs on */
 static const char *ua(void) {
@@ -52,6 +53,7 @@ static int resolve(void) {
   f_easy_reset = curl_easy_reset;
   f_share_init = curl_share_init;
   f_share_setopt = curl_share_setopt;
+  f_version_info = curl_version_info;
   return 1;
 #else
   static const char *names[] = { "libcurl.so.5", "libcurl.so.4", "libcurl.so", NULL };
@@ -82,6 +84,7 @@ static int resolve(void) {
   *(void **)(&f_easy_reset) = dlsym(h, "curl_easy_reset");
   *(void **)(&f_share_init) = dlsym(h, "curl_share_init");
   *(void **)(&f_share_setopt) = dlsym(h, "curl_share_setopt");
+  *(void **)(&f_version_info) = dlsym(h, "curl_version_info");
   return 1;
 #endif
 }
@@ -1005,7 +1008,18 @@ int net_pipe_sync(const char *url, const char *headers, int head, NetHdrSink hs,
 /* ---- ranged reads ---------------------------------------------------------------------------- */
 struct NetRange {
   CURL *c;
+  int follow; /* 1: redirects followed (an addon's link); 0: a resolved address, a redirect comes back as NR_MOVED */
+  char eff[4096]; /* where the last good read came from (its redirects followed) */
+  char loc[4096]; /* a redirect not followed: where it pointed */
+  char why[256]; /* the last failure in curl's words, for the log (hosts only: debrid links carry tokens) */
+  long conns, reads; /* connections opened over this handle's reads */
 };
+static void host_of(const char *u, char *o, size_t n) { /* "https://host" of an address, without its path or token */
+  const char *p = u ? strstr(u, "://") : NULL;
+  p = p ? p + 3 : (u ? u : "");
+  size_t k = strcspn(p, "/?#");
+  snprintf(o, n, "%.*s", (int)(k < 200 ? k : 200), p);
+}
 typedef struct {
   unsigned char *buf;
   long len, got;
@@ -1024,7 +1038,8 @@ static size_t range_hdr(char *p, size_t s, size_t n, void *ud) {
   if (sscanf(line, "HTTP/%*s %d", &code) == 1) {
     r->status = code;
     r->crStart = -1;
-  } /* each redirect hop starts again */
+    r->total = -1;
+  } /* each redirect hop starts again (its size too: a hop's length is not the file's) */
   else if (!strncasecmp(line, "content-range:", 14)) {
     long long a, b, t;
     char star[4];
@@ -1059,7 +1074,12 @@ static size_t range_data(char *p, size_t s, size_t n, void *ud) {
   long take = (long)add < need ? (long)add : need;
   memcpy(r->buf + r->got, p, take);
   r->got += take;
-  return r->got >= r->len ? 0 : add; /* had what was asked: stop (a 200 for the whole file must not keep downloading) */
+  if (take < (long)add)
+    return 0; /* more than was asked: stop */
+  if (r->got >= r->len && r->status != 206)
+    return 0; /* a 200 for the whole file must not keep downloading */
+  return add; /* a 206 that ends here completes: stopping it closed the connection, and every read paid a new one
+                 (connect, TLS, slow start) */
 }
 NetRange *net_range_new(void) {
   if (!f_easy_init && !resolve())
@@ -1070,7 +1090,48 @@ NetRange *net_range_new(void) {
     free(r);
     return NULL;
   }
+  r->follow = 1;
   return r;
+}
+void net_range_follow(NetRange *r, int on) {
+  if (r)
+    r->follow = on;
+}
+const char *net_range_url(NetRange *r) {
+  return r ? r->eff : "";
+}
+const char *net_range_location(NetRange *r) {
+  return r ? r->loc : "";
+}
+const char *net_range_why(NetRange *r) {
+  return r ? r->why : "";
+}
+long net_range_conns(NetRange *r) {
+  return r ? r->conns : 0;
+}
+/* once: what the reading runs on (the TV's own libcurl on webOS), for the log */
+void net_range_info(void) {
+  static int done;
+  if (done || (!f_easy_init && !resolve()))
+    return;
+  done = 1;
+  const char *ver = "?", *ssl = "?";
+  int h2 = 0;
+  curl_version_info_data *v = f_version_info ? f_version_info(CURLVERSION_NOW) : NULL;
+  if (v) {
+    ver = v->version ? v->version : "?";
+    ssl = v->ssl_version ? v->ssl_version : "none";
+    h2 = (v->features & CURL_VERSION_HTTP2) != 0;
+  }
+  char rmem[64] = "?";
+  FILE *f = fopen("/proc/sys/net/ipv4/tcp_rmem", "r");
+  if (f) {
+    if (!fgets(rmem, sizeof rmem, f))
+      snprintf(rmem, sizeof rmem, "?");
+    fclose(f);
+    rmem[strcspn(rmem, "\r\n")] = 0;
+  }
+  fprintf(stderr, "[net] ranged reads: libcurl %s, %s, HTTP/2 %s, tcp_rmem %s\n", ver, ssl, h2 ? "yes" : "no", rmem);
 }
 void net_range_free(NetRange *r) {
   if (!r)
@@ -1106,30 +1167,70 @@ int net_range_get(NetRange *h, const char *url, long long start, long len, unsig
   f_easy_setopt(c, CURLOPT_HEADERDATA, &r);
   f_easy_setopt(c, CURLOPT_WRITEFUNCTION, range_data);
   f_easy_setopt(c, CURLOPT_WRITEDATA, &r);
-  f_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L);
+  f_easy_setopt(c, CURLOPT_FOLLOWLOCATION, h->follow ? 1L : 0L);
   f_easy_setopt(c, CURLOPT_MAXREDIRS, 5L);
   f_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
-  f_easy_setopt(c, CURLOPT_CONNECTTIMEOUT_MS, 8000L);
+  f_easy_setopt(c, CURLOPT_CONNECTTIMEOUT_MS, 6000L);
   f_easy_setopt(c, CURLOPT_TIMEOUT_MS, (long)timeoutMs);
+  f_easy_setopt(c, CURLOPT_LOW_SPEED_LIMIT, 32768L); /* a stalled body gives up after 10 s under 32 KB/s */
+  f_easy_setopt(c, CURLOPT_LOW_SPEED_TIME, 10L);
+  f_easy_setopt(c, CURLOPT_BUFFERSIZE, 262144L); /* fewer callbacks on the TV's CPU at 100+ Mb/s */
   f_easy_setopt(c, CURLOPT_USERAGENT, "Mozilla/5.0 (Web0S; Linux) StremioOrigin");
   f_easy_setopt(c, CURLOPT_TCP_KEEPALIVE, 1L);
+  if (share)
+    f_easy_setopt(c, CURLOPT_SHARE, share); /* a reconnect then skips the DNS lookup and resumes TLS */
   if (caPath[0])
     f_easy_setopt(c, CURLOPT_CAINFO, caPath);
+  char eb[CURL_ERROR_SIZE];
+  eb[0] = 0;
+  f_easy_setopt(c, CURLOPT_ERRORBUFFER, eb);
   CURLcode rc = f_easy_perform(c);
+  f_easy_setopt(c, CURLOPT_ERRORBUFFER, (char *)NULL);
+  long nc = 0;
+  f_easy_getinfo(c, CURLINFO_NUM_CONNECTS, &nc);
+  h->conns += nc;
+  h->reads++;
   if (httpStatus)
     *httpStatus = r.status;
   if (total)
     *total = r.total;
+  h->loc[0] = 0;
   if (r.norange) {
     free(r.buf);
+    snprintf(h->why, sizeof h->why, "the server sent another part than asked (HTTP %d)", r.status);
     return NR_NORANGE;
   }
   if (r.got > 0 && (r.status == 200 || r.status == 206)) {
+    char *e = NULL;
+    f_easy_getinfo(c, CURLINFO_EFFECTIVE_URL, &e);
+    snprintf(h->eff, sizeof h->eff, "%s", e ? e : url);
     *out = r.buf;
     *got = r.got;
     return NR_OK;
   } /* full, or a server that cut the response: what came */
   free(r.buf);
+  if (!h->follow && r.status >= 300 && r.status < 400) {
+    char *l = NULL;
+    f_easy_getinfo(c, CURLINFO_REDIRECT_URL, &l);
+    snprintf(h->loc, sizeof h->loc, "%s", l ? l : "");
+    char hl[220];
+    host_of(h->loc, hl, sizeof hl);
+    snprintf(h->why, sizeof h->why, "HTTP %d to %s", r.status, hl[0] ? hl : "(no Location)");
+    return NR_MOVED;
+  } /* a resolved address that moves on: the caller asks the addon again */
+  {
+    long rcnt = 0;
+    char *ip = NULL, *e = NULL, *l = NULL;
+    f_easy_getinfo(c, CURLINFO_REDIRECT_COUNT, &rcnt);
+    f_easy_getinfo(c, CURLINFO_PRIMARY_IP, &ip);
+    f_easy_getinfo(c, CURLINFO_EFFECTIVE_URL, &e);
+    f_easy_getinfo(c, CURLINFO_REDIRECT_URL, &l);
+    char he[220], hl[220];
+    host_of(e, he, sizeof he);
+    host_of(l, hl, sizeof hl);
+    snprintf(h->why, sizeof h->why, "curl %d (%s), HTTP %d, %ld redirects, at %s%s%s, ip %s", (int)rc,
+             eb[0] ? eb : "no message", r.status, rcnt, he, hl[0] ? ", next " : "", hl, ip && ip[0] ? ip : "?");
+  }
   if (rc == CURLE_OPERATION_TIMEDOUT)
     return NR_TIMEOUT;
   if (r.status == 429 || r.status >= 500)

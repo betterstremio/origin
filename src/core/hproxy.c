@@ -132,13 +132,21 @@ static int on_body(const unsigned char *p, size_t n, void *ud) {
    stops it (the TV moved on), then takes its place. */
 #define RING (4 << 20)
 #define RING_BIG (16 << 20)
-#define NPAR 4
+#define RING_HUGE (48 << 20)
+#define NPAR 2
+#define WANT_MIN (2 << 20)
+#define WANT_MAX (8 << 20)
 static int start(void);
-/* Reading on, a remux (50+ Mb/s) outruns one connection: NPAR ranges of 2 MiB go out at once, each on its own
-   kept-alive connection, into a 16 MiB ring. TVs under 1.5 GB keep one connection and the 4 MiB ring (Firestick rule)
- */
+static double mono_s(void);
+/* Reading on, a remux (50+ Mb/s) outruns one connection: NPAR ranges go out at once, each on its own kept-alive
+   connection, into a 16 MiB ring (48 MiB from 2 GB). The addon's link is followed once; its final address (the debrid
+   server's) is read directly after that, and asked of the addon again only when it stops answering: following the
+   link on every read sent the addon several requests a second, and some of them failed (the "HTTP 302" reads).
+   Requests grow from 2 MiB to 8 MiB while reading on, within half the ring. TVs under 1.5 GB keep one connection and
+   the 4 MiB ring (Firestick rule) */
 typedef struct {
   char url[4096];
+  char cdn[4096]; /* the link's final address, once followed ("" until then, and after it stopped answering) */
   NetRange *net, *more[NPAR - 1];
   long long size;
   unsigned char *ring;
@@ -146,6 +154,13 @@ typedef struct {
   int len, ringSz, par;
   volatile int *stop;
   int contig;
+  long grow; /* the next request's size while reading on */
+  double lastResolve; /* when the addon was last asked again */
+  int resolves;
+  /* for the log: rounds, bytes and seconds since the last line, connections opened before it */
+  int sRounds;
+  double sBytes, sTime;
+  long sConns;
 } Reader;
 static int ring_put(Reader *r, long long at, const unsigned char *b, int n) { /* appends at = start + len */
   int R = r->ringSz;
@@ -168,14 +183,76 @@ typedef struct {
   long want;
   unsigned char *b;
   long g;
+  int e, timeoutMs;
 } Part;
 static void *part_get(void *a) {
   Part *p = a;
   long long total = -1;
   int st = 0;
-  if (net_range_get(p->net, p->url, p->at, p->want, &p->b, &p->g, &total, &st, 15000) != NR_OK && p->g <= 0)
+  p->e = net_range_get(p->net, p->url, p->at, p->want, &p->b, &p->g, &total, &st, p->timeoutMs);
+  if (p->e != NR_OK && p->g <= 0)
     p->g = 0;
   return NULL;
+}
+static void host_of(const char *u, char *o, size_t n) { /* for the log: a debrid address carries its token */
+  const char *p = strstr(u, "://");
+  p = p ? p + 3 : u;
+  size_t k = strcspn(p, "/?#");
+  snprintf(o, n, "%.*s", (int)(k < 120 ? k : 120), p);
+}
+static int rd_timeout(long want) { /* 15 s, and 2 s more for every MiB past the first */
+  return 15000 + (int)((want >> 20) > 1 ? ((want >> 20) - 1) * 2000 : 0);
+}
+static void rd_follow(Reader *r) { /* every handle reads the final address once there is one, the link before that */
+  int direct = r->cdn[0] != 0;
+  net_range_follow(r->net, !direct);
+  for (int k = 0; k < r->par - 1; k++)
+    if (r->more[k])
+      net_range_follow(r->more[k], !direct);
+}
+static void rd_resolved(Reader *r) { /* after a good read through the link: its final address, if it moved */
+  if (r->cdn[0])
+    return;
+  const char *e = net_range_url(r->net);
+  if (!e[0] || !strcmp(e, r->url) || strstr(e, "://127.0.0.1"))
+    return;
+  snprintf(r->cdn, sizeof r->cdn, "%s", e);
+  char h[128];
+  host_of(e, h, sizeof h);
+  fprintf(stderr, "[dts] reading from %s directly (the link followed %s)\n", h, r->resolves ? "again" : "once");
+}
+static void rd_drop(Reader *r, const char *why) { /* the final address stopped answering: ask the addon again */
+  char h[128];
+  host_of(r->cdn, h, sizeof h);
+  fprintf(stderr, "[dts] %s stopped answering (%s): following the link again\n", h, why);
+  r->cdn[0] = 0;
+  r->resolves++;
+  double now = mono_s();
+  if (now - r->lastResolve < 5)
+    SDL_Delay(1000); /* not more than about one ask a few seconds, whatever fails */
+  r->lastResolve = mono_s();
+}
+static void rd_stats(Reader *r, double bytes, double secs) { /* every 40 rounds: speed and connections opened */
+  r->sRounds++;
+  r->sBytes += bytes;
+  r->sTime += secs;
+  if (r->sRounds < 40)
+    return;
+  long conns = net_range_conns(r->net);
+  for (int k = 0; k < r->par - 1; k++)
+    if (r->more[k])
+      conns += net_range_conns(r->more[k]);
+  char h[128] = "the link";
+  if (r->cdn[0])
+    host_of(r->cdn, h, sizeof h);
+  fprintf(stderr,
+          "[dts] reading: %d rounds, %.0f MB in %.1f s (%.0f Mb/s), requests of %ld MiB x %d, %ld connections opened, "
+          "from %s, link followed %d times\n",
+          r->sRounds, r->sBytes / 1048576.0, r->sTime, r->sTime > 0 ? r->sBytes * 8 / 1e6 / r->sTime : 0.0,
+          r->grow >> 20, r->par, conns - r->sConns, h, r->resolves + 1);
+  r->sConns = conns;
+  r->sRounds = 0;
+  r->sBytes = r->sTime = 0;
 }
 static int rd_read(void *ud, long long pos, unsigned char *buf, int n) {
   Reader *r = ud;
@@ -189,34 +266,52 @@ static int rd_read(void *ud, long long pos, unsigned char *buf, int n) {
       r->start = pos;
       r->len = 0;
     } /* a short hop forward reads through */
-    int want =
-        r->contig > 2 ? (2 << 20) : (512 << 10); /* reading on: larger requests; a seek's first look: a small one */
-    int np = r->contig > 2 ? r->par - 1 : 0, started = 0, rv = 1;
+    int reading = r->contig > 2;
+    int want = reading ? (int)r->grow : (512 << 10); /* reading on: larger requests; a seek's first look: a small one */
+    int np = reading ? r->par - 1 : 0, started = 0, rv = 1, tmo = rd_timeout(want);
     pthread_t th[NPAR];
     Part pt[NPAR]; /* reading on: the next parts alongside */
+    char pu[4096]; /* the parts' address for this round (the main read may drop r->cdn meanwhile) */
     if (r->size > 0)
       while (np > 0 && at + (long long)want * np >= r->size)
         np--; /* (none past the end) */
+    rd_follow(r);
+    snprintf(pu, sizeof pu, "%s", r->cdn[0] ? r->cdn : r->url);
+    double t0 = mono_s();
     for (int k = 0; k < np; k++) {
-      pt[k] = (Part){ r->more[k], r->url, at + (long long)want * (k + 1), want, NULL, 0 };
+      pt[k] = (Part){ r->more[k], pu, at + (long long)want * (k + 1), want, NULL, 0, 0, tmo };
       if (pthread_create(&th[k], NULL, part_get, &pt[k]))
         break;
       started++;
     }
+    long gmain = 0;
     for (int tries = 0;; tries++) {
       if (r->stop && *r->stop) {
         rv = -1;
         break;
       }
+      int direct = r->cdn[0] != 0;
+      net_range_follow(r->net, !direct);
       unsigned char *b = NULL;
       long g = 0;
       long long total = -1;
       int st = 0;
-      int e = net_range_get(r->net, r->url, at, want, &b, &g, &total, &st, 15000);
-      if (total > 0)
-        r->size = total;
+      int e = net_range_get(r->net, direct ? r->cdn : r->url, at, want, &b, &g, &total, &st, tmo);
+      if (direct && g > 0 && total > 0 && r->size > 0 && total != r->size) {
+        free(b); /* the address now serves another file: not this one's bytes */
+        rd_drop(r, "another file size");
+        continue;
+      }
+      if (total > 0 && g > 0)
+        r->size = total; /* only a read that returned range data tells the size: an expired link's redirect
+                            answers with a re-auth page whose length is not the file's, and trusting it shrank
+                            r->size so every later segment read past it as a false end of file (empty segments
+                            to the playlist's end -> the player stops) */
       if (g > 0) {
+        if (!direct)
+          rd_resolved(r);
         ring_put(r, at, b, (int)g);
+        gmain = g;
         free(b);
         break;
       }
@@ -225,18 +320,27 @@ static int rd_read(void *ud, long long pos, unsigned char *buf, int n) {
         rv = 0;
         break;
       }
+      if (direct && e != NR_BUSY && tries < 4) {
+        rd_drop(r, net_range_why(r->net)); /* moved, refused or gone: the addon's link again, now, not a wait */
+        continue;
+      }
       if ((e != NR_NET && e != NR_TIMEOUT && e != NR_BUSY) || tries >= 3) {
-        fprintf(stderr, "[dts] read at %lld failed (%d, HTTP %d)\n", at, e, st);
+        fprintf(stderr, "[dts] read at %lld failed (%d, HTTP %d): %s\n", at, e, st, net_range_why(r->net));
         rv = -1;
         break;
       }
+      fprintf(stderr, "[dts] read at %lld, try %d: %s\n", at, tries + 1, net_range_why(r->net));
       SDL_Delay(500u << tries);
     }
     for (int k = 0; k < started; k++)
       pthread_join(th[k], NULL); /* (always: the parts live on this stack) */
+    double got = (double)gmain;
     for (int k = 0, gap = rv != 1; k < started; k++) { /* kept in order, up to the first part that came back short */
+      if (pt[k].e != NR_OK && pt[k].g <= 0)
+        fprintf(stderr, "[dts] part read at %lld failed (%d): %s\n", pt[k].at, pt[k].e, net_range_why(pt[k].net));
       if (!gap && pt[k].g > 0 && pt[k].at == r->start + r->len) {
         ring_put(r, pt[k].at, pt[k].b, (int)pt[k].g);
+        got += (double)pt[k].g;
         if (pt[k].g < want)
           gap = 1;
       } else
@@ -246,6 +350,17 @@ static int rd_read(void *ud, long long pos, unsigned char *buf, int n) {
     if (rv != 1)
       return rv;
     r->contig = at == end ? r->contig + 1 : 0;
+    if (reading)
+      rd_stats(r, got, mono_s() - t0);
+    if (!r->contig)
+      r->grow = WANT_MIN; /* a seek: small again, then growing */
+    else if (reading) {
+      long cap = r->ringSz / (2L * r->par), w = WANT_MIN; /* a round stays within half the ring: the demuxer steps
+                                                             back into what was read */
+      while (w * 2 <= cap && w * 2 <= WANT_MAX)
+        w *= 2;
+      r->grow = r->grow * 2 <= w ? r->grow * 2 : w;
+    }
     if (!(pos >= r->start && pos < r->start + r->len))
       return -1;
   }
@@ -356,9 +471,11 @@ static void *conv_open(void *a) {
   Conv *c = a;
   char err[160] = "";
   SbdSrc *s = NULL;
-  int big = plat_mem_total_mb() >= 1500;
-  c->rd.ringSz = big ? RING_BIG : RING;
+  int mb = plat_mem_total_mb(), big = mb >= 1500;
+  c->rd.ringSz = mb >= 2000 ? RING_HUGE : big ? RING_BIG : RING;
+  c->rd.grow = WANT_MIN;
   c->rd.par = 1;
+  net_range_info();
   c->rd.net = net_range_new();
   c->rd.ring = malloc(c->rd.ringSz);
   c->rd.stop = &c->dead;
