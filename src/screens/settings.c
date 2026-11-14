@@ -85,7 +85,10 @@ static const Opt DTSM[] = {
 static const Opt ASPECT[] = { { "fit", "Original" }, { "fill", "Fill the screen" }, { "zoom", "Zoom" } };
 static const Opt SIZES[] = { { "0", "72%" },  { "1", "80%" },  { "2", "100%" }, { "3", "120%" },
                              { "4", "140%" }, { "5", "160%" }, { "6", "180%" } };
-static const Opt COLORS[] = { { "#ffffff", "White" }, { "#ffe600", "Yellow" }, { "#00e5ff", "Cyan" } };
+static const Opt COLORS[] = { { "#ffffff", "White" },       { "#d0d0d0", "Silver" }, { "#a0a0a0", "Grey" },
+                              { "#f0e2a8", "Soft yellow" }, { "#ffe600", "Yellow" }, { "#00e5ff", "Cyan" } };
+static const Opt SUBOP[] = { { "100", "100%" }, { "90", "90%" }, { "80", "80%" },
+                             { "70", "70%" },   { "60", "60%" }, { "50", "50%" } };
 static const Opt OUTL[] = { { "#000000", "Black" }, { "#ffffff", "White" } };
 static const Opt BGS[] = { { "0", "None" }, { "1", "Solid" }, { ".6", "Transparent" } };
 static const Opt ASSO[] = { { "styled", "Styled" }, { "plain", "Plain" } };
@@ -115,7 +118,7 @@ static const Opt ACCENT_OPTS[] = { { "logo", "From the logo" },
 #define NCAT 11
 #define MAXROWS 48
 static Setting recsS[12];
-static Setting playBase[8], playS[8], subsS[6], audS[6], lookS[2], langS[2], keyS[5], addonS[40], acctS[1], supS[7],
+static Setting playBase[8], playS[8], subsS[7], audS[6], lookS[2], langS[2], keyS[5], addonS[40], acctS[1], supS[7],
     profS[4];
 static Cat cats[NCAT];
 static int ncat; /* (Keys leaves when this build carries every key) */
@@ -563,10 +566,11 @@ static void build(void) {
   usb_row();
   set_s(&subsS[0], "subsLang", "Default subtitles", "Chosen by itself when a film starts", LANG_OPTS, 18, "eng");
   set_s(&subsS[1], "subtitleSize", "Size", "Also in the player, under Subtitles", SIZES, 7, "2");
-  set_s(&subsS[2], "subsColor", "Colour", "", COLORS, 3, "#ffffff");
-  set_s(&subsS[3], "subsOutlineColor", "Outline", "", OUTL, 2, "#000000");
-  set_s(&subsS[4], "subsBgStyle", "Background", "", BGS, 3, "0");
-  set_s(&subsS[5], "subsAssStyle", "Styled subtitles",
+  set_s(&subsS[2], "subsColor", "Colour", "", COLORS, 6, "#ffffff");
+  set_s(&subsS[3], "subsOpacity", "Opacity", "Lower lets the picture show through the words", SUBOP, 6, "100");
+  set_s(&subsS[4], "subsOutlineColor", "Outline", "", OUTL, 2, "#000000");
+  set_s(&subsS[5], "subsBgStyle", "Background", "", BGS, 3, "0");
+  set_s(&subsS[6], "subsAssStyle", "Styled subtitles",
         "Signs, fonts and effects as the film\xe2\x80\x99s own ASS / SSA subtitles draw them", ASSO, 2, "styled");
   int naud = 0; /* (DTS: only where the app converts it; the startup sound: only where the package has one) */
   set_s(&audS[naud++], "enableDefaultAudioTrack", "Auto audio track",
@@ -638,7 +642,7 @@ static void build(void) {
   Cat c[NCAT] = {
     { "Watch", "Playback", "set_play", "Seek step, next episode, picture size", NULL, playS, 6,
       0 }, /* (the count: play_layout) */
-    { "Watch", "Subtitles", "set_subs", "Language, size, colour, background", "subs", subsS, 6, 0 },
+    { "Watch", "Subtitles", "set_subs", "Language, size, colour, opacity, background", "subs", subsS, 7, 0 },
     { "Watch", "Audio", "set_aud", "Default audio language, DTS, interface sounds", NULL, audS, naud, 0 },
     { "Watch", "For You", "g_spark", "Recommendations on Home, region, languages", NULL, recsS, nr, 0 },
     { "Screens", "Appearance", "set_look", "Accent colour", "look", lookS, 2, 0 },
@@ -1644,6 +1648,7 @@ static void prev_frame(float x, float y, float w, float h,
 static Orbs subOrbs;
 static unsigned subSig;
 static double subAt;
+static GfxLayer subLayer;
 static void preview_subs(float x, float y, float w, float h) {
   float t = (float)app_now(), kb = 0.5f - 0.5f * cosf(t * 6.2832f / 24), u0, v0, u1, v1;
   GLuint bt = prev_backdrop(w, h, &u0, &v0, &u1, &v1);
@@ -1661,7 +1666,9 @@ static void preview_subs(float x, float y, float w, float h) {
   int px = (int)(34 * SZ[sz] / 100.0f + 0.5f);
   uint32_t col = hexcol(store_get("subsColor", "#ffffff")), ol = hexcol(store_get("subsOutlineColor", "#000000"));
   float bo = (float)atof(store_get("subsBgStyle", "0"));
-  unsigned sig = (unsigned)px * 2654435761u ^ col ^ (ol << 1) ^ (unsigned)(bo * 1000);
+  int opc = atoi(store_get("subsOpacity", "100"));
+  float op = opc >= 50 && opc < 100 ? opc / 100.0f : 1;
+  unsigned sig = (unsigned)px * 2654435761u ^ col ^ (ol << 1) ^ (unsigned)(bo * 1000) ^ (unsigned)opc << 20;
   if (sig != subSig) {
     if (subSig) {
       subAt = app_now();
@@ -1691,15 +1698,32 @@ static void preview_subs(float x, float y, float w, float h) {
   gfx_clip_push(x, y, w, h);
   gfx_opacity_push(0.4f + 0.6f * ch);
   gfx_offset_push(0, 8 * (1 - ch));
-  if (bo > 0) {
-    float tw = cW > maxW ? maxW : cW;
-    gfx_rrect(x + w / 2 - tw / 2 - 18, ty - 4, tw + 36, n * lh + 8, 10, BLACK_A((int)(bo * 220)));
+  /* below 100 % the line is drawn as the player draws it: once into a picture (at the top left, so a scroll of the
+     page does not make it again), shown see-through where it goes */
+  int lr = op < 1 ? gfx_layer_begin(&subLayer, sig ^ (unsigned)(maxW * 8) ^ (unsigned)n << 28 ^ i18n_gen() * 7919u)
+                  : -2; /* -2 full opacity: drawn straight */
+  if (lr == -1)
+    gfx_opacity_push(op); /* (no offscreen drawing here: a plain fade) */
+  float dx = lr == 1 ? -x : 0, dy = lr == 1 ? -(ty - 8) : 0;
+  if (lr) {
+    if (bo > 0) {
+      float tw = cW > maxW ? maxW : cW;
+      gfx_rrect(x + dx + w / 2 - tw / 2 - 18, ty + dy - 4, tw + 36, n * lh + 8, 10, BLACK_A((int)(bo * 220)));
+    }
+    for (int d = 0; d < 8; d++) {
+      float an = d * 0.785f, ox = cosf(an) * 2.2f, oy = sinf(an) * 2.2f;
+      text_draw_wrapped(line, x + dx + w / 2 + ox, ty + dy + oy, maxW, 2, px, 600, col_alpha(ol, 0.9f), 0, ALIGN_CENTER,
+                        lh);
+    }
+    text_draw_wrapped(line, x + dx + w / 2, ty + dy, maxW, 2, px, 600, col, 0, ALIGN_CENTER, lh);
   }
-  for (int d = 0; d < 8; d++) {
-    float an = d * 0.785f, ox = cosf(an) * 2.2f, oy = sinf(an) * 2.2f;
-    text_draw_wrapped(line, x + w / 2 + ox, ty + oy, maxW, 2, px, 600, col_alpha(ol, 0.9f), 0, ALIGN_CENTER, lh);
+  if (lr == -1)
+    gfx_opacity_pop();
+  if (lr >= 0) {
+    gfx_offset_push(x, ty - 8);
+    gfx_layer_end(&subLayer, op);
+    gfx_offset_pop();
   }
-  text_draw_wrapped(line, x + w / 2, ty, maxW, 2, px, 600, col, 0, ALIGN_CENTER, lh);
   gfx_offset_pop();
   gfx_opacity_pop();
   gfx_clip_pop();

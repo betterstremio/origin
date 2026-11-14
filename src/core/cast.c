@@ -404,7 +404,8 @@ static void on_msg(Client *c, const char *s) {
                                  "subtitleSize", "subsColor",       "subsBgStyle",       "subsOutlineColor",
                                  "subsAssStyle", "enableNextVideo", "bingeWatch",        "seekStep",
                                  "aspectMode",   "bgTrailer",       "bgTrailerVol",      "uiSound",
-                                 "uiSoundVol",   "accent",          "ssDelay",           "uiLang" };
+                                 "uiSoundVol",   "accent",          "ssDelay",           "uiLang",
+                                 "subsOpacity" };
       /* (every setting the phone and the TV share, the language too; never one of this TV's own: its USB drive, Dolby
        * Vision conversion) */
       const cJSON *pr = cJSON_GetObjectItemCaseSensitive(j, "prefs");

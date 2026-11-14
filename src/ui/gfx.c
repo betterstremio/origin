@@ -484,6 +484,24 @@ double gfx_flush_ms(int reset) {
   }
   return v;
 }
+/* the layers in use: a screen-sized picture each, so one not shown for a while is let go */
+static GfxLayer *layerList[4];
+static void layer_note(GfxLayer *l) {
+  int fr = -1;
+  for (int i = 0; i < 4; i++) {
+    if (layerList[i] == l)
+      return;
+    if (!layerList[i] && fr < 0)
+      fr = i;
+  }
+  if (fr >= 0)
+    layerList[fr] = l;
+}
+static void layers_age(void) {
+  for (int i = 0; i < 4; i++)
+    if (layerList[i] && layerList[i]->t.fbo && frameCounter - layerList[i]->last > 120)
+      gfx_layer_free(layerList[i]);
+}
 void gfx_set_screen_fbo(GLuint fbo) {
   screenFbo = fbo;
 }
@@ -492,6 +510,7 @@ void gfx_begin(uint32_t c) {
   scrDirty = 0;
   frameCounter++;
   pool_age();
+  layers_age();
   vboCur = (vboCur + 1) % 3;
   glBindBuffer(GL_ARRAY_BUFFER, vbos[vboCur]);
   vboOff = 0; /* this frame's buffer: the GPU finished with it two frames ago */
@@ -1413,6 +1432,40 @@ void gfx_target_end(void) {
   memcpy(scOx, saved.scOx, sizeof scOx);
   memcpy(scOy, saved.scOy, sizeof scOy);
   apply_clip();
+}
+int gfx_layer_begin(GfxLayer *l, unsigned sig) {
+  int vx, vy, vw, vh, w, h;
+  l->last = frameCounter;
+  layer_note(l);
+  gfx_viewport(&vx, &vy, &vw, &vh);
+  gfx_screen_target_size(vw, vh, &w, &h); /* one texel per surface pixel: the letters stay as sharp */
+  if (l->t.fbo && (l->t.w != w || l->t.h != h)) {
+    gfx_target_free(&l->t);
+    l->sig = 0;
+  }
+  if (!l->t.fbo && !gfx_target_create(&l->t, w, h))
+    return l->open = -1;
+  if (l->sig == sig && sig)
+    return l->open = 0;
+  l->sig = sig;
+  gfx_target_begin(&l->t, 0);
+  return l->open = 1;
+}
+void gfx_layer_end(GfxLayer *l, float alpha) {
+  if (l->open == -1) {
+    l->open = 0;
+    return;
+  }
+  if (l->open == 1)
+    gfx_target_end();
+  l->open = 0;
+  gfx_image(l->t.tex, 0, 0, SB_W, SB_H, 0, WHITE_A((int)(alpha * 255 + .5f)), 0, 1, 1, 0);
+}
+void gfx_layer_free(GfxLayer *l) {
+  if (l->t.fbo)
+    gfx_target_free(&l->t);
+  l->sig = 0;
+  l->open = 0;
 }
 
 /* ---- state stacks ------------------------------------------------------------------------- */

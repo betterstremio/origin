@@ -149,6 +149,18 @@ void gfx_target_end(void);
 void gfx_blur_pass(GfxTarget *dst, unsigned src, int srcW, int srcH, int vertical,
                    float spread); /* one gaussian pass of a target into another */
 void gfx_set_screen_fbo(GLuint fbo); /* frames go to this framebuffer instead of the window (0 = the window) */
+/* a group shown at one opacity (letters over their own outline, seen through as one): drawn into a screen-sized
+   picture only when sig changes, then shown as one quad. gfx_layer_begin: 1 = draw the group now (it goes into the
+   picture), 0 = the picture already holds it (draw nothing), -1 = no offscreen drawing here (draw it straight).
+   Always follow with gfx_layer_end, which shows it at alpha */
+typedef struct {
+  GfxTarget t;
+  unsigned sig, last;
+  int open;
+} GfxLayer; /* (its picture is let go by itself some 120 frames after it was last shown) */
+int gfx_layer_begin(GfxLayer *l, unsigned sig);
+void gfx_layer_end(GfxLayer *l, float alpha);
+void gfx_layer_free(GfxLayer *l);
 
 /* state */
 void gfx_clip_push(float x, float y, float w, float h); /* intersects with the current clip */

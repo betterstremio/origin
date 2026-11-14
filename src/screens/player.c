@@ -793,7 +793,20 @@ static int size_idx(void) {
   return i < 0 || i > 6 ? 2 : i;
 }
 static const int SUB_SIZES[] = { 72, 80, 100, 120, 140, 160, 180 };
-static const char *SUB_COLORS[] = { "#ffffff", "#ffe600", "#00e5ff" }, *SUB_BGS[] = { "0", "1", ".6" };
+/* (the same choices as Settings > Subtitles; silver, grey and soft yellow for dark rooms and OLED screens) */
+static const char *SUB_COLORS[] = { "#ffffff", "#d0d0d0", "#a0a0a0", "#f0e2a8", "#ffe600", "#00e5ff" },
+                  *SUB_BGS[] = { "0", "1", ".6" };
+#define NSUBCOL ((int)(sizeof SUB_COLORS / sizeof *SUB_COLORS))
+static const int SUB_OPS[] = { 100, 90, 80, 70, 60, 50 };
+#define NSUBOP ((int)(sizeof SUB_OPS / sizeof *SUB_OPS))
+static GfxLayer subLayer; /* (the lines below full opacity: sub_layer_begin) */
+static int op_idx(void) {
+  int v = atoi(store_get("subsOpacity", "100"));
+  for (int i = 0; i < NSUBOP; i++)
+    if (SUB_OPS[i] == v)
+      return i;
+  return 0;
+}
 static int bg_idx(void) {
   const char *v = store_get("subsBgStyle", "0");
   for (int i = 0; i < 3; i++)
@@ -803,7 +816,7 @@ static int bg_idx(void) {
 }
 static int color_idx(void) {
   const char *v = store_get("subsColor", "#ffffff");
-  for (int i = 0; i < 3; i++)
+  for (int i = 0; i < NSUBCOL; i++)
     if (!strcasecmp(SUB_COLORS[i], v))
       return i;
   return -1;
@@ -3853,6 +3866,11 @@ static void tray_data(void) {
     snprintf(x->u, 1024, "color"); /* colour and background: shown by their swatch (drawn with the column) */
     x = col_add(c3, 4);
     x->tool = 1;
+    snprintf(x->lb, 200, "%s", T("Opacity"));
+    snprintf(x->vl, 48, "%d%%", SUB_OPS[op_idx()]);
+    snprintf(x->u, 1024, "op");
+    x = col_add(c3, 4);
+    x->tool = 1;
     snprintf(x->lb, 200, "%s", T("Background"));
     snprintf(x->u, 1024, "bg");
     (void)ci;
@@ -4232,7 +4250,11 @@ static void adjust(const char *k) {
     store_set("subtitleSize", v);
   } else if (!strcmp(k, "color")) {
     int ci = color_idx();
-    store_set("subsColor", SUB_COLORS[((ci < 0 ? 0 : ci) + 1) % 3]);
+    store_set("subsColor", SUB_COLORS[((ci < 0 ? 0 : ci) + 1) % NSUBCOL]);
+  } else if (!strcmp(k, "op")) {
+    char v[8];
+    snprintf(v, sizeof v, "%d", SUB_OPS[(op_idx() + 1) % NSUBOP]);
+    store_set("subsOpacity", v);
   } else if (!strcmp(k, "bg"))
     store_set("subsBgStyle", SUB_BGS[(bg_idx() + 1) % 3]);
   render_tray(0);
@@ -5639,6 +5661,7 @@ int player_cast_state(double *pos, double *du, char *title, int cap) {
 static void finish_close(void) {
   sync_stop(0);
   gfx_target_free(&handSnap);
+  gfx_layer_free(&subLayer);
   mo_set(&handA, 0);
   video_unload();
   asssubs_close();
@@ -6621,7 +6644,7 @@ typedef struct {
   unsigned ser;
   int px;
   uint32_t col, ol;
-  float bo;
+  float bo, op;
 } SubStyle;
 static const SubStyle *sub_style(void) {
   static SubStyle st;
@@ -6632,7 +6655,32 @@ static const SubStyle *sub_style(void) {
   st.col = hexcol(store_get("subsColor", "#ffffff"));
   st.ol = hexcol(store_get("subsOutlineColor", "#000000"));
   st.bo = (float)atof(SUB_BGS[bg_idx()]);
+  st.op = SUB_OPS[op_idx()] / 100.0f;
   return &st;
+}
+/* subtitles below full opacity: the lines (outline, letters, box) go into one picture, made again only when what is
+   shown changes, and that picture is shown see-through. At 100 % (the default) they are drawn straight, as before */
+static unsigned sub_mix(unsigned h, unsigned v) {
+  return (h ^ v) * 16777619u;
+}
+static int sub_layer_begin(const SubStyle *st, unsigned sig) {
+  if (st->op >= 0.999f) {
+    if (subLayer.t.fbo)
+      gfx_layer_free(&subLayer);
+    return -2; /* drawn straight */
+  }
+  sig = sub_mix(sub_mix(sig, st->ser), (unsigned)(P.subB.v * 4)); /* the style, and where the foot of the page is */
+  int r = gfx_layer_begin(&subLayer, sig ? sig : 1);
+  if (r < 0)
+    gfx_opacity_push(st->op); /* (no offscreen drawing: a plain fade, the outline showing through the letters) */
+  return r;
+}
+static void sub_layer_end(const SubStyle *st, int r) {
+  if (r == -2)
+    return;
+  if (r < 0)
+    gfx_opacity_pop();
+  gfx_layer_end(&subLayer, st->op);
 }
 /* the cue list's index, made once per list: whether it runs in start order, and the latest end so far at each cue */
 typedef struct {
@@ -6723,7 +6771,16 @@ static void draw_subs(void) {
     uint32_t col = sst->col, ol = sst->ol;
     float bo = sst->bo;
     float lh = px * 1.35f, stackY = SB_H - bottom;
-    for (int i = n - 1; i >= 0; i--) {
+    unsigned sig = 2166136261u;
+    for (int i = 0; i < n; i++) {
+      for (const char *c = ls[i].t; *c; c++)
+        sig = sub_mix(sig, (unsigned char)*c);
+      sig =
+          sub_mix(sig, (unsigned)(int)(ls[i].x * 64) ^ (unsigned)(int)(ls[i].y * 64) << 12 ^ (unsigned)ls[i].an << 24);
+      sig = sub_mix(sig, ls[i].color);
+    }
+    int lr = sub_layer_begin(sst, sig);
+    for (int i = n - 1; i >= 0 && lr; i--) {
       const MkvLine *l = &ls[i];
       int an = l->an ? l->an : 2, al = an % 3 == 1 ? ALIGN_LEFT : an % 3 == 0 ? ALIGN_RIGHT : ALIGN_CENTER;
       if (l->x >= 0 && l->y >= 0)
@@ -6745,6 +6802,7 @@ static void draw_subs(void) {
         stackY -= nl * lh;
       }
     } /* the dialogue stacks up from the bottom */
+    sub_layer_end(sst, lr);
     return;
   }
   if (!P.ncues || !strncmp(P.curSub, "emb", 3))
@@ -6832,7 +6890,11 @@ static void draw_subs(void) {
   int lines = SC.lines;
   char **lp = SC.lp;
   float y = SB_H - bottom - lines * lh;
-  if (bo > 0) {
+  int lr = sub_layer_begin(
+      st, sub_mix(sub_mix(sub_mix((unsigned)(uintptr_t)SC.a, (unsigned)(uintptr_t)SC.b), SC.gen), (unsigned)px));
+  if (!lr)
+    lines = 0; /* (the picture already holds these lines) */
+  if (bo > 0 && lines) {
     float mw = SC.mw;
     gfx_rrect(SB_W / 2 - mw / 2 - 16, y - 2, mw + 32, lines * lh + 4, 8, BLACK_A((int)(bo * 255)));
   } /* one box around the lines, as the page's span */
@@ -6844,6 +6906,7 @@ static void draw_subs(void) {
     text_draw(lp[i], SB_W / 2, y + (lh - text_line_height(px)) / 2, px, 600, col, 0, 0, ALIGN_CENTER);
     y += lh;
   }
+  sub_layer_end(st, lr);
 }
 /* the CC button of a trailer: the subtitles icon, and when they are off a slash drawn from its top-left (0.26 s) with a
  * gap cut around it */
