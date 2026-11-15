@@ -677,6 +677,7 @@ void focus_tick(FocusPop *f, float dt) {
 #define LIFT_N 32
 #define LIFT 0.09f /* how much it grows (clearly: the focused card must stand out at a glance) */
 #define LIFT_DUR 0.24f /* in and out */
+#define GLARE_DUR 0.55f /* the glare's one pass */
 typedef struct {
   unsigned long long key;
   Tween k;
@@ -759,7 +760,17 @@ void lift_end(unsigned long long key, float x, float y, float w, float h, float 
     float k = e->k.v;
     gfx_rrect_v(x, y, w, h, r, WHITE_A((int)(24 * k)),
                 WHITE_A(0)); /* the glass: light from above, faint, in the shape itself */
-    /* (no glare passing over the focused card: the user found it out of place) */
+    float p = (float)((app_now() - e->t0) / GLARE_DUR);
+    /* the glare's one pass, then it rests, faint, near the far edge for as long as the focus stays: the focused card is
+       plain to see */
+    if (e->on) {
+      float q = ease_apply(EASE_IN_OUT, p < 0   ? 0
+                                        : p > 1 ? 1
+                                                : p),
+            pos = -0.2f + 1.0f * q,
+            al = 78 * q + 110 * sinf(3.14159f * q); /* bright as it crosses, settling to its faint rest */
+      gfx_glare(x, y, w, h, r, pos, WHITE_A((int)(al * k)));
+    }
   }
   gfx_scale_pop();
 }

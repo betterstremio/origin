@@ -181,6 +181,7 @@ typedef struct Img {
   int upRow; /* a large picture uploading in bands over several frames */
   int urgent; /* the picture the screen waits on (a backdrop): it goes up first, in bigger bands */
   int pin; /* never evicted (title art: small, wanted at once) */
+  int inPri; /* waiting in the first stack (pstk) */
   struct Img *dnext;
   int inDone; /* decoded, waiting for upload (inDone: in that list now) */
   int wantPal, palAlpha, palReady;
@@ -201,9 +202,10 @@ static Img *stk[1024], *pstk[128];
 static int sn, psn, qn;
 static Img *urg; /* the one picture the screen waits on (the backdrop): taken before both stacks */
 static void q_push(Img *im, int pri) {
-  if (pri && psn < 128)
+  if (pri && psn < 128) {
     pstk[psn++] = im;
-  else
+    im->inPri = 1;
+  } else
     stk[sn++] = im;
   qn++;
 } /* under mu; room checked by the caller */
@@ -499,7 +501,14 @@ static void *worker(void *a) {
     pthread_mutex_lock(&mu);
     while (!qn)
       pthread_cond_wait(&cv, &mu);
-    Img *im = urg ? urg : psn ? pstk[--psn] : stk[--sn];
+    Img *im;
+    if (urg)
+      im = urg;
+    else if (psn) {
+      im = pstk[--psn];
+      im->inPri = 0;
+    } else
+      im = stk[--sn];
     qn--;
     if (im == urg)
       urg = NULL;
@@ -743,14 +752,17 @@ static void urgent_move(Img *im) {
     if (pstk[i] == im) {
       memmove(pstk + i, pstk + i + 1, (size_t)(psn - i - 1) * sizeof *pstk);
       psn--;
+      im->inPri = 0;
       found = 1;
     }
   if (found) {
     if (urg) {
       if (sn < 1024)
         stk[sn++] = urg;
-      else
+      else {
         pstk[psn++] = urg;
+        urg->inPri = 1;
+      }
     }
     urg = im;
   } /* (a picture already taken by a worker is not in them: nothing to do) */
@@ -765,6 +777,27 @@ void img_urgent_shaped(const char *url, int w, int h, float radius, int fit) {
     return;
   char k[2300];
   urgent_move(request_as(shaped_key(k, sizeof k, url, w, h, radius, fit), url, w, h, fit, radius));
+}
+/* the cards about to reach the open box: out of the plain stack into the first one (once; the last asked goes first),
+   and asked every frame, so a scroll never leaves them behind. Not kept like title art: they age out as usual */
+void img_ahead_shaped(const char *url, int w, int h, float radius, int fit) {
+  if (!url || !*url || w <= 0 || h <= 0)
+    return;
+  char k[2300];
+  Img *im = request_as(shaped_key(k, sizeof k, url, w, h, radius, fit), url, w, h, fit, radius);
+  if (im->state != 0 || im->inPri || im == urg)
+    return;
+  pthread_mutex_lock(&mu);
+  if (im->state == 0 && !im->inPri && im != urg && psn < 128)
+    for (int i = sn - 1; i >= 0; i--)
+      if (stk[i] == im) {
+        memmove(stk + i, stk + i + 1, (size_t)(sn - i - 1) * sizeof *stk);
+        sn--;
+        pstk[psn++] = im;
+        im->inPri = 1;
+        break;
+      }
+  pthread_mutex_unlock(&mu);
 }
 /* title art: decoded before the posters waiting in the queue, and kept */
 void img_prefetch_pri(const char *url, int w, int h) {

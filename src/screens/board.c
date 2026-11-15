@@ -122,6 +122,8 @@ typedef struct {
   Tween exp;
   int expRow, expCol;
   double wideBt, wideSt;
+  unsigned wideKey; /* the title whose wide picture the times are for (a new one: times again) */
+  int boxN, boxReady; /* the open box's titles, and how many had their picture in as they came (the log) */
   double heroAt, fadeHold;
   int heroPending, fastBg; /* fadeHold: the fade-in waits (a moment at most) for the whole description */
   /* the hero, in one path: fade out, gather (details, translation, logo: 0.45 s at most), put in, fade in; anything
@@ -2261,6 +2263,33 @@ static void row_prefetch(Row *r, int slot, int from, int to) {
   }
   r->pfWait[slot] = (unsigned char)wait;
 }
+/* the row being scrolled under the open box: the next cards' box picture, sharp crop and logo before anything else, asked
+   every frame so a scroll never drops them (the rest of the row keeps the quick crops). 2 on a stick, 4 elsewhere */
+static void row_ahead(Row *r, int cw, int ch) {
+  static int n;
+  if (!n) {
+    int mb = plat_mem_total_mb();
+    n = mb > 0 && mb <= 1200 ? 2 : 4; /* (0: not known, a computer) */
+  }
+  static const int far[] = {-1, 4, 3, 2, 1, 0}; /* the last asked is taken first: the nearest last */
+  for (int k = 0; k < (int)(sizeof far / sizeof *far); k++) {
+    int d = far[k], i = r->col + d;
+    if (d > n || i < 0 || i >= r->items.n)
+      continue;
+    int hold;
+    const CardPrep *cp = row_prep(r, i, 1, &hold, NULL);
+    if (!cp || !cp->crop)
+      continue;
+    if (d) {
+      char lu[512];
+      logo_src(&r->items.items[i], lu, sizeof lu);
+      if (lu[0])
+        img_ahead_shaped(lu, CROP_LOGO_W, CROP_LOGO_H, 0, -1);
+      img_ahead_shaped(cp->art, cw, ch, CARD_R, 3);
+    }
+    img_ahead_shaped(cp->art, (int)CARD_OPEN_W, ch, CARD_R, 1); /* the one the box shows */
+  }
+}
 /* "its trailer is playing": three slim bars rising and falling out of step, on a small glass chip in the card's
    top left corner (it comes and goes with the trailer) */
 /* a desktop: a card the pointer may only bring into view by a click (another row, the spotlight in focus, or one
@@ -2455,6 +2484,22 @@ static void card_wide(Board *b, const Row *r, const Item *it, const CardPrep *cp
         wx = rtl ? ox + ow - fw + ((float)fw - cw - L) * (1 - t) : ox - L * (1 - t);
       }
       double wn = app_now();
+      if (focused) {
+        unsigned key = 2166136261u;
+        for (const char *p = bu; *p; p++)
+          key = (key ^ (unsigned char)*p) * 16777619u;
+        if (key != b->wideKey) { /* a title new to the box: its picture there already shows at once, no fade */
+          b->wideKey = key;
+          b->wideBt = bt ? wn - 1 : 0;
+          b->wideSt = 0;
+          if (ek >= 0.999f) {
+            b->boxN++;
+            b->boxReady += bt != 0;
+            fprintf(stderr, "[card] box: picture %s on arrival (%d of %d ready)\n", bt ? "ready" : "NOT ready",
+                    b->boxReady, b->boxN);
+          }
+        }
+      }
       if (focused && sm && !b->wideSt)
         b->wideSt = app_trailer_idle() + 1e-3; /* (how long after the key each came: the log below) */
       if (focused && bt && !b->wideBt) {
@@ -2499,8 +2544,10 @@ static void card_wide(Board *b, const Row *r, const Item *it, const CardPrep *cp
         gfx_clip_pop();
       }
     }
-  } else if (focused)
+  } else if (focused) {
     b->wideBt = b->wideSt = 0;
+    b->wideKey = 0;
+  }
 }
 static void row_draw(Board *b, Row *r, int ri, float y, int near, float rowA) {
   int rtl = app_rtl();
@@ -2620,6 +2667,8 @@ static void row_draw(Board *b, Row *r, int ri, float y, int near, float rowA) {
         img_get_shaped(pu0, fw0, (int)ch, CARD_R, 1);
     }
   }
+  if (L.slot && near)
+    row_ahead(r, (int)cw, (int)ch);
   if (active && r->col < r->items.n) {
     float x = 48 + lay_x(&L, r->col, step) + rk0 + (rem && r->col >= b->remIdx ? step * (1 - rk) : 0);
     if (rtl)

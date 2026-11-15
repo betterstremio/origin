@@ -31,6 +31,8 @@ const char *img_src_of(GLuint tex); /* the address a plain picture was loaded fr
 void img_urgent_shaped(const char *url, int w, int h, float radius,
                        int fit); /* the picture the screen waits on, ahead of the queue */
 int img_has_room(void);
+/* a picture wanted soon (the next cards of the row being scrolled): ahead of the plain queue; ask it every frame */
+void img_ahead_shaped(const char *url, int w, int h, float radius, int fit);
 void img_prefetch(const char *url, int w, int h);
 int img_budget_mb(void); /* the picture memory allowed (small on most TVs) */
 void img_urgent(const char *url, int w, int h); /* the next one decoded (the backdrop waited on) */
