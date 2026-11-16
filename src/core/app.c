@@ -749,7 +749,7 @@ static int chipCur(int i) {
   return tab_of(tab_scr()) == i;
 }
 static int chipFocused(int i) {
-  return topNav.active && topNav.idx == i && !update_pill_focused();
+  return topNav.active && topNav.idx == i && !update_pill_focused() && !profpanel_is_open();
 } /* the notice holds the highlight while it has it */
 static void topnav_layout(void) {
   float pad = 36, w[NAV_N] = { 0 }, tot = 0;
@@ -781,7 +781,9 @@ static void topnav_layout(void) {
 }
 static void topnav_paint(void) {
   topnav_layout();
-  int fc = topNav.active && topNav.idx >= 0 && topNav.idx <= NAV_LIB && !update_pill_focused() ? topNav.idx : -1;
+  int fc = topNav.active && topNav.idx >= 0 && topNav.idx <= NAV_LIB && !update_pill_focused() && !profpanel_is_open()
+               ? topNav.idx
+               : -1; /* (the profile menu out: its own pill is the focus) */
   if (fc >= 0) {
     float x = topNav.chipX[fc], w = topNav.chipW[fc];
     if (topNav.pillShown < 0.5f && !topNav.pill.on) {

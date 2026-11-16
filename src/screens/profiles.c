@@ -307,13 +307,11 @@ int profile_avatar_draw_r(const char *av, float x, float y, float D, float r) {
   return t != 0;
 } /* (rounded square: the bar and the profile panel, as Netflix's) */
 static void disc(float x, float y, float D, unsigned color, const char *name, const char *av, float foc, int lock) {
-  float s = 1 + 0.08f * foc, cx = x + D / 2, cy = y + D / 2;
+  float s = 1 + 0.12f * foc, cx = x + D / 2, cy = y + D / 2, r = D * 0.14f; /* rounded as the bar's and the menu's */
   gfx_scale_push(s, s, cx, cy);
-  if (foc > 0.01f)
-    gfx_ring(x - 10, y - 10, D + 20, D + 20, (D + 20) / 2, 5, WHITE_A((int)(240 * foc)));
-  gfx_rrect(x, y, D, D, D / 2, RGB((color >> 16) & 255, (color >> 8) & 255, color & 255));
-  if (!profile_avatar_draw(av, x, y, D)) { /* no picture (yet): the colour's sheen and the initial */
-    gfx_rrect_v(x, y, D, D, D / 2, WHITE_A(50), WHITE_A(0));
+  gfx_opacity_push(0.62f + 0.38f * foc); /* the others a step back */
+  gfx_rrect(x, y, D, D, r, RGB((color >> 16) & 255, (color >> 8) & 255, color & 255));
+  if (!profile_avatar_draw_r(av, x, y, D, r)) { /* no picture (yet): its colour and the initial */
     char ini[8] = { 0 };
     {
       const unsigned char *u = (const unsigned char *)name;
@@ -323,27 +321,27 @@ static void disc(float x, float y, float D, unsigned color, const char *name, co
     if (ini[0] >= 'a' && ini[0] <= 'z')
       ini[0] -= 32;
     float px = D * 0.46f;
-    text_draw(ini, cx, cy - text_line_height(px) / 2, px, 800, WHITE_A(255), 0, 0, ALIGN_CENTER);
+    text_draw(ini, cx, cy - text_line_height(px) / 2, px, 600, WHITE_A(255), 0, 0, ALIGN_CENTER);
   }
+  gfx_opacity_pop();
   gfx_scale_pop();
   int ph = form_touch();
   float ny = y + D + (ph ? 10 : 34);
   int npx = ph ? 15 : 32;
-  text_draw(name, cx, ny, npx, foc > 0.5f ? 700 : 500, WHITE_A(foc > 0.5f ? 255 : 190), 0, D + 40, ALIGN_CENTER);
+  text_draw(name, cx, ny + 8 * foc, npx, foc > 0.5f ? 600 : 500, WHITE_A(foc > 0.5f ? 255 : 160), 0, D + 40,
+            ALIGN_CENTER);
   if (lock)
     text_draw(T("PIN"), cx, ny + text_line_height(npx) + 4, ph ? 11 : 22, 600, WHITE_A(150), 1, 0, ALIGN_CENTER);
 }
 static void add_tile(float x, float y, float D, float foc) {
-  float s = 1 + 0.08f * foc, cx = x + D / 2, cy = y + D / 2;
+  float s = 1 + 0.12f * foc, cx = x + D / 2, cy = y + D / 2, r = D * 0.14f, l = D * 0.34f, t = D * 0.035f;
   gfx_scale_push(s, s, cx, cy);
-  if (foc > 0.01f)
-    gfx_ring(x - 10, y - 10, D + 20, D + 20, (D + 20) / 2, 5, WHITE_A((int)(240 * foc)));
-  gfx_rrect(x, y, D, D, D / 2, WHITE_A(26));
-  float px = D * 0.5f;
-  text_draw("+", cx, cy - text_line_height(px) / 2, px, 500, WHITE_A(230), 0, 0, ALIGN_CENTER);
+  gfx_ring(x, y, D, D, r, 2, WHITE_A((int)(110 + 120 * foc)));
+  gfx_rrect(cx - l / 2, cy - t / 2, l, t, t / 2, WHITE_A((int)(170 + 85 * foc)));
+  gfx_rrect(cx - t / 2, cy - l / 2, t, l, t / 2, WHITE_A((int)(170 + 85 * foc))); /* a drawn plus, not a glyph */
   gfx_scale_pop();
-  text_draw(T("Add profile"), cx, y + D + (form_touch() ? 10 : 34), form_touch() ? 15 : 32, foc > 0.5f ? 700 : 500,
-            WHITE_A(foc > 0.5f ? 255 : 190), 0, D + 40, ALIGN_CENTER);
+  text_draw(T("Add profile"), cx, y + D + (form_touch() ? 10 : 34) + 8 * foc, form_touch() ? 15 : 32,
+            foc > 0.5f ? 600 : 500, WHITE_A(foc > 0.5f ? 255 : 160), 0, D + 40, ALIGN_CENTER);
 }
 static void draw(void) {
   if (!P.was)
@@ -406,7 +404,7 @@ static void draw(void) {
     int n = tile_count();
     float D = n <= 5 ? 190 : 140, G = n <= 5 ? 64 : 40, W = n * D + (n - 1) * G, x = SB_W / 2 - W / 2,
           y = SB_H / 2 - D / 2 - 30;
-    text_draw(T("Who\xe2\x80\x99s watching?"), SB_W / 2, y - 150, 60, 700, WHITE_A(255), -0.5f, 0, ALIGN_CENTER);
+    text_draw(T("Who\xe2\x80\x99s watching?"), SB_W / 2, y - 150, 56, 600, WHITE_A(255), -0.4f, 0, ALIGN_CENTER);
     for (int i = 0; i < n; i++) {
       NvProfile p;
       int real = nv_profile_get(i, &p);

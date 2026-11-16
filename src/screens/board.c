@@ -164,9 +164,17 @@ static double colAt;
 static Board *cur(void) {
   return SCR == SCR_HOME ? &boards[0] : SCR == SCR_DISC ? &boards[1] : SCR == SCR_COL ? &boards[2] : NULL;
 }
+/* laid out as Home (the billboard, the cinematic rows): Home, and the Shows / Movies tabs in the cinematic layout; the
+   other Discover board (phones, the classic layout) keeps its own spotlight */
+static int lay0(const Board *b) {
+  return b->kind == 0 || (b->kind == 1 && b->cine);
+}
+static int spot1(const Board *b) {
+  return b->kind == 1 && !b->cine;
+}
 static int spotk(const Board *b) {
-  return b->kind == 1 || (b->kind == 0 && b->bill && b->cine);
-} /* a spotlight: Discover's, or Home's billboard */
+  return spot1(b) || (b->bill && b->cine);
+} /* a spotlight: Discover's, or the billboard */
 static int spotOn(Board *b) {
   return spotk(b) && b->featOn;
 } /* the spotlight has the focus (its titles may still be on the way) */
@@ -243,8 +251,8 @@ const Item *board_next_item(void) {
   if (!b || topNav.active)
     return NULL;
   if (spotOn(b))
-    return b->kind == 0 && b->nfeat > 1 ? &b->feat[(b->featIdx + 1) % b->nfeat]
-                                        : NULL; /* (the billboard's next title: its link ready before it turns) */
+    return lay0(b) && b->nfeat > 1 ? &b->feat[(b->featIdx + 1) % b->nfeat]
+                                   : NULL; /* (the billboard's next title: its link ready before it turns) */
   if (b->rowIdx >= b->n)
     return NULL;
   Row *r = &b->rows[b->rowIdx];
@@ -252,15 +260,15 @@ const Item *board_next_item(void) {
 }
 float board_open_wait(void) {
   Board *b = cur();
-  return b && b->kind == 0 && b->cine && focusOn(b) ? cine_open_after() - CINE_OPEN_MIN : 0;
+  return b && b->cine && focusOn(b) ? cine_open_after() - CINE_OPEN_MIN : 0;
 } /* (the clip in the card waits as long as it does) */
 int board_rows_docked(void) {
   Board *b = cur();
-  return b && focusOn(b) && (b->kind == 0 || b->rowIdx > 0);
+  return b && focusOn(b) && (lay0(b) || b->rowIdx > 0);
 } /* the rows have scrolled up under the top bar */
 int board_on_billboard(void) {
   Board *b = cur();
-  return b && !topNav.active && spotOn(b) && b->kind == 0 && b->cine && b->bill;
+  return b && !topNav.active && spotOn(b) && b->cine && b->bill;
 }
 int board_near_items(const Item **out, int max) {
   Board *b = cur();
@@ -273,7 +281,7 @@ int board_near_items(const Item **out, int max) {
       out[n++] = &(rw)->items.items[i];             \
   } while (0)
   if (spotOn(b)) {
-    for (int k = 1; k <= 2 && b->kind == 0 && k < b->nfeat; k++)
+    for (int k = 1; k <= 2 && lay0(b) && k < b->nfeat; k++)
       if (n < max)
         out[n++] = &b->feat[(b->featIdx + k) % b->nfeat];
     if (b->n)
@@ -301,7 +309,7 @@ int board_near_items(const Item **out, int max) {
 }
 int board_spot_up(void) {
   Board *b = cur();
-  return b && b->featOn && !topNav.active && !(b->kind == 0 && b->cine && b->bill);
+  return b && b->featOn && !topNav.active && !(b->cine && b->bill);
 } /* (a spotlight with no place for a video; the cinematic billboard has one) */
 
 /* ---- rows ---- */
@@ -665,8 +673,10 @@ static void load_catalog_rows(Board *b, int disc, int keep) {
     free(was);
     pinned_rows(b);
   }
-  if (disc)
+  if (disc) {
+    b->cine = discType && strcmp(store_get("homeLayout", "cinematic"), "classic");
     col_disc_rows(b, keep, oldCols);
+  }
   CatalogDef defs[12];
   int nd = disc ? sb_disc_defs(defs, 12,
                                discType == 1   ? "series"
@@ -736,6 +746,13 @@ static void feat_done(Board *b) {
     b->featLoad = 0;
     return;
   }
+  if (b->cine) {
+    b->bill = 1;
+    if (b->rowIdx == 0 && !(b->n && b->rows[0].col)) {
+      b->featOn = 1; /* the tab opens on its billboard, as Home does (unless the rows were already being browsed) */
+      b->billBtn = 0;
+    }
+  }
   b->featIdx = 0;
   for (int i = 0; i < NFEAT; i++)
     tween_set(&b->dotW[i], i == 0 ? 34 : 10);
@@ -776,7 +793,7 @@ static void feat_fill(Board *b) {
 }
 static void feat_arm(Board *b) {
   if (spotk(b))
-    b->featAt = app_now() + (b->kind == 0 ? 8 : 4);
+    b->featAt = app_now() + (lay0(b) ? 8 : 4);
 } /* it moves on by itself every 4 s while you rest on it */
 static void feat_go(Board *b, int step) {
   int n = b->nfeat;
@@ -923,9 +940,9 @@ static void hero_view(Board *b, HeroView *v) {
 }
 /* the description's lines all rasterised, as each face draws it (the missing ones are asked for) */
 static int desc_ready(Board *b, const char *d) {
-  return !d[0] || (b->kind == 1 ? text_wrapped_ready(d, 1080, 2, DESC_PX, 400, 0)
-                   : b->cine    ? text_wrapped_ready(d, CINE_DESC_W, 2, DESC_PX, 400, 0)
-                                : text_wrapped_ready(d, HERO_W, 3, DESC_PX, 400, 0));
+  return !d[0] || (spot1(b)  ? text_wrapped_ready(d, 1080, 2, DESC_PX, 400, 0)
+                   : b->cine ? text_wrapped_ready(d, CINE_DESC_W, 2, DESC_PX, 400, 0)
+                             : text_wrapped_ready(d, HERO_W, 3, DESC_PX, 400, 0));
 }
 static const char *hero_key(const Board *b) {
   static char k[80];
@@ -941,7 +958,7 @@ static void hero_put(Board *b) {
     tween_set(&b->logoIn, 0);
     tween_to(&b->logoIn, 1, 0.3f, EASE_CSS_EASEOUT);
   } /* a logo that came late fades in */
-  else if (b->kind == 1 && b->view.logo[0] && !sx_arrived(hero_key(b))) {
+  else if (spot1(b) && b->view.logo[0] && !sx_arrived(hero_key(b))) {
     tween_set(&b->logoIn, 0);
     tween_to(&b->logoIn, 1, 0.45f, EASE_CSS_EASE);
   } /* Discover's big logo: a soft fade of its own, never a pop over the picture */
@@ -980,7 +997,7 @@ static void hero_apply(Board *b) {
   int delay = (app_splash_done && !fast) ? (int)((0.4f - idle) * 1000) : 0;
   if (delay < 0)
     delay = 0;
-  if (b->kind == 0 && b->cine)
+  if (b->cine)
     bg_set(NULL, 0, NULL);
   else
     bg_set(bgu, delay, pu); /* shown ~0.4 s after the last move (the cinematic Home has none) */
@@ -1251,20 +1268,20 @@ static GLuint grad_tex(int vertical) {
   for (int i = 0; i < 64; i++) {
     float x = (i + .5f) / 64;
     float a = vertical ? (x < .6f ? 0 : (x - .6f) / .4f * .70f)
-                       : (x < .35f   ? .86f - (.86f - .45f) * x / .35f
-                          : x < .62f ? .45f * (1 - (x - .35f) / .27f)
-                                     : 0);
+                       : (x < .30f   ? .88f
+                          : x < .50f ? .88f - (.88f - .50f) * (x - .30f) / .20f
+                          : x < .78f ? .50f * (1 - (x - .50f) / .28f)
+                                     : 0); /* dark under the words whatever the picture, gone by the subject */
     px[i] = (unsigned char)(a * 255 + .5f);
   }
   t[vertical] = vertical ? gfx_tex_create(px, 1, 64, 1, 1) : gfx_tex_create(px, 64, 1, 1, 1);
   return t[vertical];
 }
 static void bill_btn(float x, float y, float w, int play, int on, float a) {
-  float h = 66;
-  if (on)
-    gfx_ring_out(x - 6, y - 6, w + 12, h + 12, h / 2 + 6, 4, WHITE_A((int)(255 * a)));
-  gfx_rrect(x, y, w, h, h / 2, play ? WHITE_A((int)(255 * a)) : WHITE_A((int)(64 * a)));
-  uint32_t ink = play ? RGBA(0, 0, 0, (int)(255 * a)) : WHITE_A((int)(255 * a));
+  float h = 66; /* as the bar: the focused one light with dark words, the other grey (no ring) */
+  gfx_rrect(x, y, w, h, h / 2, on ? RGBA(0xe5, 0xe5, 0xe5, (int)(255 * a)) : RGBA(0x6d, 0x6d, 0x70, (int)(178 * a)));
+  uint32_t ink = on ? RGBA(0x14, 0x14, 0x14, (int)(255 * a)) : WHITE_A((int)(255 * a));
+  (void)play;
   if (play)
     icon_draw("play", x + 34, y + h / 2 - 13, 26, ink);
   else {
@@ -1536,18 +1553,18 @@ static void spot_focus(int a, int c) {
 }
 #endif
 static void hero_draw(Board *b) {
-  if (b->kind == 0 && b->cine) {
+  if (b->cine) {
     if (b->bill)
       bill_draw(b);
     return;
   } /* the cinematic Home: the billboard; the rows draw their own details */
-  if (b->kind == 1 && b->spotA.v > 0.001f)
+  if (spot1(b) && b->spotA.v > 0.001f)
     gfx_alpha_tex(scrim_tex(), 260, 170, SB_W - 520, 460,
                   RGBA(12, 11, 17, (int)(255 * b->spotA.v))); /* painted once, one quad */
-  if (b->kind == 1)
+  if (spot1(b))
     dots_draw(b);
 #if SB_WINDOWED
-  if (b->kind == 1 && b->nfeat) {
+  if (spot1(b) && b->nfeat) {
     hit_add(260, 170, SB_W - 520, 460, spot_focus, NULL, 0, 0);
     if (!spotOn(b))
       hit_peek_last();
@@ -1556,12 +1573,12 @@ static void hero_draw(Board *b) {
   if (!b->heroSet)
     return;
   float a = b->heroA.v;
-  if (a <= 0.001f && !(b->kind == 1 && b->heroSpot))
+  if (a <= 0.001f && !(spot1(b) && b->heroSpot))
     return;
   /* first launch: the hero rises 18 px and fades in (no delay) */
   float rv = app_reveal_x(0, 0.5f), ry = 18 * (1 - ease_apply(EASE_WEB, rv)),
         ra = ease_apply(EASE_CSS_EASE, app_reveal_x(0, 0.45f));
-  if (b->kind == 1) {
+  if (spot1(b)) {
     gfx_opacity_push(ra);
     gfx_offset_push(0, ry);
     hero_draw_disc(b, a);
@@ -1611,13 +1628,15 @@ static void board_enter_k(Board *b) {
     load_catalog_rows(b, b->kind == 1, keep);
     rows_window(b);
   }
+  if (b->kind == 1)
+    feat_fill(b); /* (the Shows / Movies billboard: its titles on their way before it can show) */
   if (spotk(b)) {
     feat_fill(b);
     feat_arm(b);
     if (spotOn(b) && (b->nfeat > 0 || b->featLoad)) {
-      tween_set(&b->spotY, b->kind == 0 ? HOME_SPOT_DY : 144);
-      tween_set(&b->rowsA, b->kind == 1 ? 0.5f : 1);
-      if (b->kind == 0) {
+      tween_set(&b->spotY, lay0(b) ? HOME_SPOT_DY : 144);
+      tween_set(&b->rowsA, spot1(b) ? 0.5f : 1);
+      if (lay0(b)) {
         tween_set(&b->spotA, 1);
         tween_set(&b->topY, ROWS_TOP);
       }
@@ -1667,6 +1686,8 @@ void board_disc_type_set(int t) {
   b->built = 0;
   b->nfeat = 0;
   b->featLoad = 0;
+  b->bill = 0;
+  b->featOn = 0;
   b->featIdx = 0;
   b->heroSet = 0;
 }
@@ -1785,7 +1806,7 @@ static void spot_leave(Board *b) {
   }
 }
 static int board_key(Board *b, int k) {
-  if (spotOn(b) && b->kind == 0) { /* Home's billboard: Play / More info; past them, the next or previous title */
+  if (spotOn(b) && lay0(b)) { /* the billboard: Play / More info; past them, the next or previous title */
     if (k == K_RIGHT) {
       if (b->billBtn == 0)
         b->billBtn = 1;
@@ -1962,7 +1983,7 @@ static void card_open_tick(Board *b, float dt) {
     tween_set(&b->exp, 0);
     tween_to(&b->exp, 1, 0.2f, EASE_STD);
   } /* up or down from an open card: the new row's first place opens as the rows move (as Netflix's) */
-  if (here && b->cine && b->kind == 0 && !r->wide && !r->ntiles) {
+  if (here && b->cine && !r->wide && !r->ntiles) {
     b->expRow = b->rowIdx;
     b->expCol = r->col;
     if (b->exp.v < 1 || b->exp.to < 1)
@@ -1993,10 +2014,10 @@ static void board_tick(float dt) {
   card_open_tick(b, dt);
   timer_tick(&b->fade, dt);
   nudge_tick(&b->nudge, dt);
-  if (b->kind == 0) {
-    static unsigned ser;
-    if (store_serial() != ser) {
-      ser = store_serial();
+  if (b->kind == 0 || (b->kind == 1 && discType)) {
+    static unsigned ser[2]; /* (each board its own: the one not on screen sees the change when it comes back) */
+    if (store_serial() != ser[b->kind]) {
+      ser[b->kind] = store_serial();
       int c = strcmp(store_get("homeLayout", "cinematic"), "classic") != 0;
       if (c != b->cine)
         board_rebuild();
@@ -2008,7 +2029,7 @@ static void board_tick(float dt) {
   }
   if (b->kind == 0 && b->winRow != b->rowIdx)
     rows_window(b); /* (the focused row changed) */
-  if (b->kind == 0) { /* the focused row's details make room under it; the rows dock under the bar */
+  if (lay0(b)) { /* the focused row's details make room under it; the rows dock under the bar */
     int fo = focusOn(b);
     for (int i = 0; i < b->n; i++)
       b->rows[i].extra = b->cine && fo && i == b->rowIdx && b->rows[i].items.n && !b->rows[i].wide && !b->rows[i].ntiles
@@ -2049,9 +2070,9 @@ static void board_tick(float dt) {
                                                                                                              has
                                                                                                              changed
                                                                                                            */
-    tween_to(&b->spotY, rs ? (b->kind == 0 ? HOME_SPOT_DY : 144) : 0, 0.45f, EASE_WEB);
-    tween_to(&b->rowsA, rs && b->kind == 1 ? 0.5f : 1, 0.28f, EASE_CSS_EASE);
-    tween_to(&b->spotA, (b->kind == 0 ? sp : hs) ? 1 : 0, 0.4f, EASE_CSS_EASE);
+    tween_to(&b->spotY, rs ? (lay0(b) ? HOME_SPOT_DY : 144) : 0, 0.45f, EASE_WEB);
+    tween_to(&b->rowsA, rs && spot1(b) ? 0.5f : 1, 0.28f, EASE_CSS_EASE);
+    tween_to(&b->spotA, (lay0(b) ? sp : hs) ? 1 : 0, 0.4f, EASE_CSS_EASE);
     int dOn = sp && hs && b->nfeat;
     if (dOn != b->dotsWant) {
       b->dotsWant = dOn;
@@ -2082,10 +2103,10 @@ static void board_tick(float dt) {
       if (sp && !topNav.active) {
         BgtState bs = bgt_state();
         if (app_idle() < 3.5f ||
-            (b->kind == 0 && (pace_period() > 20 || bs == BGT_WAIT || bs == BGT_LOAD || bs == BGT_SHOW)))
+            (lay0(b) && (pace_period() > 20 || bs == BGT_WAIT || bs == BGT_LOAD || bs == BGT_SHOW)))
           feat_arm(b); /* (its preview plays to the end before the billboard turns) */
         else {
-          if (b->kind == 0)
+          if (lay0(b))
             b->billBtn = 0;
           feat_go(b, 1);
         }
@@ -2389,8 +2410,8 @@ typedef struct {
 /* the cinematic Home's focused poster row, as Netflix's: its first place is a box that stays open (open the moment
    the row has the focus); left and right move the row under it, the box changes title in the same glide */
 static int slot_row(const Board *b, const Row *r, int ri) {
-  return b->cine && b->kind == 0 && cur() == b && focusOn((Board *)b) && ri == b->rowIdx && !r->wide && !r->ntiles &&
-         b->expRow == ri && b->exp.to >= 1;
+  return b->cine && cur() == b && focusOn((Board *)b) && ri == b->rowIdx && !r->wide && !r->ntiles && b->expRow == ri &&
+         b->exp.to >= 1;
 }
 static void row_lay(const Board *b, const Row *r, int ri, RowLay *L) {
   float step = step_of(r), p = r->pos.v, open = 0;
@@ -2801,7 +2822,7 @@ static void board_draw(void) {
     if (!any)
       text_draw(T("Nothing found."), SB_W / 2, SB_H / 2, 31, 600, WHITE_A(204), 0, SB_W - 96, ALIGN_CENTER);
   }
-  float top = b->kind == 0 ? b->topY.v : ROWS_TOP;
+  float top = lay0(b) ? b->topY.v : ROWS_TOP;
   gfx_clip_push(0, top, SB_W, SB_H - top);
   float sy = spotk(b) ? b->spotY.v : 0, ra0 = spotk(b) ? b->rowsA.v : 1;
   gfx_offset_push(0, b->hostY.v + sy);
@@ -3004,7 +3025,7 @@ static int board_origin(float *x, float *y) {
   Row *r = &b->rows[b->rowIdx];
   if (r->col > col_last(r))
     return 0;
-  float cy = (b->kind == 0 ? b->topY.v : ROWS_TOP) + b->hostY.v + (spotk(b) ? b->spotY.v : 0);
+  float cy = (lay0(b) ? b->topY.v : ROWS_TOP) + b->hostY.v + (spotk(b) ? b->spotY.v : 0);
   for (int i = 0; i < b->rowIdx; i++)
     if (!b->rows[i].hidden)
       cy += row_h(&b->rows[i]);

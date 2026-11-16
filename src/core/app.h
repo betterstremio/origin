@@ -156,6 +156,7 @@ void app_open_settings(void); /* Settings (the profile panel's row) */
 void app_profile_pic(float x, float y, float D, float r); /* the profile in use: its picture, or colour + initial */
 int profpanel_open(void); /* the profile menu out of the picture (screens/profpanel.c); 0 when it cannot open */
 float profpanel_k(void); /* 0 closed .. 1 open: the bar leaves its picture to the menu meanwhile */
+int profpanel_is_open(void);
 
 /* ---- the backdrop ---- */
 void bg_set(const char *url, int delayMs,

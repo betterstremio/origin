@@ -563,7 +563,7 @@ void card_prep(CardPrep *cp, const Item *it, int wide, const char *artOverride) 
       sb_fmt_runtime((int)(it->left + 0.5f) < 1 ? 1 : (int)(it->left + 0.5f), r, sizeof r);
       snprintf(cp->left, sizeof cp->left, "%s", T1("{t} left", "t", r));
     }
-    cp->leftW = text_width(cp->left, 22, 600, 0) + 26;
+    cp->leftW = text_width(cp->left, 22, 500, 0) + 16;
   }
 }
 static int card_body(const Item *it, const CardPrep *cp, float x, float y, float w, float h, int wide, int label,
@@ -631,14 +631,13 @@ static int card_body(const Item *it, const CardPrep *cp, float x, float y, float
   }
   if (wide) {
     /* the name over a fade (12 15 26 padding: the inset progress line sits under it), the time left in a chip */
-    float lh = text_line_height(26), gh = 12 + lh + 26;
+    float lh = text_line_height(26), gh = 12 + lh + 26, lw = it->left > 0 ? cp->leftW : 0;
     gfx_rrect_v(x, y + h - gh, w, gh, 0, BLACK_A(0), BLACK_A(224));
-    text_draw(cp->lbl, app_rtl() ? x + w - 15 : x + 15, y + h - 26 - lh, 26, 600, WHITE_A(255), 0, w - 30, ALIGN_START);
-    if (it->left > 0) {
-      float tw = cp->leftW, th = 10 + text_line_height(22), bx = app_rtl() ? x + 12 : x + w - 12 - tw;
-      gfx_rrect(bx, y + 12, tw, th, 11, RGBA(12, 11, 17, 199));
-      text_draw(cp->left, bx + 13, y + 12 + 5, 22, 600, WHITE_A(255), 0, 0, ALIGN_LEFT);
-    }
+    text_draw(cp->lbl, app_rtl() ? x + w - 15 : x + 15, y + h - 26 - lh, 26, 600, WHITE_A(255), 0, w - 30 - lw,
+              ALIGN_START);
+    if (lw > 0)
+      text_draw(cp->left, app_rtl() ? x + 15 : x + w - 15, y + h - 26 - lh + (lh - text_line_height(22)) / 2, 22, 500,
+                WHITE_A(178), 0, 0, app_rtl() ? ALIGN_LEFT : ALIGN_RIGHT); /* the time left beside the name, quiet */
     if (it->progress > 0) {
       float bw = w - 28,
             pw = bw * (it->progress > 1

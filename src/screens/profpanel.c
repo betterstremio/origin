@@ -95,6 +95,7 @@ static void close_now(void) {
   tween_set(&PP.a, 0);
   if (app_overlay == &ov)
     app_overlay = NULL;
+  topnav_focus();
 } /* gone at once: the page changes under it anyway */
 static void back_here(void) {
   PP.open = 1;
@@ -118,7 +119,8 @@ static void act(int i) {
     }
     close_now();
     sound_play(SND_TAB);
-    profiles_switch(at[i]); /* Home of that profile, the focus on its billboard */
+    profiles_switch(at[i]);
+    topnav_leave(); /* Home of that profile, the focus on its billboard */
     return;
   }
   close_now();
@@ -162,7 +164,8 @@ static void tick(float dt) {
   if (PP.open && app_overlay != &ov && !profiles_is_open()) {
     PP.open = 0;
     tween_set(&PP.a, 0);
-  } /* a profile chosen through its PIN: the menu goes with the pad */
+    topnav_leave();
+  } /* a profile chosen through its PIN: the menu goes with the pad, the focus to the new Home */
   tween_tick(&PP.a, dt);
   tween_tick(&PP.pillY, dt);
   tween_tick(&PP.pillH, dt);
@@ -326,8 +329,9 @@ int profpanel_open(void) {
   PP.idx = 0; /* the profile in use ("Switch profiles"); a Stremio account: Settings */
   tween_set(&PP.pillH, 0);
   tween_to(&PP.a, 1, 0.24f, GLIDE_EASE);
-  topnav_leave(); /* the bar's pill fades while the menu is out */
   app_overlay = &ov;
+  topNav.idx = NAV_SEARCH;
+  topnav_focus(); /* the focus stays with the bar (the page shows none), its pill gone while the menu is out */
   sound_focus();
   return 1;
 }
