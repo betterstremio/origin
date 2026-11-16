@@ -188,6 +188,8 @@ typedef struct Img {
   Palette pal; /* the colours of the picture, asked for by the accent */
   int wantTex; /* someone draws it (a picture only asked for its colours is never uploaded) */
   unsigned lastUse;
+  int row;       /* the Home row that asked for it last (-1: none): eviction goes by distance from the focus */
+  unsigned hpin; /* = hgen: kept while the first screen is pinned (see img_pin_begin) */
   int shown;  /* it has had a texture before (a return: no fade, no wait) */
   int smOk;   /* its small copy is known to be on disk */
   int fromSm; /* its pixels came from the small copy */
@@ -197,6 +199,9 @@ typedef struct Img {
   struct Img *next;
 } Img;
 static unsigned stEvict, stReturn, stRetFade; /* development: pictures evicted, shown again, and of those faded in */
+static int ctxRow = -1, focusRow = -1; /* the row being drawn; the focused row (set by the board each frame) */
+static unsigned focusAt, hgen = 1;
+static long hpinBytes; /* what the first-screen pins hold now */
 #define BUCKETS 1024
 static Img *table[BUCKETS];
 static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
@@ -608,6 +613,7 @@ static Img *request_as(const char *key, const char *src, int w, int h, int fit, 
   Img *im = find(key, hs);
   if (im) {
     im->lastUse = frameNo;
+    im->row = ctxRow;
     if (im->state == 5)
       enqueue(im);
     if (im->state == 3 && im->fails > 0 && im->fails < 6 && mono_s() - im->failAt > 1.5 * (1 << (im->fails - 1))) {
@@ -638,6 +644,7 @@ static Img *request_as(const char *key, const char *src, int w, int h, int fit, 
   im->focal = -1;
   im->radius = radius;
   im->lastUse = frameNo;
+  im->row = ctxRow;
   im->wantTex = 1;
   im->next = table[hs % BUCKETS];
   table[hs % BUCKETS] = im;
@@ -1042,34 +1049,68 @@ void img_drop_shaped(const char *url, int w, int h, float radius, int fit) {
   i->state = 2;
   i->wantTex = 0; /* (asked again, it comes back from its small copy) */
 }
+/* the board tells which Home row is being drawn and which has the focus; pictures asked meanwhile belong to that row */
+void img_ctx_row(int row) {
+  ctxRow = row;
+}
+void img_focus_row(int row) {
+  focusRow = row;
+  focusAt = frameNo;
+}
+/* the first screen kept (rows 0-1 of Home, the billboard): begin, then pin what is loaded; whatever is not pinned again
+   in a pass is let go. Never more than a third of the budget, and nothing is kept when the memory guard asks */
+void img_pin_begin(void) {
+  hgen++;
+  hpinBytes = 0;
+}
+void img_pin_shaped(const char *url, int w, int h, float radius, int fit) {
+  if (!url || !*url || w <= 0 || h <= 0)
+    return;
+  char k[2300];
+  shaped_key(k, sizeof k, url, w, h, radius, fit);
+  Img *im = find(k, fnv(k));
+  if (!im || !im->tex || hpinBytes + im->bytes > budgetBytes / 3)
+    return;
+  if (im->hpin != hgen)
+    hpinBytes += im->bytes;
+  im->hpin = hgen;
+}
+/* over the budget: the picture farthest from the focus goes first (rows 0-1 and the first screen's pins last), then the
+   oldest. keepMb > 0 is the memory guard or a film: then nothing is kept */
 void img_release_unused(int keepMb) {
   long keep = keepMb > 0 ? (long)keepMb * 1024 * 1024 : budgetBytes;
   if (usedBytes <= keep)
     return;
-  /* drop the least recently used textures until under the budget; keep what was drawn in the last few frames */
-  for (int pass = 0; pass < 8 && usedBytes > keep; pass++) {
-    unsigned oldest = 0xffffffffu;
+  int useFocus = focusRow >= 0 && frameNo - focusAt < 4; /* (the board was drawn just now) */
+  /* what was on screen in the last 2 s stays (a step back never reloads it); only a real overflow takes more */
+  unsigned minAge = usedBytes > keep + keep / 8 ? 3u : 120u;
+  for (int n = 0; n < 64 && usedBytes > keep; n++) {
+    Img *vic = NULL;
+    unsigned long long best = 0;
     for (int b = 0; b < BUCKETS; b++)
-      for (Img *i = table[b]; i; i = i->next)
-        if (i->tex && !i->pin && i->lastUse < oldest)
-          oldest = i->lastUse;
-    if (oldest == 0xffffffffu || frameNo - oldest < (pass < 4 ? 120u : 3u))
-      return; /* what was on screen in the last 2 s stays (a step back never reloads it); only a real overflow takes
-                 more */
-    for (int b = 0; b < BUCKETS; b++)
-      for (Img *i = table[b]; i; i = i->next)
-        if (i->tex && !i->pin && i->lastUse <= oldest + 30) {
-          gfx_tex_recycle(i->tex, i->pw, i->ph, i->pch, 1);
-          i->tex = 0;
-          usedBytes -= i->bytes;
-          i->bytes = 0;
-          stEvict++;
-          /* loaded again (from its small copy) only when it is asked for again: queueing it at once made a loop under
-             memory pressure (decode, upload, evict, decode...) that filled the queue, and a new backdrop could not get
-             in */
-          i->state = 2;
-          i->wantTex = 0;
+      for (Img *i = table[b]; i; i = i->next) {
+        if (!i->tex || i->pin || (!keepMb && i->hpin == hgen) || frameNo - i->lastUse < minAge)
+          continue;
+        unsigned d = 0;
+        if (useFocus)
+          d = i->row < 0 ? 2u : i->row <= 1 ? 0u : (unsigned)abs(i->row - focusRow);
+        unsigned long long sc = ((unsigned long long)d << 32) | (frameNo - i->lastUse);
+        if (!vic || sc > best) {
+          vic = i;
+          best = sc;
         }
+      }
+    if (!vic)
+      return;
+    gfx_tex_recycle(vic->tex, vic->pw, vic->ph, vic->pch, 1);
+    vic->tex = 0;
+    usedBytes -= vic->bytes;
+    vic->bytes = 0;
+    stEvict++;
+    /* loaded again (from its small copy) only when it is asked for again: queueing it at once made a loop under memory
+       pressure (decode, upload, evict, decode...) that filled the queue, and a new backdrop could not get in */
+    vic->state = 2;
+    vic->wantTex = 0;
   }
 }
 void img_cover_uv(float ta, float ba, int top, float *u0, float *v0, float *u1, float *v1) {

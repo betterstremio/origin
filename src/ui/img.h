@@ -42,6 +42,10 @@ void img_urgent(const char *url, int w, int h); /* the next one decoded (the bac
 void img_prefetch_pri(const char *url, int w, int h); /* ahead of the queue, and never evicted (title art) */
 void img_pump(void); /* uploads finished decodes; call per frame (bounded work) */
 void img_frame(void); /* marks the frame (for eviction) */
+void img_ctx_row(int row); /* the Home row being drawn (-1 none): what it asks for is evicted by distance from the focus */
+void img_focus_row(int row); /* the focused row, each frame the board draws */
+void img_pin_begin(void); /* the first screen's pictures are pinned afresh: begin, then img_pin_shaped each; the rest is let go */
+void img_pin_shaped(const char *url, int w, int h, float radius, int fit); /* (a loaded one only; with the budget's third) */
 void img_release_unused(int keepMb); /* evicts least recently drawn textures over the budget */
 void img_set_budget_mb(int mb);
 void img_set_draw_scale(

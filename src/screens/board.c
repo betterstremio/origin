@@ -2792,10 +2792,50 @@ static void row_draw(Board *b, Row *r, int ri, float y, int near, float rowA) {
 #endif
   gfx_offset_pop();
 }
+/* the first screen kept in memory (Home): the billboard's picture and the first cards (sharp crops and logos) of rows 0
+   and 1, Continue Watching among them. Asked again every half second; the pictures eviction may take are the rest. A
+   row whose items are not loaded (far rows are let go) leaves the last pins as they were */
+static void home_pin(Board *b) {
+  static double at;
+  if (app_now() < at)
+    return;
+  at = app_now() + 0.5;
+  Row *first[2];
+  int nf = 0;
+  for (int i = 0; i < b->n && nf < 2; i++)
+    if (!b->rows[i].hidden)
+      first[nf++] = &b->rows[i];
+  for (int k = 0; k < nf; k++)
+    if (!first[k]->items.n && !first[k]->ntiles)
+      return;
+  img_pin_begin();
+  if (b->billCur[0]) {
+    int hi = bill_hi();
+    img_pin_shaped(b->billCur, hi ? (int)BILL_W : 1280, hi ? (int)BILL_H : 573, hi ? 28 : 20, 2);
+  } /* (as bill_draw asks it) */
+  for (int k = 0; k < nf; k++) {
+    Row *r = first[k];
+    int cw = (int)card_w(r), ch = (int)card_h(r);
+    for (int c = 0; c < 14 && c < r->items.n; c++) {
+      int hold;
+      const CardPrep *cp = row_prep(r, c, 0, &hold, NULL);
+      if (!cp)
+        continue;
+      if (cp->crop) {
+        char lu[512];
+        img_pin_shaped(cp->art, cw, ch, CARD_R, 3);
+        logo_src(&r->items.items[c], lu, sizeof lu);
+        img_pin_shaped(lu, CROP_LOGO_W, CROP_LOGO_H, 0, -1);
+      } else
+        img_pin_shaped(cp->art, cw, ch, CARD_R, r->wide ? 1 : 0);
+    }
+  }
+}
 static void board_draw(void) {
   Board *b = cur();
   if (!b)
     return;
+  img_focus_row(b->rowIdx);
   hero_draw(b);
   {
     const ColFolder *tf =
@@ -2844,6 +2884,7 @@ static void board_draw(void) {
       rdy = 28 * (1 - rk);
     }
     int inView = r->a.v > 0.001f && y + b->hostY.v + sy < SB_H && y + h + b->hostY.v + sy > top;
+    img_ctx_row(i);
     if (inView) {
       vis++;
       if (rdy > 0.01f)
@@ -2857,6 +2898,9 @@ static void board_draw(void) {
     } /* off screen but one or two presses away */
     y += h;
   }
+  img_ctx_row(-1);
+  if (SCR == SCR_HOME)
+    home_pin(b);
   gfx_offset_pop();
   gfx_clip_pop();
 }
