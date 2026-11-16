@@ -93,7 +93,7 @@ static void meta_parse(const char *ml, const char *genres, const char *name, Met
 }
 #define MDOT 38.0f /* 16 + 6 + 16 */
 static float meta_draw_at(const MetaParts *p, float x, float y, int px, uint32_t color, int draw) {
-  float cx = x, badgePx = px * 0.74f;
+  float cx = x;
   int first = 1;
   float lh = text_line_height(px);
 #define SEP()                                                     \
@@ -108,17 +108,14 @@ static float meta_draw_at(const MetaParts *p, float x, float y, int px, uint32_t
   if (p->name[0]) {
     SEP();
     float w =
-        draw ? text_draw(p->name, cx, y, px, 800, WHITE_A(255), 0, 0, ALIGN_LEFT) : text_width(p->name, px, 800, 0);
+        draw ? text_draw(p->name, cx, y, px, 600, WHITE_A(255), 0, 0, ALIGN_LEFT) : text_width(p->name, px, 600, 0);
     cx += w;
   }
   if (p->imdb[0]) {
     SEP();
-    float bw = text_width("IMDb", (int)badgePx, 800, -0.4f) + 14, bh = badgePx + 9;
-    if (draw) {
-      gfx_rrect(cx, y + lh / 2 - bh / 2 - 2, bw, bh, 5, RGB(0xf5, 0xc5, 0x18));
-      text_draw("IMDb", cx + 7, y + lh / 2 - bh / 2 - 2 + 4 - (text_line_height((int)badgePx) - badgePx) / 2,
-                (int)badgePx, 800, RGB(0, 0, 0), -0.4f, 0, ALIGN_LEFT);
-    }
+    float bw = text_width("IMDb", px, 500, 0);
+    if (draw)
+      text_draw("IMDb", cx, y, px, 500, WHITE_A(150), 0, 0, ALIGN_LEFT);
     cx += bw + 10;
     float w =
         draw ? text_draw(p->imdb, cx, y, px, 600, WHITE_A(255), 0, 0, ALIGN_LEFT) : text_width(p->imdb, px, 600, 0);

@@ -1322,17 +1322,6 @@ static void bill_open(int a, int c) {
   if (it)
     app_open_item(it);
 }
-static void bill_dot(int i, int c) {
-  (void)c;
-  Board *b = cur();
-  if (!b || !b->nfeat)
-    return;
-  int d = i - b->featIdx % b->nfeat;
-  if (d) {
-    b->billBtn = 0;
-    feat_go(b, d);
-  }
-}
 #endif
 static void bill_draw(Board *b) {
   float a = b->spotA.v;
@@ -1419,18 +1408,6 @@ static void bill_draw(Board *b) {
     float px = rtl ? x - pw : x, mx = rtl ? x - pw - 18 - mw : x + pw + 18;
     hit_add(px, by, pw, 66, bill_focus, NULL, 0, 0);
     hit_add(mx, by, mw, 66, bill_focus, NULL, 1, 0);
-    {
-      int n = b->nfeat;
-      float tot = 0;
-      for (int i = 0; i < n; i++)
-        tot += b->dotW[i].v + 10;
-      float dx = rtl ? X + 56 : X + W - 56 - tot, dyy = Y + H - 56 - 33 - 5;
-      for (int i = 0; i < n; i++) {
-        float w = b->dotW[i].v;
-        hit_act(dx - 5, dyy - 14, w + 10, 38, bill_dot, i, 0);
-        dx += w + 10;
-      }
-    }
   }
 #endif
   if (rtl) {
@@ -1439,19 +1416,6 @@ static void bill_draw(Board *b) {
   } else {
     bill_btn(x, by, pw, 1, f && b->billBtn == 0, 1);
     bill_btn(x + pw + 18, by, mw, 0, f && b->billBtn == 1, 1);
-  }
-  /* the dots, bottom right: the one showing wider */
-  {
-    int n = b->nfeat, ci = b->featIdx % n;
-    float tot = 0;
-    for (int i = 0; i < n; i++)
-      tot += b->dotW[i].v + 10;
-    float dx = rtl ? X + 56 : X + W - 56 - tot, dyy = Y + H - 56 - 33 - 5;
-    for (int i = 0; i < n; i++) {
-      float w = b->dotW[i].v;
-      gfx_rrect(dx, dyy, w, 10, 5, i == ci ? WHITE_A(240) : WHITE_A(102));
-      dx += w + 10;
-    }
   }
   gfx_opacity_pop();
 }
