@@ -1471,7 +1471,11 @@ static void crop_logo(const Item *it, const CardPrep *cp, float x, float y, floa
   logo_src(it, lu, sizeof lu);
   gfx_rrect_v(x, y + h * 0.5f, w, h * 0.5f, CARD_R, RGBA(0, 0, 0, 0), RGBA(0, 0, 0, (int)(175 * a)));
   float asp = 0;
-  lt = lu[0] && (img_idle() || img_shaped_loaded(lu, CROP_LOGO_W, CROP_LOGO_H, 0, -1))
+  if (lu[0] && !img_shaped_loaded(lu, CROP_LOGO_W, CROP_LOGO_H, 0, -1) &&
+      img_back_shaped(lu, CROP_LOGO_W, CROP_LOGO_H, 0, -1))
+    img_ahead_shaped(lu, CROP_LOGO_W, CROP_LOGO_H, 0, -1); /* shown before: back at once, not when idle */
+  lt = lu[0] && (img_idle() || img_shaped_loaded(lu, CROP_LOGO_W, CROP_LOGO_H, 0, -1) ||
+                 img_back_shaped(lu, CROP_LOGO_W, CROP_LOGO_H, 0, -1))
            ? img_get_sized(lu, CROP_LOGO_W, CROP_LOGO_H, &asp)
            : 0; /* (asked while nothing
                                                                                                      waits) */ /* (a quarter of the open card's: a row of them) */
@@ -2259,12 +2263,13 @@ static void row_prefetch(Row *r, int slot, int from, int to) {
       continue;
     if (r->cpSt[i] != 1)
       wait = 1;
+    int back = cp->crop && img_back_shaped(cp->art, cw, ch, CARD_R, 3); /* shown before: the sharp one comes straight back */
     if ((!same || ch2) && cp->pre[0] && !(cp->crop && img_shaped_loaded(cp->art, cw, ch, CARD_R, 3)))
-      img_get_shaped(cp->pre, cw, ch, CARD_R, cp->crop ? 3 : fit); /* (not the quick crop once the sharp one is in) */
-    if (cp->crop && img_idle() && img_shaped_loaded(cp->pre, cw, ch, CARD_R, 3)) {
+      img_get_shaped(back ? cp->art : cp->pre, cw, ch, CARD_R, cp->crop ? 3 : fit); /* (not the quick crop once the sharp one is in) */
+    if (cp->crop && ((img_idle() && img_shaped_loaded(cp->pre, cw, ch, CARD_R, 3)) || back)) {
       char lu[512];
       logo_src(&r->items.items[i], lu, sizeof lu);
-      if (lu[0])
+      if (lu[0] && (img_idle() || img_back_shaped(lu, CROP_LOGO_W, CROP_LOGO_H, 0, -1)))
         img_get_sized(lu, CROP_LOGO_W, CROP_LOGO_H, NULL);
     } /* its logo too */
   }

@@ -22,6 +22,8 @@ int img_shaped_failed(const char *url, int w, int h, float radius, int fit);
    a picture rw wide for it: the open card puts its 16:9 picture so that the crop's part of it stays where it was */
 float img_shaped_focal(const char *url, int w, int h, float radius, int fit);
 float img_crop_left(float focal, float rw, float cw);
+int img_back_shaped(const char *url, int w, int h, float radius,
+                    int fit); /* 1: shown before, or its small copy is on disk: ask it at once, it comes back in one step */
 int img_idle(void); /* no picture waits to load */
 GLuint img_get_sized(const char *url, int w, int h, float *aspect); /* its own copy at this size */
 void img_drop_shaped(const char *url, int w, int h, float radius, int fit); /* its texture freed now (not wanted) */

@@ -339,6 +339,7 @@ static int small_load(Img *im) {
   im->pw = w;
   im->ph = h;
   im->pch = 4;
+  im->fromSm = 1;
   return 1;
 }
 static pthread_mutex_t decMu = PTHREAD_MUTEX_INITIALIZER;
@@ -365,6 +366,7 @@ static double mono_s(void) {
   return t.tv_sec + t.tv_nsec / 1e9;
 }
 static void load(Img *im) {
+  im->fromSm = 0;
   dec_enter();
   int ok = small_load(im);
   dec_leave();
@@ -589,6 +591,7 @@ void img_frame(void) {
 /* a full queue leaves the picture waiting (state 5), asked again on its next request, never failed for good */
 static void enqueue_at(Img *im, int front) {
   pthread_mutex_lock(&mu);
+  im->askAt = mono_s();
   if (sn < 1024) {
     q_push(im, front);
     im->state = 0;
@@ -686,6 +689,43 @@ GLuint img_get_shaped(const char *url, int w, int h, float radius, int fit) {
   char k[2300];
   Img *im = request_as(shaped_key(k, sizeof k, url, w, h, radius, fit), url, w, h, fit, radius);
   return im->tex;
+}
+/* a picture that comes back in one step: it was shown before, or its small copy (and a crop's subject place) is on
+   disk, a few ms of decode. A "no" is remembered for a second (a stat per card per frame otherwise) */
+int img_back_shaped(const char *url, int w, int h, float radius, int fit) {
+  if (!url || !*url || w <= 0 || h <= 0)
+    return 0;
+  char k[2300];
+  shaped_key(k, sizeof k, url, w, h, radius, fit);
+  unsigned hs = fnv(k);
+  Img *im = find(k, hs);
+  if (im && (im->shown || im->smOk))
+    return 1;
+  static struct {
+    unsigned h, until;
+  } no[128];
+  if (no[hs % 128].h == hs && frameNo < no[hs % 128].until)
+    return 0;
+  int sw = w, sh = h;
+  if (drawScale != 1) {
+    sw = (int)(w * drawScale + 0.999f);
+    sh = (int)(h * drawScale + 0.999f);
+  } /* (as request_as sizes it: the small copy's name has the size) */
+  char sk[2400], p[600];
+  snprintf(sk, sizeof sk, "sm:%dx%d:%s", sw, sh, k);
+  int ok = cache_file(sk, 14 * 86400, p, sizeof p);
+  if (ok && fit == 3) {
+    snprintf(sk, sizeof sk, "fx:%s", url);
+    ok = cache_file(sk, 14 * 86400, p, sizeof p);
+  }
+  if (!ok) {
+    no[hs % 128].h = hs;
+    no[hs % 128].until = frameNo + 60;
+    return 0;
+  }
+  if (im)
+    im->smOk = 1;
+  return 1;
 }
 int img_shaped_loaded(const char *url, int w, int h, float radius, int fit) {
   char k[2300];
@@ -894,12 +934,17 @@ static Img *upCur;
 static void up_done(Img *im) {
   im->tex = im->upTex;
   im->upTex = 0;
+  /* a picture shown before, or one that came from its small copy within 100 ms of the ask, appears at once: a fade
+     over the grey placeholder made every return look like a reload */
+  int fade = !(im->shown || (im->fromSm && mono_s() - im->askAt < 0.1));
   if (im->shown) {
     stReturn++;
-    stRetFade++;
+    if (fade)
+      stRetFade++;
   }
   im->shown = 1;
-  gfx_tex_fade_in(im->tex);
+  if (fade)
+    gfx_tex_fade_in(im->tex);
   im->bytes = im->pw * im->ph * im->pch;
   usedBytes += im->bytes;
   free(im->px);

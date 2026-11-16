@@ -572,9 +572,14 @@ static int card_body(const Item *it, const CardPrep *cp, float x, float y, float
     cp = &own;
   } /* a card without its own: resolved here, as before */
   if (cp->crop && !img_shaped_loaded(cp->art, (int)w, (int)h, CARD_R, 3)) {
+    if (loadArt && img_back_shaped(cp->art, (int)w, (int)h, CARD_R, 3)) {
+      img_ahead_shaped(cp->art, (int)w, (int)h, CARD_R, 3); /* a return: the sharp one at once, in one step (no quick crop, no wait) */
+      card_art(cp->art, x, y, w, h, CARD_R, 3, loadArt, &shown);
+    } else {
     if (loadArt && img_idle())
       img_get_shaped(cp->art, (int)w, (int)h, CARD_R, 3); /* the sharp one, once nothing else waits */
     card_art(cp->pre, x, y, w, h, CARD_R, 3, loadArt, &shown); /* the quick one meanwhile */
+    }
   } else {
     card_art(cp->art, x, y, w, h, CARD_R, cp->crop ? 3 : wide ? 1 : 0, loadArt, &shown);
     if (cp->crop && strcmp(cp->pre, cp->art))
