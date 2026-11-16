@@ -1048,11 +1048,13 @@ void topnav_draw(void) {
     /* the start: a notice out of the picture, then the picture, its caret and (an update waiting) a dot */
     float px = topNav.chipX[NAV_SET], py = BAR_Y - PIC_D / 2, nk = update_dot_hide();
     update_pill_draw(px - 14);
-    app_profile_pic(px, py, PIC_D, 8);
+    float pk = profpanel_k(); /* the menu out: its card holds the picture */
+    if (pk < 0.001f)
+      app_profile_pic(px, py, PIC_D, 8);
     if (app_ptr_over(rtl ? px - 34 : px, BAR_Y - 30, PIC_D + 34, BAR_H))
       gfx_ring(px - 4, py - 4, PIC_D + 8, PIC_D + 8, 12, 2, WHITE_A(204));
-    if (nk < 0.999f) {
-      gfx_opacity_push(1 - nk);
+    if (nk < 0.999f && pk < 0.999f) {
+      gfx_opacity_push((1 - nk) * (1 - pk));
       caret_draw(rtl ? px - 22 - 10 : px + PIC_D + 22, BAR_Y, WHITE_A(170));
       if (update_avail()) {
         float dx = rtl ? px + 2 : px + PIC_D - 2, dy = py + 2;

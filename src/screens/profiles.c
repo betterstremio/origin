@@ -523,8 +523,3 @@ void profiles_open_pin(int i, void (*back)(void)) {
   P.pin[0] = 0;
   P.err[0] = 0;
 }
-void profiles_open_add(void (*back)(void)) {
-  profiles_open(PF_SWITCH);
-  P.back = back;
-  add_open();
-}

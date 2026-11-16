@@ -154,7 +154,8 @@ void topnav_switch(int idx);
 void app_color_key(int k); /* the remote's red (Settings, or the notice out) and green (Search) keys */
 void app_open_settings(void); /* Settings (the profile panel's row) */
 void app_profile_pic(float x, float y, float D, float r); /* the profile in use: its picture, or colour + initial */
-int profpanel_open(void); /* the profile panel out of the left edge (screens/profpanel.c); 0 when it cannot open */
+int profpanel_open(void); /* the profile menu out of the picture (screens/profpanel.c); 0 when it cannot open */
+float profpanel_k(void); /* 0 closed .. 1 open: the bar leaves its picture to the menu meanwhile */
 
 /* ---- the backdrop ---- */
 void bg_set(const char *url, int delayMs,
