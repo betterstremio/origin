@@ -207,4 +207,5 @@ int app_quitting(void);
 
 /* the page colour */
 #define PAGE RGB(12, 11, 17)
+#define UPD_DOT RGB(0x8c, 0x5c, 0xff) /* an update waiting: Origin's own purple, never a title's colour */
 #endif

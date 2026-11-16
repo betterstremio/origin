@@ -91,9 +91,6 @@ static void on_pin(int ok, const char *err, void *ud) {
 static int can_add(void) {
   return nv_profile_count() < 6;
 } /* (Nuvio's limit) */
-int profiles_can_add(void) {
-  return can_add();
-}
 static void back_out(void) {
   void (*b)(void) = P.back;
   P.back = NULL;
@@ -119,10 +116,6 @@ static void on_added(int ok, const char *err, void *ud) {
   P.addMode = 0;
   P.err[0] = 0;
   osk_close(&P.osk);
-  if (P.back) {
-    back_out();
-    return;
-  } /* added from the panel: back there, the new profile where Add profile was */
   NvProfile p;
   for (int i = 0; i < nv_profile_count() && i < MAXP; i++)
     if (nv_profile_get(i, &p) && !strcasecmp(p.name, P.addName))
@@ -209,8 +202,6 @@ static int key(int k) {
       osk_close(&P.osk);
       if (form_touch())
         SDL_StopTextInput();
-      if (P.back)
-        back_out();
       return 1;
     }
     if (form_touch()) {

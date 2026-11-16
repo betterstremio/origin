@@ -1061,7 +1061,7 @@ void topnav_draw(void) {
       if (update_avail()) {
         float dx = rtl ? px + 2 : px + PIC_D - 2, dy = py + 2;
         gfx_circle(dx, dy, 7, PAGE);
-        gfx_circle(dx, dy, 5, ACC);
+        gfx_circle(dx, dy, 5, UPD_DOT);
       }
       gfx_opacity_pop();
     }

@@ -14,7 +14,6 @@ int profile_avatar_draw(const char *av, float x, float y,
 int profile_avatar_draw_r(const char *av, float x, float y, float D, float r); /* the same, corners of radius r */
 /* the profile menu's way in: switch to the profile at list position i (no PIN), or its PIN pad; back() runs when Back
    leaves the pad (the menu takes the keys again) */
-int profiles_can_add(void);
 void profiles_switch(int i);
 void profiles_open_pin(int i, void (*back)(void));
 #endif

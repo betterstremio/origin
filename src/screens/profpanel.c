@@ -308,7 +308,7 @@ static void draw(void) {
       text_draw(lb[r], mx(TXT_X, 0), cy - text_line_height(28) / 2.0f, 28, 500, ink, 0, 0, al);
       if (r == R_SET && upd > 0) { /* an update waiting: said here; the bar's dot pointed to it */
         float lw = text_width(lb[r], 28, 500, 0), dx = rtl ? SB_W - TXT_X - lw - 14 : TXT_X + lw + 14;
-        gfx_circle(dx, cy, 5, on ? INK_ON : ACC);
+        gfx_circle(dx, cy, 5, on ? INK_ON : UPD_DOT);
         text_draw(T("Update available"), rtl ? dx - 12 : dx + 12, cy - text_line_height(20) / 2.0f, 20, 500, sub, 0, 0,
                   al);
       }
