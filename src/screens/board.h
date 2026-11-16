@@ -5,6 +5,7 @@
 #include "core/collections.h"
 extern Screen homeScreen, discScreen, libScreen, colScreen;
 int board_home_ready(void);
+int board_focus_pos(int *row, int *col, int *nrows); /* the fast-scroll test: Home's focus */
 void tabs_warm_tick(void);
 /* after start: the other tabs' first screens made ready in the background */ /* the first rows' posters are in, the
                                                                                  hero is set, the backdrop is up */

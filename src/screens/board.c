@@ -1,3 +1,4 @@
+#include "core/fillstat.h"
 #include "screens/board.h"
 #include "screens/btrailer.h"
 #include "core/keys.h"
@@ -180,6 +181,21 @@ static int spotOn(Board *b) {
 } /* the spotlight has the focus (its titles may still be on the way) */
 static int focusOn(Board *b) {
   return cur() == b && !topNav.active && !spotOn(b);
+}
+/* the fast-scroll test: where Home's focus is (rank among the shown rows; -2 top bar, -1 billboard), the shown rows */
+int board_focus_pos(int *row, int *col, int *nrows) {
+  Board *b = &boards[0];
+  int n = 0, rk = -1;
+  for (int i = 0; i < b->n; i++)
+    if (!b->rows[i].hidden && !b->rows[i].closing) {
+      if (i == b->rowIdx)
+        rk = n;
+      n++;
+    }
+  *row = SCR != SCR_HOME ? -3 : topNav.active ? -2 : spotOn(b) ? -1 : rk;
+  *col = b->rowIdx >= 0 && b->rowIdx < b->n ? b->rows[b->rowIdx].col : 0;
+  *nrows = n;
+  return SCR == SCR_HOME;
 }
 static float card_w(const Row *r) {
   return r->wide ? RW_W : RC_W;
@@ -1475,6 +1491,7 @@ static void crop_logo(const Item *it, const CardPrep *cp, float x, float y, floa
            ? img_get_sized(lu, CROP_LOGO_W, CROP_LOGO_H, &asp)
            : 0; /* (asked while nothing
                                                                                                      waits) */ /* (a quarter of the open card's: a row of them) */
+  fill_logo((lt && asp > 0 && gfx_tex_fade(lt) >= 1) || (!(lt && asp > 0) && (!lu[0] || img_failed(lu))));
   if (lt && asp > 0) {
     lw = w - 40;
     lh = lw / asp;
@@ -2274,6 +2291,8 @@ static void row_prefetch(Row *r, int slot, int from, int to) {
    asked every frame so a scroll never drops them (the rest of the row keeps the quick crops). 2 on a stick, 4 elsewhere
  */
 static void row_ahead(Row *r, int cw, int ch) {
+  if (fill_dev_no_ahead())
+    return;
   static int n;
   if (!n) {
     int mb = plat_mem_total_mb();
@@ -2503,6 +2522,7 @@ static void card_wide(Board *b, const Row *r, const Item *it, const CardPrep *cp
           if (ek >= 0.999f) {
             b->boxN++;
             b->boxReady += bt != 0;
+            fill_box(bt != 0);
             fprintf(stderr, "[card] box: picture %s on arrival (%d of %d ready)\n", bt ? "ready" : "NOT ready",
                     b->boxReady, b->boxN);
           }
@@ -2520,6 +2540,8 @@ static void card_wide(Board *b, const Row *r, const Item *it, const CardPrep *cp
           : focused
               ? clampf((float)((wn - b->wideBt) / 0.18), 0, 1)
               : 1; /* the sharp one: over the stand-in, softly; there before the card opened: nothing to see change */
+      if (ek >= 0.999f && focused)
+        fill_art(bt && sk >= 1 && gfx_tex_fade(bt) >= 1);
       if (fc >= 0) { /* the stand-in at the sides, the crop where it was, the sharp picture over both once in */
         GLuint ct = img_get_shaped(cu, (int)cw, (int)ch, CARD_R, 3);
         gfx_clip_push(ox, cy, ow, ch);
@@ -2643,8 +2665,10 @@ static void row_draw(Board *b, Row *r, int ri, float y, int near, float rowA) {
     const CardPrep *cp = row_prep(r, i, load, &hold, NULL);
     unsigned long long lk = lift_key(r, i);
     lift_begin(lk, 0, 0, x, cy, cw, ch, CARD_R); /* (the one the focus just left settles back) */
+    fill_begin();
     card_draw_prep(&r->items.items[i], cp, x, cy, cw, ch, r->wide, r->label, !hold && (load || near));
     crop_logo(&r->items.items[i], cp, x, cy, cw, ch, 1);
+    fill_card(r, i, x, cy, cw, ch, cp && cp->crop, 0);
     lift_end(lk, x, cy, cw, ch, CARD_R);
   }
   if (ca < 1)
@@ -2704,7 +2728,9 @@ static void row_draw(Board *b, Row *r, int ri, float y, int near, float rowA) {
       gfx_opacity_push(1 - sd);
     } else
       sd = 0;
+    fill_begin();
     card_wide(b, r, &r->items.items[r->col], cp, x, ox, ow, cy, cw, ch, ek, rtl, 1);
+    fill_card(r, r->col, ox, cy, ow, ch, cp && cp->crop, ek > 0.001f && ek < 0.999f);
     if (sd > 0)
       gfx_opacity_pop();
     if (hp > 0)
@@ -2791,6 +2817,7 @@ static void board_draw(void) {
   Board *b = cur();
   if (!b)
     return;
+  fill_screen_ref();
   hero_draw(b);
   {
     const ColFolder *tf =

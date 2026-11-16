@@ -1,3 +1,4 @@
+#include "core/fillstat.h"
 #include "ui/widgets.h"
 #include "ui/sound.h"
 #include "ui/shared.h"
@@ -498,13 +499,16 @@ static void card_art(const char *src, float x, float y, float w, float h, float 
     tex = img_get_shaped(src, (int)w, (int)h, r, fit);
   if (!src || !*src) {
     ph_surface(x, y, w, h, r);
+    fill_art(1); /* (nothing to wait for) */
     return;
   }
   if (!tex && img_shaped_failed(src, (int)w, (int)h, r, fit)) {
     ph_surface(x, y, w, h, r);
     *shown = -1;
+    fill_art(1);
     return;
   } /* nothing is coming: the surface stays still */
+  fill_art(tex && gfx_tex_fade(tex) >= 1);
   if (tex && !wide && cardKey[0] && !ph_hold() && gfx_tex_fade(tex) >= 1) {
     sx_image(cardKey, tex, x, y, w, h, 0, WHITE_A(255), 0, 0, 1, 1);
     *shown = 1;
@@ -575,6 +579,7 @@ static int card_body(const Item *it, const CardPrep *cp, float x, float y, float
     if (loadArt && img_idle())
       img_get_shaped(cp->art, (int)w, (int)h, CARD_R, 3); /* the sharp one, once nothing else waits */
     card_art(cp->pre, x, y, w, h, CARD_R, 3, loadArt, &shown); /* the quick one meanwhile */
+    fill_art(0);
   } else {
     card_art(cp->art, x, y, w, h, CARD_R, cp->crop ? 3 : wide ? 1 : 0, loadArt, &shown);
     if (cp->crop && strcmp(cp->pre, cp->art))
