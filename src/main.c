@@ -1074,7 +1074,15 @@ int main(int argc, char **argv) {
     static double accPre;
     double accPreFrame = SDL_GetTicks() - tP0 + tEv;
     accPre += accPreFrame;
-    run_script(script, frame);
+    if (script && getenv("SB_SCRIPT_MS")) { /* development: the numbers are milliseconds on the clock, not frames (a slow build
+                                               must not get a slower pace) */
+      static Uint32 lastMs;
+      Uint32 nowMs = SDL_GetTicks();
+      for (Uint32 m = lastMs + 1; m <= nowMs && m - lastMs <= 2000; m++)
+        run_script(script, (int)m);
+      lastMs = nowMs;
+    } else
+      run_script(script, frame);
     stress_tick();
     {
       static int crashAt = -2;
@@ -1499,7 +1507,7 @@ int main(int argc, char **argv) {
             asssubs_on() ? " · styled subtitles" : "");
       }
     }
-    if (shot && frame == shotAt) {
+    if (shot && (getenv("SB_SHOT_MS") ? SDL_GetTicks() >= (Uint32)atoi(getenv("SB_SHOT_MS")) : frame == shotAt)) { /* (SB_SHOT_MS: on the clock) */
       screenshot(shot, dw, dh);
       if (getenv("SB_SHOT_EXIT"))
         app_quit();
