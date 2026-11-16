@@ -3,6 +3,7 @@
    for a texture every frame; 0 means "not yet" (and starts the load). */
 #ifndef SB_IMG_H
 #define SB_IMG_H
+#include <stddef.h>
 #include "ui/gl.h"
 #include "ui/palette.h"
 
@@ -45,6 +46,7 @@ void img_set_draw_scale(
     float s); /* surface pixels per layout unit when below 1: pictures are decoded at the size really drawn */
 void img_set_draw_scale_up(float s); /* the same above 1 too (a phone's dp canvas): pictures as sharp as its pixels */
 int img_used_mb(void);
+void img_stats(char *out, size_t cap); /* development: evictions and returns so far, for the memory line */
 /* computes cover-crop uv for drawing a texture of aspect `ta` into a box of aspect `ba`, anchored at the top (posters)
  * or centre */
 void img_cover_uv(float ta, float ba, int anchorTop, float *u0, float *v0, float *u1, float *v1);

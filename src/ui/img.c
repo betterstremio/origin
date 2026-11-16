@@ -188,10 +188,15 @@ typedef struct Img {
   Palette pal; /* the colours of the picture, asked for by the accent */
   int wantTex; /* someone draws it (a picture only asked for its colours is never uploaded) */
   unsigned lastUse;
+  int shown;  /* it has had a texture before (a return: no fade, no wait) */
+  int smOk;   /* its small copy is known to be on disk */
+  int fromSm; /* its pixels came from the small copy */
+  double askAt;
   int fails;
   double failAt; /* failed loads so far, and when the last one failed: asked again, it tries once more after a wait */
   struct Img *next;
 } Img;
+static unsigned stEvict, stReturn, stRetFade; /* development: pictures evicted, shown again, and of those faded in */
 #define BUCKETS 1024
 static Img *table[BUCKETS];
 static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
@@ -571,6 +576,9 @@ void img_queue_stats(int *queued, int *waiting) {
   *waiting = dn;
   pthread_mutex_unlock(&mu);
 }
+void img_stats(char *o, size_t cap) {
+  snprintf(o, cap, "evicted %u · shown again %u (faded %u)", stEvict, stReturn, stRetFade);
+}
 int img_used_mb(void) {
   return (int)(usedBytes / 1048576);
 }
@@ -886,6 +894,11 @@ static Img *upCur;
 static void up_done(Img *im) {
   im->tex = im->upTex;
   im->upTex = 0;
+  if (im->shown) {
+    stReturn++;
+    stRetFade++;
+  }
+  im->shown = 1;
   gfx_tex_fade_in(im->tex);
   im->bytes = im->pw * im->ph * im->pch;
   usedBytes += im->bytes;
@@ -1005,6 +1018,7 @@ void img_release_unused(int keepMb) {
           i->tex = 0;
           usedBytes -= i->bytes;
           i->bytes = 0;
+          stEvict++;
           /* loaded again (from its small copy) only when it is asked for again: queueing it at once made a loop under
              memory pressure (decode, upload, evict, decode...) that filled the queue, and a new backdrop could not get
              in */

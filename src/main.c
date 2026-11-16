@@ -1474,20 +1474,27 @@ int main(int argc, char **argv) {
     { /* every 30 s a line of where the memory is (the TV ends an app that takes too much: the shared log then says what
          grew) */
       static Uint32 memAt;
-      if (SDL_GetTicks() - memAt >= 30000 || !memAt) {
+      static Uint32 memEvery;
+      if (!memEvery) {
+        const char *e = getenv("SB_MEMLOG"); /* development: seconds between these lines */
+        memEvery = e && atoi(e) > 0 ? (Uint32)atoi(e) * 1000 : 30000;
+      }
+      if (SDL_GetTicks() - memAt >= memEvery || !memAt) {
         memAt = SDL_GetTicks();
         int rss, swp;
         plat_mem_self(&rss, &swp);
         long tb, pb;
         int tn;
         gfx_mem(&tb, &tn, &pb);
+        char ist[96];
+        img_stats(ist, sizeof ist);
         static const char *SN[] = {
           "sign-in", "home", "discover", "library", "title", "similar", "search", "settings"
         };
         fprintf(
             stderr,
-            "[mem] app %d MB (swap %d) · TV free %d MB · pictures %d of %d MB · textures %ld MB in %d (kept for reuse %ld MB) · %s%s%s\n",
-            rss, swp, plat_mem_free_mb(), img_used_mb(), img_budget_mb(), tb >> 20, tn, pb >> 20,
+            "[mem] app %d MB (swap %d) · TV free %d MB · pictures %d of %d MB · textures %ld MB in %d (kept for reuse %ld MB) · %s · %s%s%s\n",
+            rss, swp, plat_mem_free_mb(), img_used_mb(), img_budget_mb(), tb >> 20, tn, pb >> 20, ist,
             (unsigned)SCR < 8 ? SN[SCR] : "?", player_open() ? " · player" : "",
             asssubs_on() ? " · styled subtitles" : "");
       }
