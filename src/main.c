@@ -806,8 +806,10 @@ int main(int argc, char **argv) {
   if (memMb > 0)
     img_set_budget_mb(
         memMb < 1200   ? 40
-        : memMb < 3000 ? 128
-                       : 192); /* pictures under the RAM the TV has (the shared atlas, backdrop and text add ~20 MB) */
+        : memMb < 2000 ? 128
+        : memMb < 3000 ? 256
+                       : 384); /* pictures under the RAM the TV has (the shared atlas, backdrop and text add ~20 MB). A
+                                  full Home of crops is ~390 MB: the C1 (2.6 GB, 500 MB idle) keeps ~20 rows, a PC all */
   i18n_init(plat_asset_dir(),
             getenv("SB_LANG") ? getenv("SB_LANG") : store_get("uiLang", "auto")); /* SB_LANG=ar: development */
   if (!strcmp(store_get("netLogs", "false"), "true"))
