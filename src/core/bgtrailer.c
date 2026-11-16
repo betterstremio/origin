@@ -95,7 +95,7 @@ int bgt_clip(void) {
 }
 static int isTrailer; /* what loads is a trailer: it opens on a rating card or a studio's logo */
 double bgt_trailer_skip(void) {
-  return isTrailer ? 8.0 : 0;
+  return isTrailer ? 12.0 : 0; /* (rating card, then a studio's logo or two: about 12 s on most) */
 }
 int bgt_fast(void) {
   return clip || quick;

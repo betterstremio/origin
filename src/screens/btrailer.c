@@ -194,7 +194,14 @@ played:
         fprintf(stderr, "[btr] clip: from %.0f s%s\n", to, B.loadAt > 0 ? " (the TV did not begin there)" : "");
         video_seek_now(to);
         B.steadyAt = 0;
-      } else if (vs == VID_PLAYING) {
+      } else if (vs == VID_PLAYING && B.skipTo > 0) {
+        B.seekWant = 0;
+        B.steadyAt = 0;
+        double to = B.skipTo < d * 0.2 ? B.skipTo : d * 0.2;
+        video_seek_now(to);
+        fprintf(stderr, "[btr] trailer: from %.0f s (past its opening cards), no position yet\n", to);
+      } /* a trailer: jumped at once, the card opens only once it plays steadily there (never on its first frames) */
+      else if (vs == VID_PLAYING) {
         B.seekWant = 0;
         B.checkAt = 1;
         B.steadyAt = 0;
