@@ -168,6 +168,9 @@ static int build_input(const char *s) {
   add(S_QUIT, 0, 0, 0, 0);
   return 1;
 }
+#ifdef _WIN32
+#define setenv(k, v, o) _putenv_s(k, v)
+#endif
 /* webOS passes the launch parameters as argv[1], a JSON text. {"sbenv":{"SB_SCROLL":"T150","SB_SCROLL_N":"8"},"sbNoIntro":1}:
    only keys that start with SB_ are taken (setenv), and sbNoIntro silences the start-up sound (SB_NOINTRO). Development only. */
 void scrollin_launch_params(int argc, char **argv) {
