@@ -277,8 +277,8 @@ static void *run(void *arg) {
   char font[1200], fam[32];
   int ar = !strncasecmp(A->lang, "ar", 2) || !strncasecmp(A->lang, "fa", 2) || !strncasecmp(A->lang, "per", 3) ||
            !strncasecmp(A->lang, "ur", 2);
-  snprintf(font, sizeof font, "%s/fonts/%s", plat_asset_dir(), ar ? "NotoSansArabic.ttf" : "InterVariable.ttf");
-  snprintf(fam, sizeof fam, "%s", ar ? "Noto Sans Arabic" : "Inter");
+  snprintf(font, sizeof font, "%s/fonts/%s", plat_asset_dir(), ar ? "NotoSansArabic.ttf" : "OnestVariable.ttf");
+  snprintf(fam, sizeof fam, "%s", ar ? "Noto Sans Arabic" : "Onest");
   ASS_Library *lib = ass_library_init();
   if (lib)
     ass_set_message_cb(lib, ass_log, NULL);

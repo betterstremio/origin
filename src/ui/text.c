@@ -446,7 +446,7 @@ int text_init(const char *assetDir, float surfaceScale) {
   if (FT_Init_FreeType(&ft))
     return 0;
   sscale = surfaceScale;
-  snprintf(p, sizeof p, "%s/fonts/InterVariable.ttf", assetDir);
+  snprintf(p, sizeof p, "%s/fonts/OnestVariable.ttf", assetDir);
   fontLen[0] = read_file(p, &fontData[0]);
   snprintf(p, sizeof p, "%s/fonts/NotoSansArabic.ttf", assetDir);
   fontLen[1] = read_file(p, &fontData[1]);
@@ -748,9 +748,7 @@ static float shape_run(Shaped *out, Font *f, const uint32_t *cps, int a, int b, 
   } else
     hb_buffer_set_script(buf, f->fam == FAM_ARABIC ? HB_SCRIPT_ARABIC : HB_SCRIPT_LATIN);
   hb_buffer_set_language(buf, hb_language_get_default());
-  hb_feature_t feats[2] = { { HB_TAG('c', 'v', '1', '1'), 1, 0, (unsigned)-1 },
-                            { HB_TAG('s', 's', '0', '1'), 1, 0, (unsigned)-1 } }; /* the web app's Inter features */
-  hb_shape(f->hb, buf, f->fam == FAM_LATIN ? feats : NULL, f->fam == FAM_LATIN ? 2 : 0);
+  hb_shape(f->hb, buf, NULL, 0); /* Onest as drawn: no stylistic sets */
   unsigned n = hb_buffer_get_length(buf);
   hb_glyph_info_t *gi = hb_buffer_get_glyph_infos(buf, NULL);
   hb_glyph_position_t *gp = hb_buffer_get_glyph_positions(buf, NULL);
