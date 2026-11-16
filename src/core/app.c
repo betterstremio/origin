@@ -1319,7 +1319,7 @@ static void bg_picture(const BgLayer *l, float alpha) {
   gfx_image(l->tex, 0, 0, SB_W, SB_H, 0, WHITE_A((int)(255 * 0.86f * alpha + 0.5f)), u0, v0, u1, v1);
 }
 static void bg_shading(int mode, float alpha) {
-  vig_draw(mode, RGBA(12, 11, 17, (int)(255 * alpha + .5f)), SB_H);
+  vig_draw(mode, RGBA(18, 18, 20, (int)(255 * alpha + .5f)), SB_H);
 }
 /* the layer as one opaque picture: shading a mix of two pictures is the mix of the two shaded
    pictures, so each layer carries its own shading and the crossfade stays exact */

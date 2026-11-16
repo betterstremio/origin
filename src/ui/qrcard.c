@@ -192,7 +192,7 @@ static void draw_phone(float a) {
   if (!Q.done) {
     ty += 20;
     gfx_rrect(x + pad, ty, W - 2 * pad, 48, 12, Q.url[0] ? WHITE_A(255) : WHITE_A(60));
-    text_draw(T("Open the page"), SB_W / 2, ty + 24 - text_line_height(15) / 2.0f, 15, 700, RGB(12, 11, 17), 0, W - 60,
+    text_draw(T("Open the page"), SB_W / 2, ty + 24 - text_line_height(15) / 2.0f, 15, 700, RGB(18, 18, 20), 0, W - 60,
               ALIGN_CENTER);
     if (Q.url[0])
       hit_act(x + pad, ty, W - 2 * pad, 48, ph_open, 0, 0);

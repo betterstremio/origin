@@ -268,7 +268,7 @@ static void draw(void) {
       int on = S.filter == g, p = touch_pressed(NULL, chip_act, g, 0);
       gfx_rrect(cx, y, w, 32, 16, on ? WHITE_A(255) : p ? WHITE_A(50) : WHITE_A(22));
       text_draw(t, cx + w / 2, y + 16 - text_line_height(PH_TX_SMALL + 1) / 2.0f, PH_TX_SMALL + 1, 700,
-                on ? RGB(12, 11, 17) : PH_TXT, 0, w - 16, ALIGN_CENTER);
+                on ? RGB(18, 18, 20) : PH_TXT, 0, w - 16, ALIGN_CENTER);
       hit_act(cx, y, w, 32, chip_act, g, 0);
       cx += w + 8;
     }

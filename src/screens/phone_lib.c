@@ -82,7 +82,7 @@ static void draw(void) {
       int on = i == cur, pr = touch_pressed(NULL, chip_act, i, 0);
       gfx_rrect(cx, y, w, 32, 16, on ? WHITE_A(255) : pr ? WHITE_A(60) : WHITE_A(20));
       text_draw(t, cx + w / 2, y + 16 - text_line_height(PH_TX_SMALL + 1) / 2.0f, PH_TX_SMALL + 1, 700,
-                on ? RGB(12, 11, 17) : PH_TXT, 0, 0, ALIGN_CENTER);
+                on ? RGB(18, 18, 20) : PH_TXT, 0, 0, ALIGN_CENTER);
       hit_act(cx, y, w, 32, chip_act, i, 0);
       cx += w + 8;
     }

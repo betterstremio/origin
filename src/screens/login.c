@@ -636,7 +636,7 @@ static void draw_phone(void) {
     gfx_rrect(x + 3 + L.svc * hw, y + 3, hw - 6, 34, 17, WHITE_A(255));
     for (int i = 0; i < 2; i++) {
       text_draw(i ? "Nuvio" : "Stremio", x + hw * i + hw / 2, y + 20 - text_line_height(PH_TX_BODY) / 2.0f, PH_TX_BODY,
-                700, L.svc == i ? RGB(12, 11, 17) : PH_TXT, 0, 0, ALIGN_CENTER);
+                700, L.svc == i ? RGB(18, 18, 20) : PH_TXT, 0, 0, ALIGN_CENTER);
       hit_act(x + hw * i, y, hw, 40, ph_svc, i, 0);
     }
     y += 58;
@@ -646,7 +646,7 @@ static void draw_phone(void) {
     int pr = touch_pressed(NULL, ph_browser, 0, 0);
     gfx_rrect(x, y, W, 50, 12, pr ? WHITE_A(200) : WHITE_A(255));
     const char *bl = T("Sign in with your browser");
-    text_draw(bl, SB_W / 2, y + 25 - text_line_height(PH_TX_BODY + 1) / 2.0f, PH_TX_BODY + 1, 700, RGB(12, 11, 17), 0,
+    text_draw(bl, SB_W / 2, y + 25 - text_line_height(PH_TX_BODY + 1) / 2.0f, PH_TX_BODY + 1, 700, RGB(18, 18, 20), 0,
               W - 20, ALIGN_CENTER);
     hit_act(x, y, W, 50, ph_browser, 0, 0);
     y += 58;

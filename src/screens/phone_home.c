@@ -343,7 +343,7 @@ static void topbar_draw(Ph *p) {
     k = 0;
   if (k > 1)
     k = 1;
-  gfx_rect(0, 0, SB_W, PH_TOPBAR, RGBA(12, 11, 17, (int)(255 * k)));
+  gfx_rect(0, 0, SB_W, PH_TOPBAR, RGBA(18, 18, 20, (int)(255 * k)));
   if (k >= 1)
     gfx_rect(0, PH_TOPBAR - 1, SB_W, 1, WHITE_A(14));
   if (k < 1)

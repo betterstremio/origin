@@ -840,7 +840,7 @@ static void sc_hold(int st, float t) {
       const char *s = T("In Library");
       float w = text_width(s, 22, 700, 0) + 30;
       gfx_opacity_push(il);
-      gfx_rrect(cx + 300 - 14 - w, cy + 14, w, 40, 20, RGBA(12, 11, 17, 200));
+      gfx_rrect(cx + 300 - 14 - w, cy + 14, w, 40, 20, RGBA(18, 18, 20, 200));
       gfx_ring(cx + 300 - 14 - w, cy + 14, w, 40, 20, 1, col_alpha(ACC2, 0.8f));
       text_draw(s, cx + 300 - 14 - w / 2, cy + 34 - text_line_height(22) / 2.0f, 22, 700, ACC2, 0, 0, ALIGN_CENTER);
       gfx_opacity_pop();

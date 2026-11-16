@@ -195,7 +195,7 @@ float meta_draw_p(const MetaParts *p, float x, float y, uint32_t color, int alig
 #define PH_SPEED 760.0f /* units a second: a light crosses a poster in about a third of a second, one every 1.8 s */
 #define PH_PEAK 0.085f /* the light's strength at its middle: low, a gleam on frosted glass, never a white band */
 #define PH_HALF 440.0f /* half the light's width */
-#define PH_TINT RGB(0xdc, 0xd8, 0xf2) /* a cool lavender white: the light takes the surface's hue */
+#define PH_TINT RGB(0xe4, 0xe4, 0xe6) /* a neutral white: the light takes the surface's hue */
 void gfx_xform_point(float *x, float *y); /* layout -> screen with the current transform (gfx.c) */
 static float ph_profile(float d) {
   float x = 1 - fabsf(d) / PH_HALF;
@@ -387,7 +387,7 @@ static float ph_at(float ph, int rtl, float x, float y) {
     X += PH_P;
   return ph_tile(X, clampf(y - PH_Y0, 0, PH_VH));
 }
-#define PH_SURF RGB(0x1e, 0x1c, 0x27)
+#define PH_SURF RGB(0x1f, 0x1f, 0x22)
 void ph_surface(float x, float y, float w, float h, float r) {
   gfx_rrect_v(x, y, w, h, r, col_mix(PH_SURF, 0xffffffffu, 0.062f), col_mix(PH_SURF, 0xffffffffu, 0.014f));
   if (w > 8 && h > 8)
@@ -637,12 +637,13 @@ static int card_body(const Item *it, const CardPrep *cp, float x, float y, float
                 WHITE_A(178), 0, 0, app_rtl() ? ALIGN_LEFT : ALIGN_RIGHT); /* the time left beside the name, quiet */
     if (it->progress > 0) {
       float bw = w - 28,
-            pw = bw * (it->progress > 1
-                           ? 1
-                           : it->progress); /* inset and rounded, never edge to edge; the accent a touch lighter */
+            pw = bw *
+                 (it->progress > 1
+                      ? 1
+                      : it->progress); /* inset and rounded, never edge to edge; white: the posters carry the colour */
       gfx_rrect(x + 14, y + h - 13 - 6, bw, 6, 3, WHITE_A(61));
       if (pw >= 1)
-        gfx_rrect(app_rtl() ? x + 14 + bw - pw : x + 14, y + h - 13 - 6, pw, 6, 3, col_mix(ACC, 0xffffffffu, 0.2f));
+        gfx_rrect(app_rtl() ? x + 14 + bw - pw : x + 14, y + h - 13 - 6, pw, 6, 3, WHITE_A(235));
     }
   }
   gfx_clip_pop();

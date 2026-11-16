@@ -59,7 +59,7 @@ void phone_bars_draw(void) {
   if (!tab_shown())
     return;
   float y = SB_H - PH_TABBAR, w = SB_W / NTABS;
-  gfx_rect(0, y, SB_W, PH_TABBAR, RGBA(12, 11, 17, 246));
+  gfx_rect(0, y, SB_W, PH_TABBAR, RGBA(18, 18, 20, 246));
   gfx_rect(0, y, SB_W, 1, WHITE_A(18));
   hit_shield(0, y, SB_W, PH_TABBAR);
   for (int i = 0; i < NTABS; i++) {
@@ -112,7 +112,7 @@ void phone_wide(const Item *it, float x, float y, float w, float h) {
   float p = it->progress;
   if (p > 0.001f) {
     gfx_rrect(x + 10, y + h - 9, w - 20, 3, 1.5f, WHITE_A(70));
-    gfx_rrect(x + 10, y + h - 9, (w - 20) * (p > 1 ? 1 : p), 3, 1.5f, ACC | 0xff000000u);
+    gfx_rrect(x + 10, y + h - 9, (w - 20) * (p > 1 ? 1 : p), 3, 1.5f, WHITE_A(235));
   }
 }
 float phone_button(const char *label, const char *icon, float x, float y, float w, float h, int primary, HitFn act,
@@ -123,7 +123,7 @@ float phone_button(const char *label, const char *icon, float x, float y, float 
     w = tw + iw + gap + 32;
   int pr = touch_pressed(NULL, act, a, b);
   uint32_t bg = primary ? (pr ? WHITE_A(200) : WHITE_A(255)) : (pr ? WHITE_A(60) : WHITE_A(38)),
-           fg = primary ? RGB(12, 11, 17) : PH_TXT;
+           fg = primary ? RGB(18, 18, 20) : PH_TXT;
   gfx_rrect(x, y, w, h, h > 40 ? 8 : h / 2, bg);
   float cx = x + w / 2 - (tw + iw + gap) / 2;
   if (icon)

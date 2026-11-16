@@ -662,7 +662,7 @@ void update_pill_draw(float setX) {
   double now = app_now();
   float go = U.goAt > 0 && now - U.goAt < 0.5 ? 1 - (float)((now - U.goAt) / 0.5)
                                               : 0; /* OK: it lights up as it takes you there */
-  gfx_rrect(x0, y, W, h, 30, f || go > 0 ? RGB(0xd9, 0xd9, 0xd9) : RGBA(30, 30, 36, 240));
+  gfx_rrect(x0, y, W, h, 30, f || go > 0 ? RGB(0xd9, 0xd9, 0xd9) : RGBA(32, 32, 34, 240));
   uint32_t ink = f || go > 0 ? RGB(0x14, 0x14, 0x14) : WHITE_A(235);
   float tx = rtl ? x0 + W - 92 : x0 + 92, kx = rtl ? x0 + 26 : x0 + W - 26 - KEY_W, ky = 56 - KEY_H / 2;
   text_draw(lb, tx, 56 - text_line_height(23) / 2.0f, 23, 600, ink, 0.1f, 0, rtl ? ALIGN_RIGHT : ALIGN_LEFT);

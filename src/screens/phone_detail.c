@@ -380,7 +380,7 @@ static float episodes_draw(float y, float bottom) {
       if (x + w > 0 && x < SB_W) {
         gfx_rrect(x, y, w, 36, 18, on ? WHITE_A(255) : pr ? WHITE_A(50) : WHITE_A(24));
         text_draw(t, x + w / 2, y + 18 - text_line_height(PH_TX_BODY) / 2.0f, PH_TX_BODY, 700,
-                  on ? RGB(12, 11, 17) : PH_TXT, 0, 0, ALIGN_CENTER);
+                  on ? RGB(18, 18, 20) : PH_TXT, 0, 0, ALIGN_CENTER);
         hit_act(x, y, w, 36, season_act, i, 0);
       }
       x += w + 8;
@@ -553,7 +553,7 @@ static void draw(void) {
     if (k > 1)
       k = 1;
     if (k > 0) {
-      gfx_rect(0, 0, W, PH_TOPBAR, RGBA(12, 11, 17, (int)(255 * k)));
+      gfx_rect(0, 0, W, PH_TOPBAR, RGBA(18, 18, 20, (int)(255 * k)));
       text_draw(D.it.name, 60, PH_TOPBAR / 2 - text_line_height(PH_TX_ROW) / 2.0f, PH_TX_ROW, 700,
                 RGBA(0xf2, 0xf1, 0xf6, (int)(255 * k)), 0, W - 76, ALIGN_LEFT);
       hit_shield(0, 0, W, PH_TOPBAR);

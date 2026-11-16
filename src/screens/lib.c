@@ -31,11 +31,12 @@
 #define LSTEP 352.0f
 #define LROWH 486.0f
 #define GRID_X 62.0f
-#define GRID_TOP 490.0f
+#define GRID_TOP 300.0f
 #define ROW0_Y (GRID_TOP + 36)
 #define RAIL_X 48.0f
-#define RAIL_Y 410.0f
-static const char *F_LB[NF] = { "All", "Movies", "Series", "In progress", "Watched", "Not watched" };
+#define RAIL_Y 212.0f
+#define PILL_H 60.0f /* as the top bar's */
+static const char *F_LB[NF] = { "All", "Movies", "Shows", "In progress", "Watched", "Not watched" };
 static const char *F_IC[NF] = { "lib_all", "lib_movie", "lib_series", "lib_prog", "lib_seen", "lib_new" };
 static const char *S_KEY[4] = { "added", "watched", "az", "year" };
 static const char *S_LB[4] = { "Recently added", "Recently watched", "A\xe2\x80\x93Z", "Newest" };
@@ -235,19 +236,19 @@ static void rail_labels(void) {
   for (int i = 0; i < NB; i++) {
     if (i < NF) {
       snprintf(L.lbl[i], sizeof L.lbl[i], "%s", T(F_LB[i]));
-      L.lw[i] = text_width(L.lbl[i], 26, 600, 0) + 12 + text_width(L.cnt[i], 26, 600, 0) + 26;
+      L.lw[i] = 28 + text_width(L.lbl[i], 26, 500, 0) + 10 + text_width(L.cnt[i], 26, 500, 0) + 28;
     } else {
       snprintf(L.lbl[i], sizeof L.lbl[i], "%s", T(S_LB[sort_key()]));
-      L.lw[i] = text_width(L.lbl[i], 26, 600, 0) + 16 + 3 * 13 + 22 + 26;
+      L.lw[i] = 24 + 30 + 10 + text_width(L.lbl[i], 26, 500, 0) + 28;
     }
-  } /* (and its four dots, the current one a short pill) */
+  } /* (the sort: its icon, then the order in words) */
 }
 static int is_open(int i) {
-  int fi = L.zone == 0 ? L.ri : -1;
-  return i == fi || i == L.tab || i == NB - 1;
-}
+  (void)i;
+  return 1;
+} /* every pill shows its words (3.0.0: no icon-only filters) */
 static float btn_w(int i) {
-  return is_open(i) ? 76 + L.lw[i] : 76;
+  return L.lw[i];
 }
 static void rail_paint(int snap) {
   rail_labels();
@@ -274,218 +275,24 @@ static void rail_paint(int snap) {
   }
   L.laid = 1;
   if (fi != L.tab)
-    pill_to(&L.pc, px[L.tab], RAIL_Y, pw[L.tab], 76);
+    pill_to(&L.pc, px[L.tab], RAIL_Y, pw[L.tab], PILL_H);
   else
     pill_hide(&L.pc);
   if (fi != NB - 1)
-    pill_to(&L.ps, px[NB - 1], RAIL_Y, pw[NB - 1], 76);
+    pill_to(&L.ps, px[NB - 1], RAIL_Y, pw[NB - 1], PILL_H);
   else
     pill_hide(&L.ps);
   if (fi >= 0)
-    pill_to(&L.pf, px[fi], RAIL_Y, pw[fi], 76);
+    pill_to(&L.pf, px[fi], RAIL_Y, pw[fi], PILL_H);
   else
     pill_hide(&L.pf);
 }
 
-/* ---- the head: the focused title, shortly after the focus rests there ---- */
-static void head_facts(const Item *h, const cJSON *m, Facts *F) {
-  const LibIt *o = NULL;
-  for (int j = 0; j < L.nall; j++)
-    if (!strcmp(L.all[j].it.id, h->id)) {
-      o = &L.all[j];
-      break;
-    }
-  memset(F, 0, sizeof *F);
-  if (m) {
-    const char *rel = js_str(m, "releaseInfo", js_str(m, "year", "")), *rt = js_str(m, "runtime", ""),
-               *ir = js_str(m, "imdbRating", "");
-    char irb[16];
-    {
-      const cJSON *n = cJSON_GetObjectItemCaseSensitive(m, "imdbRating");
-      if (cJSON_IsNumber(n) && n->valuedouble > 0) {
-        snprintf(irb, sizeof irb, "%.1f", n->valuedouble);
-        ir = irb;
-      }
-    } /* a number too */
-    snprintf(F->meta, sizeof F->meta, "%s %s %s%s", rel, rt, *ir ? "IMDb " : "", ir);
-    const cJSON *gs = js_arr(m, "genres");
-    if (gs) {
-      int n = 0;
-      const cJSON *g;
-      cJSON_ArrayForEach(g, gs) {
-        if (n >= 3 || !cJSON_IsString(g))
-          break;
-        size_t l = strlen(F->gen);
-        snprintf(F->gen + l, sizeof F->gen - l, "%s%s", n ? T(", ") : "", T(g->valuestring));
-        n++;
-      }
-    }
-    snprintf(F->desc, sizeof F->desc, "%s", js_str(m, "description", ""));
-  } else if (o) {
-    char y[16] = "";
-    if (o->year)
-      snprintf(y, sizeof y, "%d", o->year);
-    snprintf(F->bits, sizeof F->bits, "%s%s%s", T(!strcmp(o->it.type, "series") ? "Series" : "Movie"),
-             y[0] ? "  \xc2\xb7  " : "", y);
-  }
-  if (o && o->cw) {
-    if (o->left < 1)
-      snprintf(F->lft, sizeof F->lft, "%s", T("Less than a minute left"));
-    else {
-      char r[32];
-      int mn = (int)(o->left + 0.5f);
-      sb_fmt_runtime(mn < 1 ? 1 : mn, r, sizeof r);
-      snprintf(F->lft, sizeof F->lft, "%s", T1("{t} left", "t", r));
-    }
-    F->left = 1;
-    F->pct = o->pct;
-  } else if (o && o->done)
-    snprintf(F->lft, sizeof F->lft, "%s", T("Watched"));
-}
-/* the facts came after the title showed: the old words stay and the new ones crossfade over them (0.35 s, the page's
-   'ease'), never a redraw from empty */
-static void on_head_meta(cJSON *m, void *ud) {
-  (void)ud;
-  if (!m || SCR != SCR_LIB || !L.cur.on || strcmp(js_str(m, "id", ""), L.cur.it.id))
-    return;
-  Facts F;
-  head_facts(&L.cur.it, m, &F);
-  if (!memcmp(&F, &L.cur.f, FACTS_WORDS))
-    return;
-  L.fprev = L.cur.f;
-  L.cur.f = F;
-  timer_start(&L.factsIn, 0.35f);
-}
-/* a title's details asked once: its answer is on its way (the meta call itself does not merge requests) */
-static void meta_once(const Item *it) {
-  static char asked[16][64];
-  static double askedAt[16];
-  static int an;
-  double now = app_now();
-  if (sb_meta_cached(it->type, it->id))
-    return;
-  for (int i = 0; i < 16; i++)
-    if (!strcmp(asked[i], it->id) && now - askedAt[i] < 15)
-      return;
-  snprintf(asked[an], sizeof asked[an], "%s", it->id);
-  askedAt[an] = now;
-  an = (an + 1) % 16;
-  sb_meta(it->type, it->id, on_head_meta, NULL);
-}
-/* the titles around the focus, once it rests: their backdrops (at the size the backdrop draws them), logos and
-   details are ready before the remote gets there, so the next one shows at once */
-static void head_ahead(int idx) {
-  for (int d = -2; d <= 2; d++) {
-    const LibIt *o = at(idx + d);
-    if (!o)
-      continue;
-    char bu[512];
-    if (d) {
-      const char *b = sb_bg_mid(&o->it, bu, sizeof bu);
-      if (b && *b)
-        img_prefetch(b, 1280, 720);
-    }
-    if (sb_is_imdb(o->it.id)) {
-      char lu[160];
-      snprintf(lu, sizeof lu, "https://images.metahub.space/logo/medium/%s/img", o->it.id);
-      img_prefetch_pri(lu, 520, 140);
-    } else if (o->it.logo[0])
-      img_prefetch_pri(o->it.logo, 520, 140);
-    meta_once(&o->it);
-  }
-}
-/* the text art of the posters around the focus, every way it can move next, asked for at once (at the size the
-   head draws it), and again every half second while it rests (kept recently used, never evicted under it) */
-static void logos_ahead(int idx) {
-  for (int d = -COLS - 1; d <= COLS + 1; d++) {
-    const LibIt *o = at(idx + d);
-    if (!o)
-      continue;
-    if (sb_is_imdb(o->it.id)) {
-      char lu[160];
-      snprintf(lu, sizeof lu, "https://images.metahub.space/logo/medium/%s/img", o->it.id);
-      img_prefetch_pri(lu, 520, 140);
-    } else if (o->it.logo[0])
-      img_prefetch_pri(o->it.logo, 520, 140);
-  }
-}
+/* ---- 3.0.0: My List has no head (a title's backdrop and details over the grid); the grid is the page ---- */
 static void head_want(void) {
-  logos_ahead(L.zone == 1 ? L.idx : 0);
-  const LibIt *o = at(L.zone == 1 ? L.idx : 0);
-  if (!o) {
-    if (L.cur.on) {
-      L.prev = L.cur;
-      L.cur.on = 0;
-      timer_start(&L.headIn, 0.35f);
-    }
-    L.shownId[0] = L.wantId[0] = 0;
-    L.wantStage = 0;
-    return;
-  }
-  if (!strcmp(L.shownId, o->it.id)) {
-    L.wantStage = 0;
-    L.wantId[0] = 0;
-    return;
-  } /* already there (or on its way) */
-  if (L.wantStage && !strcmp(L.wantId, o->it.id))
-    return;
-  snprintf(L.wantId, sizeof L.wantId, "%s", o->it.id);
-  L.wantIdx = L.items[L.zone == 1 ? L.idx : 0];
-  L.wantStage = 1;
-  L.wantAt = app_now() + (L.shownId[0] ? 0.22 : 0);
+  L.cur.on = L.prev.on = 0;
+  L.wantStage = 0;
 }
-static void head_tick(void) {
-  double now = app_now();
-  {
-    static double lgAt;
-    if (now - lgAt > 0.5) {
-      lgAt = now;
-      logos_ahead(L.zone == 1 ? L.idx : 0);
-    }
-  }
-  if (L.wantStage == 1 && now >= L.wantAt) {
-    const LibIt *o = &L.all[L.wantIdx];
-    snprintf(L.shownId, sizeof L.shownId, "%s", o->it.id);
-    L.wantStage = 2;
-    if (sb_is_imdb(o->it.id))
-      snprintf(L.hLogo, sizeof L.hLogo, "https://images.metahub.space/logo/medium/%s/img", o->it.id);
-    else
-      snprintf(L.hLogo, sizeof L.hLogo, "%s", o->it.logo);
-    if (L.hLogo[0])
-      img_prefetch_pri(L.hLogo, 520, 140);
-    L.logoDeadline = now + 0.7;
-    L.metaDeadline = now + 0.45;
-    meta_once(&o->it);
-    head_ahead(L.zone == 1 ? L.idx : 0);
-    char bu[512], pu[512];
-    bg_set(sb_bg_mid(&o->it, bu, sizeof bu), 0, sb_poster_of(&o->it, pu, sizeof pu));
-  } /* the backdrop keeps the old one up until the new one is decoded, then crossfades */
-  if (L.wantStage == 2) {
-    const LibIt *o = &L.all[L.wantIdx];
-    cJSON *m = sb_meta_cached(o->it.type, o->it.id);
-    int ready = (!L.hLogo[0] || img_loaded(L.hLogo) || img_failed(L.hLogo) || now >= L.logoDeadline) &&
-                (m || now >= L.metaDeadline);
-    if (L.hLogo[0])
-      img_get(L.hLogo, 520, 140, NULL);
-    if (ready) {
-      L.wantStage = 0;
-      L.wantId[0] = 0;
-      if (L.hLogo[0] && !img_loaded(L.hLogo))
-        L.hLogo[0] = 0; /* too late: the name */
-      /* the title shown so far stays and fades out while the new one fades in over it (0.35 s, the page's 'ease') */
-      float k = L.headIn.on ? timer_x(&L.headIn) : 1;
-      if (L.cur.on && k > 0.5f)
-        L.prev = L.cur; /* (mid-crossfade: the one most seen stays) */
-      L.cur.it = o->it;
-      L.cur.on = 1;
-      snprintf(L.cur.logo, sizeof L.cur.logo, "%s", L.hLogo);
-      head_facts(&o->it, m, &L.cur.f);
-      L.factsIn.on = 0;
-      timer_start(&L.headIn, 0.35f);
-    }
-  }
-}
-
 /* ---- the screen ---- */
 static void lift(int i) {
   if (i == L.fcur)
@@ -525,6 +332,7 @@ static void enter(const void *p) {
     render();
   }
   L.pc.dur = L.ps.dur = L.pf.dur = GLIDE_DUR;
+  bg_set(NULL, 0, NULL); /* no backdrop behind My List */
   L.cur.on = L.cur.on && L.shownId[0];
   L.prev.on = 0;
   L.headIn.on = L.factsIn.on = 0;
@@ -557,7 +365,6 @@ int lib_warm(void) {
   if (img_budget_mb() < 80) {
     const LibIt *o = at(0);
     if (o)
-      head_ahead(0);
     return !o || sb_meta_cached(o->it.type, o->it.id) != NULL;
   } /* a small picture budget: the data only (see board_warm) */
   for (int i = 0; i < COLS * 2 && i < L.n; i++) {
@@ -578,7 +385,6 @@ int lib_warm(void) {
     if (!img_loaded(b) && !img_failed(b))
       ok = 0;
   }
-  head_ahead(0);
   return ok && sb_meta_cached(o->it.type, o->it.id) != NULL;
 }
 void lib_from_bar(void) {
@@ -722,7 +528,6 @@ static void tick(float dt) {
   timer_tick(&L.gridIn, dt);
   timer_tick(&L.headIn, dt);
   timer_tick(&L.factsIn, dt);
-  head_tick();
 }
 static float col_x(int c) {
   float x = GRID_X + c * LSTEP;
@@ -803,62 +608,12 @@ static void facts_draw(Facts *F, float hx, float y, int al, int rtl) {
     text_draw_wrapped(F->desc, hx, y, 1150, 2, 27, 400, WHITE_A(209), 0, al, 40);
 }
 /* one title in the head at alpha a; old = the facts it had a moment ago, still fading out under the new ones (fk) */
-static void head_draw(Head *h, Facts *old, float a, float fk) {
-  if (a <= 0.001f)
-    return;
-  int rtl = app_rtl(), al = rtl ? ALIGN_RIGHT : ALIGN_LEFT;
-  float hx = rtl ? SB_W - 48 : 48;
-  gfx_opacity_push(a);
-  float y = 104;
-  float asp;
-  GLuint lt = h->logo[0] ? img_get(h->logo, 520, 140, &asp) : 0;
-  if (lt) {
-    float w = 520, hh = w / asp;
-    if (hh > 140) {
-      hh = 140;
-      w = hh * asp;
-    }
-    {
-      char sk[80];
-      snprintf(sk, sizeof sk, "logo:%s", h->it.id);
-      sx_image(sk, lt, rtl ? hx - w : hx, y, w, hh, 0, WHITE_A(255), 0, 0, 1, 1);
-    }
-    y += hh;
-  } else {
-    char sk[80];
-    snprintf(sk, sizeof sk, "logo:%s", h->it.id);
-    sx_text_wrapped(sk, h->it.name, hx, y, 1200, 1, 64, 800, WHITE_A(255), -1, al, 64 * 1.05f);
-    y += 64 * 1.05f;
-  }
-  y += 18;
-  if (old && fk < 1) {
-    gfx_opacity_push(1 - fk);
-    facts_draw(old, hx, y, al, rtl);
-    gfx_opacity_pop();
-    gfx_opacity_push(fk);
-    facts_draw(&h->f, hx, y, al, rtl);
-    gfx_opacity_pop();
-  } else
-    facts_draw(&h->f, hx, y, al, rtl);
-  gfx_opacity_pop();
-}
 static void draw(void) {
   int rtl = app_rtl();
   int al = rtl ? ALIGN_RIGHT : ALIGN_LEFT;
   float hx = rtl ? SB_W - 48 : 48;
-  /* the shade that keeps the grid readable over the backdrop */
-  gfx_rrect_v(0, 0, SB_W, 380, 0, RGBA(12, 11, 17, 0), RGBA(12, 11, 17, 89));
-  gfx_rrect_v(0, 380, SB_W, 220, 0, RGBA(12, 11, 17, 89), RGBA(12, 11, 17, 235));
-  gfx_rect(0, 600, SB_W, SB_H - 600, RGBA(12, 11, 17, 235));
-  /* the head: the new title over the one it replaces, crossfading; facts that came late over the earlier ones */
-  {
-    float k = L.headIn.on ? ease_apply(EASE_CSS_EASE, timer_x(&L.headIn)) : 1;
-    if (L.prev.on && k < 1)
-      head_draw(&L.prev, NULL, 1 - k, 0);
-    if (L.cur.on)
-      head_draw(&L.cur, L.factsIn.on ? &L.fprev : NULL, k,
-                L.factsIn.on ? ease_apply(EASE_CSS_EASE, timer_x(&L.factsIn)) : 1);
-  }
+  /* the page's name, as Netflix's My List: no backdrop, no title's details over the grid */
+  text_draw(T("My List"), hx, 118, 44, 600, WHITE_A(255), -0.4f, 0, al);
   /* the rail: pills under the buttons */
   float nx = L.zone == 0 ? nudge_x(&L.nudge) : 0, ny = L.zone == 0 ? nudge_y(&L.nudge) : 0;
 #define RX(px, w) (rtl ? SB_W - RAIL_X - (px) - (w) : RAIL_X + (px))
@@ -868,7 +623,7 @@ static void draw(void) {
       const Pill *p = ps[k];
       if (p->a.v > 0.001f) {
         gfx_opacity_push(p->a.v);
-        gfx_rrect(RX(p->x.v, p->w.v), RAIL_Y, p->w.v, 76, 38, WHITE_A(41));
+        gfx_rrect(RX(p->x.v, p->w.v), RAIL_Y, p->w.v, PILL_H, PILL_H / 2, WHITE_A(46));
         gfx_opacity_pop();
       }
     }
@@ -879,46 +634,28 @@ static void draw(void) {
                           : 1; /* OK: the highlight gives under the press */
     float px = RX(L.pf.x.v, L.pf.w.v) + nx;
     gfx_opacity_push(L.pf.a.v);
-    gfx_scale_push(pk, pk, px, RAIL_Y + 38);
-    gfx_rrect(px, RAIL_Y + ny, L.pf.w.v, 76, 38, WHITE_A(255));
+    gfx_scale_push(pk, pk, px, RAIL_Y + PILL_H / 2);
+    gfx_rrect(px, RAIL_Y + ny, L.pf.w.v, PILL_H, PILL_H / 2, RGB(0xe5, 0xe5, 0xe5));
     gfx_scale_pop();
     gfx_opacity_pop();
   }
   for (int i = 0; i < NB; i++) {
     int f = L.zone == 0 && i == L.ri, open = is_open(i);
     float w = L.bw[i].v > 1 ? L.bw[i].v : btn_w(i), x = RX(L.bx[i].v, w), bxn = f ? nx : 0, byn = f ? ny : 0;
-    hit_add(x, RAIL_Y, w, 76, rail_focus, NULL, i, 0);
-    if (!open && L.la[i].v < 0.999f)
-      gfx_circle(rtl ? x + w - 38 : x + 38, RAIL_Y + 38, 38,
-                 WHITE_A((int)(41 * (1 - L.la[i].v)))); /* a closed button: its own quiet disc */
-    uint32_t fg = f ? RGB(0x15, 0x13, 0x1c) : WHITE_A(255);
-    icon_draw(i < NF ? F_IC[i] : "lib_sort", (rtl ? x + w - 21 - 34 : x + 21) + bxn, RAIL_Y + 21 + byn, 34, fg);
-    float ok = L.lw[i] > 1 ? (w - 76) / L.lw[i] : 0;
-    ok = ok < 0 ? 0 : ok > 1 ? 1 : ok; /* the name shows as far as the pill has opened: never ahead of it */
-    float la = L.la[i].v < ok * ok ? L.la[i].v : ok * ok;
-    if (la > 0.001f) {
-      gfx_opacity_push(la);
-      gfx_clip_push(x, RAIL_Y, w - 18, 76); /* the name shows as the pill widens */
-      float tx = (rtl ? x + w - 66 : x + 66) + bxn, ty = RAIL_Y + 38 - text_line_height(26) / 2.0f + byn;
-      float tw = text_draw(L.lbl[i], tx, ty, 26, 600, fg, 0, 0, al);
-      if (i < NF)
-        text_draw(L.cnt[i], rtl ? tx - tw - 12 : tx + tw + 12, ty, 26, 600, col_alpha(fg, 0.6f), 0, 0, al);
-      else { /* the sort's orders as dots, the current one lit; a press moves the light to the next */
-        float d0 = rtl ? tx - tw - 16 - 5 : tx + tw + 16 + 5, cy = RAIL_Y + 38 + byn, dir = rtl ? -1 : 1;
-        tween_to(&L.sortDot, (float)sort_key(), GLIDE_DUR, GLIDE_EASE);
-        /* the current order a short pill, the others dots; the pill flows from one into the next as it changes */
-        float xx = d0 - 3.5f * dir;
-        for (int d = 0; d < 4; d++) {
-          float k = 1 - fabsf(d - L.sortDot.v);
-          k = k < 0 ? 0 : k;
-          float w = 7 + 15 * k;
-          gfx_rrect(rtl ? xx - w : xx, cy - 3.5f, w, 7, 3.5f, col_mix(col_alpha(fg, 0.32f), fg, k));
-          xx += dir * (w + 6);
-        }
-      }
-      gfx_clip_pop();
-      gfx_opacity_pop();
+    hit_add(x, RAIL_Y, w, PILL_H, rail_focus, NULL, i, 0);
+    (void)open;
+    uint32_t fg = f ? RGB(0x14, 0x14, 0x14) : WHITE_A(235);
+    float pad = 28, ty = RAIL_Y + PILL_H / 2 - text_line_height(26) / 2.0f + byn;
+    if (i == NB - 1) { /* the sort: its icon, then the order in words (OK moves to the next order) */
+      icon_draw("lib_sort", (rtl ? x + w - 24 - 30 : x + 24) + bxn, RAIL_Y + 15 + byn, 30, fg);
+      pad = 24 + 30 + 10;
     }
+    gfx_clip_push(x, RAIL_Y, w, PILL_H);
+    float tx = (rtl ? x + w - pad : x + pad) + bxn;
+    float tw = text_draw(L.lbl[i], tx, ty, 26, 500, fg, 0, 0, al);
+    if (i < NF)
+      text_draw(L.cnt[i], rtl ? tx - tw - 10 : tx + tw + 10, ty, 26, 500, col_alpha(fg, 0.6f), 0, 0, al);
+    gfx_clip_pop();
   }
 #undef RX
   /* the grid: the focused row on top, the rows around it */

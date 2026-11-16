@@ -1143,6 +1143,27 @@ static void hero_tick(Board *b, float dt) {
     hero_put(b);
   }
 }
+/* a title's logo too dark for the billboard's shade (its pixels' lightness, weighted by how many there are, low):
+   1 dark (the title in words instead), 0 fine or no logo, -1 not known yet (its colours come with its decode, asked
+   for before it, so the same decode works them out) */
+static int logo_dark(const char *u) {
+  if (!u[0])
+    return 1; /* no logo at all: the words */
+  Palette pal;
+  int r = img_palette(u, 520, 175, 1, &pal);
+  if (r < 0)
+    return 1; /* failed: the words */
+  if (r == 0)
+    return -1;
+  const Swatch *sw[5] = { &pal.vibrant, &pal.dark, &pal.light, &pal.muted, &pal.darkMuted };
+  float sum = 0, cnt = 0;
+  for (int i = 0; i < 5; i++)
+    if (sw[i]->ok && sw[i]->n > 0) {
+      sum += sw[i]->l * sw[i]->n;
+      cnt += sw[i]->n;
+    }
+  return cnt > 0 && sum / cnt < 0.30f;
+}
 /* the logo fitted in its box (never larger than it was drawn at: 520x175) */
 static int logo_fit(const char *u, float maxW, float maxH, float *w, float *h, GLuint *t) {
   float asp = 0;
@@ -1380,10 +1401,10 @@ static void bill_draw(Board *b) {
   }
   gfx_ring(X, Y, W, H, 28, 2, WHITE_A(70));
   if (rtl)
-    gfx_alpha_tex_uv(grad_tex(0), X + W * 0.35f, Y, W * 0.65f, H, RGB(8, 8, 12), 1, 0, 0, 1);
+    gfx_alpha_tex_uv(grad_tex(0), X + W * 0.35f, Y, W * 0.65f, H, RGB(10, 10, 11), 1, 0, 0, 1);
   else
-    gfx_alpha_tex(grad_tex(0), X, Y, W * 0.65f, H, RGB(8, 8, 12));
-  gfx_alpha_tex(grad_tex(1), X, Y, W, H, RGB(8, 8, 12));
+    gfx_alpha_tex(grad_tex(0), X, Y, W * 0.65f, H, RGB(10, 10, 11));
+  gfx_alpha_tex(grad_tex(1), X, Y, W, H, RGB(10, 10, 11));
   /* the words: logo (or name), facts, Play / More info; they fade between titles with the hero */
   float ha = b->heroA.v, x = rtl ? X + W - 60 : X + 60, by = Y + H - 56 - 66;
   int align = rtl ? ALIGN_RIGHT : ALIGN_LEFT;
@@ -1394,9 +1415,10 @@ static void bill_draw(Board *b) {
     GLuint lt;
     float my = by - 30 - 34;
     gfx_opacity_push(ha);
-    if (logo_fit(v->logo, 560, 160, &lw, &lh, &lt))
+    int dk = logo_dark(v->logo), lf = logo_fit(v->logo, 560, 160, &lw, &lh, &lt); /* (asked for either way) */
+    if (dk == 0 && lf)
       gfx_image(lt, rtl ? x - lw : x, my - 26 - lh, lw, lh, 0, WHITE_A((int)(255 * b->logoIn.v)), 0, 0, 1, 1);
-    else if (!v->wait)
+    else if (dk == 1 && !v->wait)
       text_draw_wrapped(v->name, x, my - 26 - 2 * 80, 900, 2, 76, 700, WHITE_A(255), -1.2f, align, 80);
     meta_draw_p(&hl->mp, x, my, WHITE_A(235), align);
     gfx_opacity_pop();
@@ -1484,7 +1506,7 @@ static void cine_card_art(const Item *it, float ox, float cy, float ow, float ch
     const char *t = T(k == 0 ? "We think you'll love this" : "Recently added");
     float tw = text_width(t, 21, 600, 0), w = tw + 62;
     float px = rtl ? bx : bx - w;
-    gfx_rrect(px, byy, w, 42, 10, RGBA(12, 11, 17, (int)(220 * ek)));
+    gfx_rrect(px, byy, w, 42, 10, RGBA(18, 18, 20, (int)(220 * ek)));
     gfx_rrect(px + 12, byy + 10, 22, 22, 5,
               k == 0 ? RGBA(0xe8, 0xb0, 0x4a, (int)(255 * ek)) : RGBA(0xe5, 0x48, 0x4d, (int)(255 * ek)));
     text_draw(t, px + 44, byy + (42 - text_line_height(21)) / 2, 21, 600, WHITE_A((int)(255 * ek)), 0, 0, ALIGN_LEFT);
@@ -1500,7 +1522,7 @@ static void rank_draw(int n, float x, float y, float h) {
   static const float o[8][2] = { { -4, 0 }, { 4, 0 }, { 0, -4 }, { 0, 4 }, { -3, -3 }, { 3, -3 }, { -3, 3 }, { 3, 3 } };
   for (int i = 0; i < 8; i++)
     text_draw(s, x + o[i][0], ty + o[i][1], px, 800, WHITE_A(150), -8, 0, ALIGN_RIGHT);
-  text_draw(s, x, ty, px, 800, RGB(0x0c, 0x0b, 0x11), -8, 0, ALIGN_RIGHT);
+  text_draw(s, x, ty, px, 800, RGB(0x12, 0x12, 0x14), -8, 0, ALIGN_RIGHT);
 }
 #if SB_WINDOWED
 static void spot_focus(int a, int c) {
@@ -1526,7 +1548,7 @@ static void hero_draw(Board *b) {
   } /* the cinematic Home: the billboard; the rows draw their own details */
   if (spot1(b) && b->spotA.v > 0.001f)
     gfx_alpha_tex(scrim_tex(), 260, 170, SB_W - 520, 460,
-                  RGBA(12, 11, 17, (int)(255 * b->spotA.v))); /* painted once, one quad */
+                  RGBA(18, 18, 20, (int)(255 * b->spotA.v))); /* painted once, one quad */
   if (spot1(b))
     dots_draw(b);
 #if SB_WINDOWED
@@ -1899,8 +1921,17 @@ static int board_key(Board *b, int k) {
       app_go(SCR_COL, &f, 0);
     } else if (see_all(r) && r->col == r->items.n)
       see_all_open(r);
-  } else if (k == K_BACK)
+  } else if (k == K_BACK) {
+    if (lay0(b) && b->bill && b->nfeat) {
+      int n = first_visible_row(b, 0, 1);
+      b->rowIdx = n >= 0 ? n : 0;
+      b->featOn = 1;
+      b->billBtn = 0;
+      hero_soon(b, 150);
+      feat_arm(b);
+    } /* Back from the rows: to the top, the billboard back in view, the focus going up to the bar (as Netflix) */
     return 0;
+  }
   return 1;
 }
 static int key_home(int k) {
@@ -2600,7 +2631,7 @@ static void row_draw(Board *b, Row *r, int ri, float y, int near, float rowA) {
       const CardPrep *cp = row_prep(r, i, load, &hold, NULL);
       float ox = rtl ? x - exi : x, ow = cw + exi, eki = exi / (CARD_OPEN_W - cw);
       hit_add(ox, cy, ow, ch, card_focus, NULL, ri, i);
-      gfx_rrect(ox, cy, ow, ch, CARD_R, RGB(0x0c, 0x0b, 0x11));
+      gfx_rrect(ox, cy, ow, ch, CARD_R, RGB(0x12, 0x12, 0x14));
       card_wide(b, r, &r->items.items[i], cp, x, ox, ow, cy, cw, ch, eki, rtl, 0);
       if (b->cine)
         cine_card_art(&r->items.items[i], ox, cy, ow, ch, eki, rtl);
@@ -2660,7 +2691,7 @@ static void row_draw(Board *b, Row *r, int ri, float y, int near, float rowA) {
     lift_begin_z(lk, 1, hp, ox, cy, ow, ch, CARD_R,
                  0.06f * (1 - ek)); /* (still when open: the video's rectangle cannot scale with it) */
     if (ex > 0)
-      gfx_rrect(ox, cy, ow, ch, CARD_R, RGB(0x0c, 0x0b, 0x11));
+      gfx_rrect(ox, cy, ow, ch, CARD_R, RGB(0x12, 0x12, 0x14));
     float sd = L.slot ? (r->col - r->pos.v) : 0; /* the slot: the title before, under the new one fading in */
     int pv = r->col + (sd > 0 ? -1 : 1);
     sd = sd < 0 ? -sd : sd;
