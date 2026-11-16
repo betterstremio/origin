@@ -68,6 +68,32 @@ def p90(vals, worse_high):
     return s[i] if worse_high else s[len(s) - 1 - i]
 
 
+def calibrate(a):
+    """A budget the given runs pass by construction: per metric, the worst run, with 10% (and a small floor) of room.
+    Used to prove the gate: baseline passes its own calibration, a deliberately slow build does not."""
+    runs = [r for r in (load_run(p) for p in a.logs) if r]
+    base = json.load(open(a.budget, encoding="utf-8"))["devices"][a.device]["rules"]
+    out, seen = [], set()
+    for rule in base:
+        for phase in sorted({p for r in runs for p in r}):
+            if not fnmatch.fnmatch(phase, rule["phase"]):
+                continue
+            vals = [r[phase][rule["metric"]] for r in runs if phase in r and rule["metric"] in r[phase]]
+            if not vals or (phase, rule["metric"]) in seen:
+                continue
+            seen.add((phase, rule["metric"]))
+            hi = "max" in rule
+            if hi:
+                lim = max(vals) * 1.10 + (1.0 if rule["metric"] in ("ttf.p95", "frames.worst", "key.p95", "late") else 0.02)
+            else:
+                lim = min(vals) * 0.90 - 0.02 if rule["metric"] != "keys_ok" else 0
+            out.append({"phase": phase, "metric": rule["metric"], "max" if hi else "min": round(lim, 3), "cache": "*"})
+    b = {"noisy_spread": 1e9, "devices": {a.device: {"rules": out}}}
+    json.dump(b, open(a.calibrate, "w"), indent=1)
+    print("perf_check: calibrated budget with %d rules written to %s" % (len(out), a.calibrate))
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--device", required=True)
@@ -76,8 +102,11 @@ def main():
     ap.add_argument("--budget", default=os.path.join(HERE, "budget.json"))
     ap.add_argument("--history", default=os.path.join(HERE, "history.jsonl"))
     ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--calibrate", metavar="OUT", help="write a budget from these runs (worst P90 + 10%%) and exit")
     ap.add_argument("logs", nargs="+")
     a = ap.parse_args()
+    if a.calibrate:
+        return calibrate(a)
     budget = json.load(open(a.budget, encoding="utf-8"))
     rules = budget["devices"][a.device]["rules"]
     spread_max = budget.get("noisy_spread", 0.15)
