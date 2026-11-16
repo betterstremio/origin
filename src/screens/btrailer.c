@@ -18,7 +18,7 @@
 /* own = the decoder holds the trailer (the player takes it over the moment it opens) */
 static struct {
   int own, live, held, resumes, byKey, quiet, endFade, seekWant, checkAt;
-  double pauseAt, resumeAt, steadyAt, loadAt, loadT;
+  double pauseAt, resumeAt, steadyAt, loadAt, loadT, skipTo; /* skipTo: a trailer's start past its cards */
 } B;
 
 /* the trailer in the expanded card (as Nuvio's expanded_card): the plane goes behind the card's rectangle,
@@ -73,8 +73,9 @@ static void h_load(const char *url, const char *mime, const char *titleId, void 
   B.loadAt = 0;
   B.checkAt = 0;
   B.loadT = app_now();
-  if (bgt_clip()) {
-    double at = bgt_clip_start();
+  B.skipTo = bgt_clip() ? 0 : bgt_trailer_skip();
+  if (bgt_clip() || B.skipTo > 0) {
+    double at = bgt_clip() ? bgt_clip_start() : B.skipTo;
     if (video_load_at(url, at))
       B.loadAt = at;
   } else
@@ -84,7 +85,7 @@ static void h_load(const char *url, const char *mime, const char *titleId, void 
   B.held = 0;
   B.resumes = 0;
   B.steadyAt = 0;
-  B.seekWant = bgt_clip();
+  B.seekWant = bgt_clip() || B.skipTo > 0;
   B.quiet = 1; /* silent until it shows (set once the media is loaded) */
 }
 /* a key: the card shuts at once and the video plays on silent, until the decoder is let go in a pause of the remote.
@@ -175,20 +176,21 @@ played:
     if (B.quiet && video_has_media()) {
       B.quiet = 0;
       video_set_volume(0, 0);
+      video_select_text(-1); /* no subtitles in a preview */
     } /* (as soon as the media exists: silent until it shows) */
     /* the card opens onto it only once it has been playing steadily for a moment (the plane placed early): the TV says
        "playing" a few frames before the picture is there, which showed as black */
     /* a clip was asked to begin past the credits: the TV's first position report says if it did; if not (or the film is
      * too short for that place), the jump as before */
     if (B.seekWant && video_duration() > 0) {
-      double d = video_duration(), rep = video_reported_time();
-      if (B.loadAt > 0 && rep > B.loadAt - 30 && B.loadAt <= d * 0.5) {
+      double d = video_duration(), rep = video_reported_time(), tol = B.skipTo > 0 ? 3 : 30;
+      if (B.loadAt > 0 && rep > B.loadAt - tol && B.loadAt <= d * 0.5) {
         B.seekWant = 0;
         B.steadyAt = 0;
         fprintf(stderr, "[btr] clip: the TV began it at %.0f s (%.2f s after the load)\n", rep, now - B.loadT);
       } else if (B.loadAt <= 0 || B.loadAt > d * 0.5 || rep >= 0) {
         B.seekWant = 0;
-        double to = bgt_clip_seek(d);
+        double to = B.skipTo > 0 ? (B.skipTo < d * 0.2 ? B.skipTo : d * 0.2) : bgt_clip_seek(d);
         fprintf(stderr, "[btr] clip: from %.0f s%s\n", to, B.loadAt > 0 ? " (the TV did not begin there)" : "");
         video_seek_now(to);
         B.steadyAt = 0;
@@ -203,8 +205,8 @@ played:
       double rep = video_reported_time();
       B.checkAt = 0;
       fprintf(stderr, "[btr] clip: first position %.0f s\n", rep);
-      if (rep < B.loadAt - 30)
-        video_seek_now(bgt_clip_seek(video_duration()));
+      if (rep < B.loadAt - (B.skipTo > 0 ? 3 : 30))
+        video_seek_now(B.skipTo > 0 ? B.skipTo : bgt_clip_seek(video_duration()));
     } /* it did begin at the start after all: the jump, late */
     if (!B.live && !B.seekWant && !video_settling() && video_live() && vs == VID_PLAYING) {
       if (!B.steadyAt) {

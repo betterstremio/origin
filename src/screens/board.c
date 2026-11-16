@@ -52,7 +52,7 @@
 #define HOME_SPOT_DY 466.0f /* the rows under the billboard: the first row's title just below it */
 #define CINE_TOP 104.0f /* the focused row's top, docked under the bar */
 #define CINE_DET_H 150.0f /* the details under the open card */
-#define CINE_DESC_W 1100.0f
+#define CINE_DESC_W 940.0f /* about 70 characters a line at 27 px */
 #define RANK_W 130.0f /* a Top 10 card's numeral, in front of it */
 /* cp: each card's resolved picture and words beside its item (cpSt 0 not yet, 1 final, 2 its translation may still
    come); pf: the ranges last fetched ahead (per call site), fetched again only when they move or a picture changes */

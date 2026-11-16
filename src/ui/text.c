@@ -1619,6 +1619,7 @@ static int wrap_lines(const char *utf8, float maxW, int maxLines, int px, int we
     }
     if (fitEnd <= at)
       fitEnd = stop > at ? stop : at + 1;
+    int lineAt = at;
     cps_to_utf8(cps + at, fitEnd - at, lines[nl], 1024);
     nl++;
     at = fitEnd;
@@ -1626,6 +1627,13 @@ static int wrap_lines(const char *utf8, float maxW, int maxLines, int px, int we
       at++;
     if (nl == maxLines && at < n) {
       *ellipsisLast = 1;
+      if (stop > fitEnd) /* the last line carries the rest of its paragraph: drawn within maxW it ends in an ellipsis */
+        cps_to_utf8(cps + lineAt, stop - lineAt, lines[nl - 1], 1024);
+      else { /* it ended its paragraph exactly: the ellipsis added to it */
+        size_t ln = strlen(lines[nl - 1]);
+        if (ln + 4 < 1024)
+          memcpy(lines[nl - 1] + ln, "\xe2\x80\xa6", 4);
+      }
     }
   }
   free(cand);

@@ -93,6 +93,10 @@ void bgt_addons_limited(const char *addon, const char *how) {
 int bgt_clip(void) {
   return clip;
 }
+static int isTrailer; /* what loads is a trailer: it opens on a rating card or a studio's logo */
+double bgt_trailer_skip(void) {
+  return isTrailer ? 8.0 : 0;
+}
 int bgt_fast(void) {
   return clip || quick;
 }
@@ -202,6 +206,7 @@ static void on_found(const Trailer *t, const char *err, void *ud) {
   st = S_LOAD;
   memAt = now_s() + 10;
   fprintf(stderr, "[btr] load %s (%s), %d MB free\n", tid, t->mime, plat_mem_free_mb());
+  isTrailer = 1;
   if (H.load)
     H.load(t->url, t->mime, tid, H.ud);
 }
@@ -405,6 +410,7 @@ static void clip_go(double t) {
   memAt = t + 10;
   fprintf(stderr, "[btr] clip %s, %s link from %s: %s, %d MB free\n", tid, CP.resolved ? "resolved" : "unresolved",
           CP.addon, CP.label, plat_mem_free_mb());
+  isTrailer = 0;
   if (H.load)
     H.load(u, "", tid, H.ud);
 }
@@ -497,6 +503,7 @@ void bgt_tick(const BgtView *v) {
       memAt = t + 10;
       qLoadAt = t;
       fprintf(stderr, "[btr] %s %s: %s, %d MB free\n", qc ? "imdb clip" : "imdb trailer", tid, qn, plat_mem_free_mb());
+      isTrailer = !qc;
       if (H.load)
         H.load(qu, "video/mp4", tid, H.ud);
       return;

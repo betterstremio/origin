@@ -48,6 +48,7 @@ void bgt_addons_limited(
     const char *how); /* an addon said its rate limit is reached: its previews pause, IMDb plays instead */
 int bgt_fast(void); /* the title or an IMDb clip: shown as soon as it plays steadily */
 int bgt_clip(void); /* what loads is the title itself (not a trailer): silent, started past the credits */
+double bgt_trailer_skip(void); /* a trailer: how far in it starts (past its rating card and studio logos), else 0 */
 double bgt_clip_seek(double dur); /* where a clip starts, once its length is known */
 double bgt_clip_start(void); /* where a clip is asked to begin before its length is known */
 #endif
