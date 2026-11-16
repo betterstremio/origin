@@ -11,6 +11,12 @@
 #include <unistd.h>
 #include <time.h>
 #include <math.h>
+/* the JPEG decoder's NEON loops on ARM (stb_image never switches them on by itself): Android (arm64 and v7, NDK clang)
+   and any 64-bit ARM. Not the webOS ARMv7 build: its zig compiler stops with "Do not know how to split the result of this
+   operator" on them (as it does on libwebp's NEON, see tools/targets/webos.sh) */
+#if (defined(__ANDROID__) || defined(__aarch64__)) && defined(__ARM_NEON) && !defined(STBI_NO_SIMD)
+#define STBI_NEON
+#endif
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_NO_PSD
 #define STBI_NO_TGA
@@ -1086,7 +1092,7 @@ void img_release_unused(int keepMb) {
   unsigned minAge = usedBytes > keep + keep / 8 ? 3u : 120u;
   for (int n = 0; n < 64 && usedBytes > keep; n++) {
     Img *vic = NULL;
-    unsigned long long best = 0;
+    unsigned best = 0;
     for (int b = 0; b < BUCKETS; b++)
       for (Img *i = table[b]; i; i = i->next) {
         if (!i->tex || i->pin || (!keepMb && i->hpin == hgen) || frameNo - i->lastUse < minAge)
@@ -1094,7 +1100,8 @@ void img_release_unused(int keepMb) {
         unsigned d = 0;
         if (useFocus)
           d = i->row < 0 ? 2u : i->row <= 1 ? 0u : (unsigned)abs(i->row - focusRow);
-        unsigned long long sc = ((unsigned long long)d << 32) | (frameNo - i->lastUse);
+        unsigned age = frameNo - i->lastUse; /* (32 bits: the distance above 20 bits of age; 64 broke the ARM compiler) */
+        unsigned sc = (d << 20) | (age < 0xfffffu ? age : 0xfffffu);
         if (!vic || sc > best) {
           vic = i;
           best = sc;
