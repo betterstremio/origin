@@ -74,6 +74,7 @@ typedef struct {
   unsigned cpGen, cpLg;
   int pf[3][2];
   unsigned char pfWait[3];
+  double pfAt[3]; /* when each range is asked again (an ask nobody repeats for 1.5 s is dropped by the loader) */
   int pfOpen; /* pfOpen: col + 1 when the open card's wide pictures around it were last asked for */
   /* a catalog that pages: where its next page starts (the items its addon sent so far), one page asked at a time */
   CatalogDef def;
@@ -322,6 +323,7 @@ static void prep_free(Row *r) {
   for (int k = 0; k < 3; k++) {
     r->pf[k][0] = r->pf[k][1] = -1;
     r->pfWait[k] = 0;
+    r->pfAt[k] = 0;
   }
   r->pfOpen = 0;
 }
@@ -2250,8 +2252,11 @@ static void row_prefetch(Row *r, int slot, int from, int to) {
     to = r->items.n - 1;
   prep_check(r);
   int same = r->pf[slot][0] == from && r->pf[slot][1] == to;
-  if (same && !r->pfWait[slot])
+  int again = app_now() >= r->pfAt[slot]; /* the same range, asked again every 0.75 s: the loader drops an ask left for 1.5 s */
+  if (same && !r->pfWait[slot] && !again)
     return;
+  if (again)
+    r->pfAt[slot] = app_now() + 0.75;
   r->pf[slot][0] = from;
   r->pf[slot][1] = to;
   int wait = 0;
@@ -2264,7 +2269,7 @@ static void row_prefetch(Row *r, int slot, int from, int to) {
     if (r->cpSt[i] != 1)
       wait = 1;
     int back = cp->crop && img_back_shaped(cp->art, cw, ch, CARD_R, 3); /* shown before: the sharp one comes straight back */
-    if ((!same || ch2) && cp->pre[0] && !(cp->crop && img_shaped_loaded(cp->art, cw, ch, CARD_R, 3)))
+    if ((!same || ch2 || again) && cp->pre[0] && !(cp->crop && img_shaped_loaded(cp->art, cw, ch, CARD_R, 3)))
       img_get_shaped(back ? cp->art : cp->pre, cw, ch, CARD_R, cp->crop ? 3 : fit); /* (not the quick crop once the sharp one is in) */
     if (cp->crop && ((img_idle() && img_shaped_loaded(cp->pre, cw, ch, CARD_R, 3)) || back)) {
       char lu[512];
