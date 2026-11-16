@@ -205,8 +205,7 @@ void scrollin_launch_params(int argc, char **argv) {
       e++;
     if (!strncmp(k, "SB_", 3)) {
       setenv(k, v, 1);
-      fprintf(stderr, "[scroll] launch param %s=%s
-", k, v);
+      fprintf(stderr, "[scroll] launch param %s=%s\n", k, v);
     }
   }
 }
