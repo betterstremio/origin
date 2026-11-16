@@ -271,7 +271,7 @@ int sound_has_intro(void) {
   return has;
 }
 void sound_intro(void) {
-  if (!sound_has_intro() || !strcmp(store_get("introSound", "true"), "false"))
+  if (getenv("SB_NOINTRO") || !sound_has_intro() || !strcmp(store_get("introSound", "true"), "false"))
     return;
   thread_up();
   if (started < 0)

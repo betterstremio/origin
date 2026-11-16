@@ -1,3 +1,4 @@
+#include "core/fillstat.h"
 #include "platform/plat.h"
 #include "ui/img.h"
 #include <SDL2/SDL.h>
@@ -423,6 +424,7 @@ static void load_(Img *im) {
 static void decode_part(Img *im, unsigned char *data, size_t len, int fromNet, const char *key) {
   int w, h, ch = 4;
   unsigned char *px;
+  fill_dev_decode_delay();
   if (len > 12 && !memcmp(data, "RIFF", 4) && !memcmp(data + 8, "WEBP", 4)) {
     px = WebPDecodeRGBA(data, len, &w, &h);
   } /* metahub serves WebP */

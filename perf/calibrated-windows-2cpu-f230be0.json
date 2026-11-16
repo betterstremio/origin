@@ -1,0 +1,585 @@
+{
+ "noisy_spread": 1000000000.0,
+ "devices": {
+  "windows-2cpu": {
+   "rules": [
+    {
+     "phase": "T250-down",
+     "metric": "ttf.p95",
+     "max": 358.5,
+     "cache": "*"
+    },
+    {
+     "phase": "T250-left",
+     "metric": "ttf.p95",
+     "max": 1.0,
+     "cache": "*"
+    },
+    {
+     "phase": "T250-right",
+     "metric": "ttf.p95",
+     "max": 19.7,
+     "cache": "*"
+    },
+    {
+     "phase": "T250-up",
+     "metric": "ttf.p95",
+     "max": 386.0,
+     "cache": "*"
+    },
+    {
+     "phase": "T150-down",
+     "metric": "vfr",
+     "min": 0.142,
+     "cache": "*"
+    },
+    {
+     "phase": "T150-left",
+     "metric": "vfr",
+     "min": 0.097,
+     "cache": "*"
+    },
+    {
+     "phase": "T150-right",
+     "metric": "vfr",
+     "min": 0.088,
+     "cache": "*"
+    },
+    {
+     "phase": "T150-up",
+     "metric": "vfr",
+     "min": 0.457,
+     "cache": "*"
+    },
+    {
+     "phase": "T150-down",
+     "metric": "ttf.p95",
+     "max": 248.5,
+     "cache": "*"
+    },
+    {
+     "phase": "T150-left",
+     "metric": "ttf.p95",
+     "max": 1101.0,
+     "cache": "*"
+    },
+    {
+     "phase": "T150-right",
+     "metric": "ttf.p95",
+     "max": 679.7,
+     "cache": "*"
+    },
+    {
+     "phase": "T150-up",
+     "metric": "ttf.p95",
+     "max": 174.8,
+     "cache": "*"
+    },
+    {
+     "phase": "T250-down",
+     "metric": "box_pct",
+     "min": 12.837,
+     "cache": "*"
+    },
+    {
+     "phase": "T250-left",
+     "metric": "box_pct",
+     "min": 89.98,
+     "cache": "*"
+    },
+    {
+     "phase": "T250-right",
+     "metric": "box_pct",
+     "min": 89.98,
+     "cache": "*"
+    },
+    {
+     "phase": "T250-up",
+     "metric": "box_pct",
+     "min": 14.98,
+     "cache": "*"
+    },
+    {
+     "phase": "T150-down",
+     "metric": "box_pct",
+     "min": -0.02,
+     "cache": "*"
+    },
+    {
+     "phase": "T150-left",
+     "metric": "box_pct",
+     "min": 26.98,
+     "cache": "*"
+    },
+    {
+     "phase": "T150-right",
+     "metric": "box_pct",
+     "min": 17.98,
+     "cache": "*"
+    },
+    {
+     "phase": "T150-up",
+     "metric": "box_pct",
+     "min": 14.98,
+     "cache": "*"
+    },
+    {
+     "phase": "B5-down",
+     "metric": "frames.p95_periods",
+     "max": 1.254,
+     "cache": "*"
+    },
+    {
+     "phase": "B5-right",
+     "metric": "frames.p95_periods",
+     "max": 1.227,
+     "cache": "*"
+    },
+    {
+     "phase": "CTRL-down",
+     "metric": "frames.p95_periods",
+     "max": 1.254,
+     "cache": "*"
+    },
+    {
+     "phase": "CTRL-up",
+     "metric": "frames.p95_periods",
+     "max": 1.254,
+     "cache": "*"
+    },
+    {
+     "phase": "H-R-left",
+     "metric": "frames.p95_periods",
+     "max": 1.254,
+     "cache": "*"
+    },
+    {
+     "phase": "H-R-right",
+     "metric": "frames.p95_periods",
+     "max": 1.254,
+     "cache": "*"
+    },
+    {
+     "phase": "H-V-down",
+     "metric": "frames.p95_periods",
+     "max": 1.254,
+     "cache": "*"
+    },
+    {
+     "phase": "H-V-up",
+     "metric": "frames.p95_periods",
+     "max": 1.294,
+     "cache": "*"
+    },
+    {
+     "phase": "RT-down",
+     "metric": "frames.p95_periods",
+     "max": 2.596,
+     "cache": "*"
+    },
+    {
+     "phase": "RT-down2",
+     "metric": "frames.p95_periods",
+     "max": 1.294,
+     "cache": "*"
+    },
+    {
+     "phase": "RT-up",
+     "metric": "frames.p95_periods",
+     "max": 1.254,
+     "cache": "*"
+    },
+    {
+     "phase": "T150-down",
+     "metric": "frames.p95_periods",
+     "max": 1.254,
+     "cache": "*"
+    },
+    {
+     "phase": "T150-left",
+     "metric": "frames.p95_periods",
+     "max": 1.2,
+     "cache": "*"
+    },
+    {
+     "phase": "T150-right",
+     "metric": "frames.p95_periods",
+     "max": 1.227,
+     "cache": "*"
+    },
+    {
+     "phase": "T150-up",
+     "metric": "frames.p95_periods",
+     "max": 1.254,
+     "cache": "*"
+    },
+    {
+     "phase": "T250-down",
+     "metric": "frames.p95_periods",
+     "max": 1.254,
+     "cache": "*"
+    },
+    {
+     "phase": "T250-left",
+     "metric": "frames.p95_periods",
+     "max": 1.254,
+     "cache": "*"
+    },
+    {
+     "phase": "T250-right",
+     "metric": "frames.p95_periods",
+     "max": 1.388,
+     "cache": "*"
+    },
+    {
+     "phase": "T250-up",
+     "metric": "frames.p95_periods",
+     "max": 1.254,
+     "cache": "*"
+    },
+    {
+     "phase": "B5-down",
+     "metric": "frames.worst",
+     "max": 41.7,
+     "cache": "*"
+    },
+    {
+     "phase": "B5-right",
+     "metric": "frames.worst",
+     "max": 91.2,
+     "cache": "*"
+    },
+    {
+     "phase": "CTRL-down",
+     "metric": "frames.worst",
+     "max": 56.0,
+     "cache": "*"
+    },
+    {
+     "phase": "CTRL-up",
+     "metric": "frames.worst",
+     "max": 101.1,
+     "cache": "*"
+    },
+    {
+     "phase": "H-R-left",
+     "metric": "frames.worst",
+     "max": 25.2,
+     "cache": "*"
+    },
+    {
+     "phase": "H-R-right",
+     "metric": "frames.worst",
+     "max": 23.0,
+     "cache": "*"
+    },
+    {
+     "phase": "H-V-down",
+     "metric": "frames.worst",
+     "max": 56.0,
+     "cache": "*"
+    },
+    {
+     "phase": "H-V-up",
+     "metric": "frames.worst",
+     "max": 16.4,
+     "cache": "*"
+    },
+    {
+     "phase": "RT-down",
+     "metric": "frames.worst",
+     "max": 97.8,
+     "cache": "*"
+    },
+    {
+     "phase": "RT-down2",
+     "metric": "frames.worst",
+     "max": 142.9,
+     "cache": "*"
+    },
+    {
+     "phase": "RT-up",
+     "metric": "frames.worst",
+     "max": 14.2,
+     "cache": "*"
+    },
+    {
+     "phase": "T150-down",
+     "metric": "frames.worst",
+     "max": 13.1,
+     "cache": "*"
+    },
+    {
+     "phase": "T150-left",
+     "metric": "frames.worst",
+     "max": 14.2,
+     "cache": "*"
+    },
+    {
+     "phase": "T150-right",
+     "metric": "frames.worst",
+     "max": 13.1,
+     "cache": "*"
+    },
+    {
+     "phase": "T150-up",
+     "metric": "frames.worst",
+     "max": 13.1,
+     "cache": "*"
+    },
+    {
+     "phase": "T250-down",
+     "metric": "frames.worst",
+     "max": 20.8,
+     "cache": "*"
+    },
+    {
+     "phase": "T250-left",
+     "metric": "frames.worst",
+     "max": 18.6,
+     "cache": "*"
+    },
+    {
+     "phase": "T250-right",
+     "metric": "frames.worst",
+     "max": 70.3,
+     "cache": "*"
+    },
+    {
+     "phase": "T250-up",
+     "metric": "frames.worst",
+     "max": 16.4,
+     "cache": "*"
+    },
+    {
+     "phase": "B5-down",
+     "metric": "key.p95",
+     "max": 1613.6,
+     "cache": "*"
+    },
+    {
+     "phase": "B5-right",
+     "metric": "key.p95",
+     "max": 20.8,
+     "cache": "*"
+    },
+    {
+     "phase": "CTRL-down",
+     "metric": "key.p95",
+     "max": 19.7,
+     "cache": "*"
+    },
+    {
+     "phase": "CTRL-up",
+     "metric": "key.p95",
+     "max": 39.5,
+     "cache": "*"
+    },
+    {
+     "phase": "H-R-left",
+     "metric": "key.p95",
+     "max": 19.7,
+     "cache": "*"
+    },
+    {
+     "phase": "H-R-right",
+     "metric": "key.p95",
+     "max": 15.3,
+     "cache": "*"
+    },
+    {
+     "phase": "H-V-down",
+     "metric": "key.p95",
+     "max": 14.2,
+     "cache": "*"
+    },
+    {
+     "phase": "H-V-up",
+     "metric": "key.p95",
+     "max": 20.8,
+     "cache": "*"
+    },
+    {
+     "phase": "RT-down",
+     "metric": "key.p95",
+     "max": 61.5,
+     "cache": "*"
+    },
+    {
+     "phase": "RT-down2",
+     "metric": "key.p95",
+     "max": 10.9,
+     "cache": "*"
+    },
+    {
+     "phase": "RT-up",
+     "metric": "key.p95",
+     "max": 18.6,
+     "cache": "*"
+    },
+    {
+     "phase": "T150-down",
+     "metric": "key.p95",
+     "max": 19.7,
+     "cache": "*"
+    },
+    {
+     "phase": "T150-left",
+     "metric": "key.p95",
+     "max": 19.7,
+     "cache": "*"
+    },
+    {
+     "phase": "T150-right",
+     "metric": "key.p95",
+     "max": 19.7,
+     "cache": "*"
+    },
+    {
+     "phase": "T150-up",
+     "metric": "key.p95",
+     "max": 18.6,
+     "cache": "*"
+    },
+    {
+     "phase": "T250-down",
+     "metric": "key.p95",
+     "max": 19.7,
+     "cache": "*"
+    },
+    {
+     "phase": "T250-left",
+     "metric": "key.p95",
+     "max": 18.6,
+     "cache": "*"
+    },
+    {
+     "phase": "T250-right",
+     "metric": "key.p95",
+     "max": 19.7,
+     "cache": "*"
+    },
+    {
+     "phase": "T250-up",
+     "metric": "key.p95",
+     "max": 18.6,
+     "cache": "*"
+    },
+    {
+     "phase": "B5-down",
+     "metric": "keys_ok",
+     "min": 0,
+     "cache": "*"
+    },
+    {
+     "phase": "B5-right",
+     "metric": "keys_ok",
+     "min": 0,
+     "cache": "*"
+    },
+    {
+     "phase": "CTRL-down",
+     "metric": "keys_ok",
+     "min": 0,
+     "cache": "*"
+    },
+    {
+     "phase": "CTRL-up",
+     "metric": "keys_ok",
+     "min": 0,
+     "cache": "*"
+    },
+    {
+     "phase": "H-R-left",
+     "metric": "keys_ok",
+     "min": 0,
+     "cache": "*"
+    },
+    {
+     "phase": "H-R-right",
+     "metric": "keys_ok",
+     "min": 0,
+     "cache": "*"
+    },
+    {
+     "phase": "H-V-down",
+     "metric": "keys_ok",
+     "min": 0,
+     "cache": "*"
+    },
+    {
+     "phase": "H-V-up",
+     "metric": "keys_ok",
+     "min": 0,
+     "cache": "*"
+    },
+    {
+     "phase": "RT-down",
+     "metric": "keys_ok",
+     "min": 0,
+     "cache": "*"
+    },
+    {
+     "phase": "RT-down2",
+     "metric": "keys_ok",
+     "min": 0,
+     "cache": "*"
+    },
+    {
+     "phase": "RT-up",
+     "metric": "keys_ok",
+     "min": 0,
+     "cache": "*"
+    },
+    {
+     "phase": "T150-down",
+     "metric": "keys_ok",
+     "min": 0,
+     "cache": "*"
+    },
+    {
+     "phase": "T150-left",
+     "metric": "keys_ok",
+     "min": 0,
+     "cache": "*"
+    },
+    {
+     "phase": "T150-right",
+     "metric": "keys_ok",
+     "min": 0,
+     "cache": "*"
+    },
+    {
+     "phase": "T150-up",
+     "metric": "keys_ok",
+     "min": 0,
+     "cache": "*"
+    },
+    {
+     "phase": "T250-down",
+     "metric": "keys_ok",
+     "min": 0,
+     "cache": "*"
+    },
+    {
+     "phase": "T250-left",
+     "metric": "keys_ok",
+     "min": 0,
+     "cache": "*"
+    },
+    {
+     "phase": "T250-right",
+     "metric": "keys_ok",
+     "min": 0,
+     "cache": "*"
+    },
+    {
+     "phase": "T250-up",
+     "metric": "keys_ok",
+     "min": 0,
+     "cache": "*"
+    }
+   ]
+  }
+ }
+}

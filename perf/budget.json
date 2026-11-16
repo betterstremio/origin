@@ -1,0 +1,478 @@
+{
+ "_about": "Starting thresholds from reports/Fast poster loading and caching.md, NOT yet calibrated. Ratchet: move a budget to the new P90 + 10% when it is beaten by 20% in 3 runs across 2 releases; loosen only with a written reason that passes the speed motto. Not measured yet: return fades, warm-pass fetches, memory vs last release (history file keeps hwm).",
+ "noisy_spread": 0.15,
+ "devices": {
+  "C1": {
+   "rules": [
+    {
+     "phase": "T250-*",
+     "metric": "ttf.p95",
+     "max": 150,
+     "cache": "warm"
+    },
+    {
+     "phase": "T250-*",
+     "metric": "ready",
+     "min": 95,
+     "cache": "warm"
+    },
+    {
+     "phase": "T150-*",
+     "metric": "vfr",
+     "min": 0.95,
+     "cache": "warm"
+    },
+    {
+     "phase": "T150-*",
+     "metric": "ttf.p95",
+     "max": 300,
+     "cache": "warm"
+    },
+    {
+     "phase": "T150-*",
+     "metric": "never",
+     "max": 0,
+     "cache": "warm"
+    },
+    {
+     "phase": "T150-*",
+     "metric": "ttf.p95",
+     "max": 600,
+     "cache": "cold"
+    },
+    {
+     "phase": "H-*",
+     "metric": "rel300",
+     "min": 1.0,
+     "cache": "warm"
+    },
+    {
+     "phase": "H-*",
+     "metric": "never",
+     "max": 0,
+     "cache": "warm"
+    },
+    {
+     "phase": "T250-*",
+     "metric": "box_pct",
+     "min": 100,
+     "cache": "warm"
+    },
+    {
+     "phase": "T150-*",
+     "metric": "box_pct",
+     "min": 90,
+     "cache": "warm"
+    },
+    {
+     "phase": "RT-up",
+     "metric": "rt",
+     "min": 100,
+     "cache": "warm"
+    },
+    {
+     "phase": "RT-down2",
+     "metric": "rt",
+     "min": 100,
+     "cache": "warm"
+    },
+    {
+     "phase": "T150-up",
+     "metric": "rt",
+     "min": 100,
+     "cache": "warm"
+    },
+    {
+     "phase": "*",
+     "metric": "late",
+     "max": 1,
+     "cache": "*"
+    },
+    {
+     "phase": "*",
+     "metric": "frames.p95_periods",
+     "max": 1.1,
+     "cache": "*"
+    },
+    {
+     "phase": "*",
+     "metric": "frames.worst",
+     "max": 50,
+     "cache": "*"
+    },
+    {
+     "phase": "*",
+     "metric": "run5",
+     "max": 0,
+     "cache": "*"
+    },
+    {
+     "phase": "*",
+     "metric": "key.p95",
+     "max": 50,
+     "cache": "*"
+    },
+    {
+     "phase": "*",
+     "metric": "keys_ok",
+     "min": 1,
+     "cache": "*"
+    }
+   ]
+  },
+  "emulator": {
+   "rules": [
+    {
+     "phase": "T250-*",
+     "metric": "ttf.p95",
+     "max": 300,
+     "cache": "warm"
+    },
+    {
+     "phase": "T250-*",
+     "metric": "ready",
+     "min": 85,
+     "cache": "warm"
+    },
+    {
+     "phase": "T150-*",
+     "metric": "vfr",
+     "min": 0.85,
+     "cache": "warm"
+    },
+    {
+     "phase": "T150-*",
+     "metric": "ttf.p95",
+     "max": 600,
+     "cache": "warm"
+    },
+    {
+     "phase": "T150-*",
+     "metric": "never",
+     "max": 0,
+     "cache": "warm"
+    },
+    {
+     "phase": "T150-*",
+     "metric": "ttf.p95",
+     "max": 1200,
+     "cache": "cold"
+    },
+    {
+     "phase": "H-*",
+     "metric": "rel300",
+     "min": 0.9,
+     "cache": "warm"
+    },
+    {
+     "phase": "H-*",
+     "metric": "never",
+     "max": 0,
+     "cache": "warm"
+    },
+    {
+     "phase": "T250-*",
+     "metric": "box_pct",
+     "min": 90,
+     "cache": "warm"
+    },
+    {
+     "phase": "T150-*",
+     "metric": "box_pct",
+     "min": 75,
+     "cache": "warm"
+    },
+    {
+     "phase": "RT-up",
+     "metric": "rt",
+     "min": 95,
+     "cache": "warm"
+    },
+    {
+     "phase": "RT-down2",
+     "metric": "rt",
+     "min": 95,
+     "cache": "warm"
+    },
+    {
+     "phase": "T150-up",
+     "metric": "rt",
+     "min": 95,
+     "cache": "warm"
+    },
+    {
+     "phase": "*",
+     "metric": "late",
+     "max": 3,
+     "cache": "*"
+    },
+    {
+     "phase": "*",
+     "metric": "frames.p95_periods",
+     "max": 1.5,
+     "cache": "*"
+    },
+    {
+     "phase": "*",
+     "metric": "frames.worst",
+     "max": 100,
+     "cache": "*"
+    },
+    {
+     "phase": "*",
+     "metric": "run5",
+     "max": 0,
+     "cache": "*"
+    },
+    {
+     "phase": "*",
+     "metric": "key.p95",
+     "max": 100,
+     "cache": "*"
+    },
+    {
+     "phase": "*",
+     "metric": "keys_ok",
+     "min": 1,
+     "cache": "*"
+    }
+   ]
+  },
+  "windows-2cpu": {
+   "rules": [
+    {
+     "phase": "T250-*",
+     "metric": "ttf.p95",
+     "max": 150,
+     "cache": "warm"
+    },
+    {
+     "phase": "T250-*",
+     "metric": "ready",
+     "min": 95,
+     "cache": "warm"
+    },
+    {
+     "phase": "T150-*",
+     "metric": "vfr",
+     "min": 0.95,
+     "cache": "warm"
+    },
+    {
+     "phase": "T150-*",
+     "metric": "ttf.p95",
+     "max": 300,
+     "cache": "warm"
+    },
+    {
+     "phase": "T150-*",
+     "metric": "never",
+     "max": 0,
+     "cache": "warm"
+    },
+    {
+     "phase": "T150-*",
+     "metric": "ttf.p95",
+     "max": 600,
+     "cache": "cold"
+    },
+    {
+     "phase": "H-*",
+     "metric": "rel300",
+     "min": 1.0,
+     "cache": "warm"
+    },
+    {
+     "phase": "H-*",
+     "metric": "never",
+     "max": 0,
+     "cache": "warm"
+    },
+    {
+     "phase": "T250-*",
+     "metric": "box_pct",
+     "min": 100,
+     "cache": "warm"
+    },
+    {
+     "phase": "T150-*",
+     "metric": "box_pct",
+     "min": 90,
+     "cache": "warm"
+    },
+    {
+     "phase": "RT-up",
+     "metric": "rt",
+     "min": 100,
+     "cache": "warm"
+    },
+    {
+     "phase": "RT-down2",
+     "metric": "rt",
+     "min": 100,
+     "cache": "warm"
+    },
+    {
+     "phase": "T150-up",
+     "metric": "rt",
+     "min": 100,
+     "cache": "warm"
+    },
+    {
+     "phase": "*",
+     "metric": "late",
+     "max": 1,
+     "cache": "*"
+    },
+    {
+     "phase": "*",
+     "metric": "frames.p95_periods",
+     "max": 1.1,
+     "cache": "*"
+    },
+    {
+     "phase": "*",
+     "metric": "frames.worst",
+     "max": 50,
+     "cache": "*"
+    },
+    {
+     "phase": "*",
+     "metric": "run5",
+     "max": 0,
+     "cache": "*"
+    },
+    {
+     "phase": "*",
+     "metric": "key.p95",
+     "max": 50,
+     "cache": "*"
+    },
+    {
+     "phase": "*",
+     "metric": "keys_ok",
+     "min": 1,
+     "cache": "*"
+    }
+   ]
+  },
+  "windows": {
+   "rules": [
+    {
+     "phase": "T250-*",
+     "metric": "ttf.p95",
+     "max": 150,
+     "cache": "warm"
+    },
+    {
+     "phase": "T250-*",
+     "metric": "ready",
+     "min": 95,
+     "cache": "warm"
+    },
+    {
+     "phase": "T150-*",
+     "metric": "vfr",
+     "min": 0.95,
+     "cache": "warm"
+    },
+    {
+     "phase": "T150-*",
+     "metric": "ttf.p95",
+     "max": 300,
+     "cache": "warm"
+    },
+    {
+     "phase": "T150-*",
+     "metric": "never",
+     "max": 0,
+     "cache": "warm"
+    },
+    {
+     "phase": "T150-*",
+     "metric": "ttf.p95",
+     "max": 600,
+     "cache": "cold"
+    },
+    {
+     "phase": "H-*",
+     "metric": "rel300",
+     "min": 1.0,
+     "cache": "warm"
+    },
+    {
+     "phase": "H-*",
+     "metric": "never",
+     "max": 0,
+     "cache": "warm"
+    },
+    {
+     "phase": "T250-*",
+     "metric": "box_pct",
+     "min": 100,
+     "cache": "warm"
+    },
+    {
+     "phase": "T150-*",
+     "metric": "box_pct",
+     "min": 90,
+     "cache": "warm"
+    },
+    {
+     "phase": "RT-up",
+     "metric": "rt",
+     "min": 100,
+     "cache": "warm"
+    },
+    {
+     "phase": "RT-down2",
+     "metric": "rt",
+     "min": 100,
+     "cache": "warm"
+    },
+    {
+     "phase": "T150-up",
+     "metric": "rt",
+     "min": 100,
+     "cache": "warm"
+    },
+    {
+     "phase": "*",
+     "metric": "late",
+     "max": 1,
+     "cache": "*"
+    },
+    {
+     "phase": "*",
+     "metric": "frames.p95_periods",
+     "max": 1.1,
+     "cache": "*"
+    },
+    {
+     "phase": "*",
+     "metric": "frames.worst",
+     "max": 50,
+     "cache": "*"
+    },
+    {
+     "phase": "*",
+     "metric": "run5",
+     "max": 0,
+     "cache": "*"
+    },
+    {
+     "phase": "*",
+     "metric": "key.p95",
+     "max": 50,
+     "cache": "*"
+    },
+    {
+     "phase": "*",
+     "metric": "keys_ok",
+     "min": 1,
+     "cache": "*"
+    }
+   ]
+  }
+ }
+}

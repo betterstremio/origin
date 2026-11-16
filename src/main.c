@@ -1,3 +1,5 @@
+#include "core/fillstat.h"
+#include "core/scrollin.h"
 #include "core/form.h"
 #include "core/touch.h"
 #include "screens/phone.h"
@@ -632,8 +634,7 @@ static int curHid; /* the cursor hidden over a film that has the mouse still */
 static SDL_FingerID fingerId;
 static int fingerOn, mouseFinger;
 int main(int argc, char **argv) {
-  (void)argc;
-  (void)argv;
+  scrollin_launch_params(argc, argv);
   setlocale(LC_NUMERIC, "C");
 #if SB_PREVIEW
   signal(SIGABRT, on_alarm);
@@ -810,6 +811,8 @@ int main(int argc, char **argv) {
         : memMb < 3000 ? 256
                        : 384); /* pictures under the RAM the TV has (the shared atlas, backdrop and text add ~20 MB). A
                                   full Home of crops is ~390 MB: the C1 (2.6 GB, 500 MB idle) keeps ~20 rows, a PC all */
+  if (fill_dev_budget_pct() != 100 && img_budget_mb() > 0)
+    img_set_budget_mb(img_budget_mb() * fill_dev_budget_pct() / 100); /* development: SB_DEV_BUDGET_PCT */
   i18n_init(plat_asset_dir(),
             getenv("SB_LANG") ? getenv("SB_LANG") : store_get("uiLang", "auto")); /* SB_LANG=ar: development */
   if (!strcmp(store_get("netLogs", "false"), "true"))
@@ -865,6 +868,7 @@ int main(int argc, char **argv) {
   int frames = 0, fps = 0, frame = 0;
   fprintf(stderr, "[loop] start, signed in: %d\n", sb_signed_in());
   stress_init();
+  scrollin_init();
 #if !SB_TV_PACER
   if (stress_on())
     pace_init();
@@ -1086,6 +1090,8 @@ int main(int argc, char **argv) {
     } else
       run_script(script, frame);
     stress_tick();
+    fill_tick();
+    scrollin_tick();
     {
       static int crashAt = -2;
       if (crashAt == -2)
