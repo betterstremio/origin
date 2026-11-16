@@ -2252,7 +2252,7 @@ static void row_prefetch(Row *r, int slot, int from, int to) {
     to = r->items.n - 1;
   prep_check(r);
   int same = r->pf[slot][0] == from && r->pf[slot][1] == to;
-  int again = app_now() >= r->pfAt[slot]; /* the same range, asked again every 0.75 s: the loader drops an ask left for 1.5 s */
+  int again = app_now() >= r->pfAt[slot] && img_has_room(); /* the same range, asked again every 0.75 s while there is room (the loader drops an ask left for 1.5 s; a full budget would only churn) */
   if (same && !r->pfWait[slot] && !again)
     return;
   if (again)
