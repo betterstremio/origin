@@ -27,7 +27,7 @@ static double readyAt, base, holdRel;
 static int sub; /* progress inside the step */
 static int startRow, startCol, phRow, phCol, holdDown;
 static char profName[32];
-static int N = 8, M = 10;
+static int N = 8, M = 10, nPh = 8; /* (nPh: the taps the next phase makes, for its expected end) */
 static double lastTap;
 static int curKind, nRows0;
 static unsigned recsV0;
@@ -49,7 +49,7 @@ static void add(int op, int key, int n, int every, int arg) {
   }
 }
 static void ph(const char *name, int kind) {
-  add(S_PH, 0, 0, 0, 0);
+  add(S_PH, 0, nPh, 0, 0);
   st[nst - 1].kind = kind;
   snprintf(st[nst - 1].name, sizeof st[nst - 1].name, "%s", name);
 }
@@ -68,6 +68,7 @@ static int key_of(const char *n) {
 static void taps_vert(const char *tag, int every) {
   char nm[40];
   snprintf(nm, sizeof nm, "%s-down", tag);
+  nPh = N;
   ph(nm, X_DOWN);
   add(S_TAPS, K_DOWN, N, every, 0);
   add(S_END, 0, 0, 0, 0); /* (arg 0: straight on) */
@@ -81,6 +82,7 @@ static void taps_horiz(const char *tag, int every) {
   add(S_GOROW, 0, 0, 0, 1);
   add(S_WAIT, 0, 0, 0, 2000);
   snprintf(nm, sizeof nm, "%s-right", tag);
+  nPh = M;
   ph(nm, X_RIGHT);
   add(S_TAPS, K_RIGHT, M, every, 0);
   add(S_END, 0, 0, 0, 0);
@@ -91,6 +93,7 @@ static void taps_horiz(const char *tag, int every) {
 }
 static int build(const char *p) {
   if (!strcmp(p, "CTRL")) {
+    nPh = N < 6 ? N : 6;
     ph("CTRL-down", X_DOWN);
     add(S_TAPS, K_DOWN, N < 6 ? N : 6, 1000, 0);
     add(S_END, 0, 0, 0, 1500);
@@ -133,12 +136,14 @@ static int build(const char *p) {
     }
     add(S_END, 0, 0, 0, 1200);
   } else if (!strcmp(p, "RT")) {
+    nPh = N;
     ph("RT-down", X_DOWN);
     add(S_TAPS, K_DOWN, N, 150, 0);
     add(S_END, 0, 0, 0, 1000);
     ph("RT-up", X_START);
     add(S_TAPS, K_UP, N, 150, 0);
     add(S_END, 0, 0, 0, 1000);
+    nPh = N;
     ph("RT-down2", X_DOWN);
     add(S_TAPS, K_DOWN, N, 150, 0);
     add(S_END, 0, 0, 0, 1500);
@@ -219,7 +224,7 @@ static void next(double at) {
   sub = 0;
   base = at;
 }
-static int expect_row(int kind, int *ec) {
+static int expect_row(int kind, int cnt, int *ec) {
   int r, c, n;
   pos(&r, &c, &n);
   *ec = -999;
@@ -229,13 +234,13 @@ static int expect_row(int kind, int *ec) {
   }
   switch (kind) {
   case X_DOWN: {
-    int e = r + N;
+    int e = r + cnt;
     return e > n - 1 ? n - 1 : e;
   }
   case X_UP:
-    return r - N < -1 ? -1 : r - N;
+    return r - cnt < -1 ? -1 : r - cnt;
   case X_RIGHT:
-    *ec = c + M;
+    *ec = c + cnt;
     return r;
   case X_START:
     return startRow;
@@ -295,7 +300,7 @@ void scrollin_tick(void) {
     switch (s->op) {
     case S_PH: {
       int ec;
-      int er = expect_row(s->kind, &ec);
+      int er = expect_row(s->kind, s->n, &ec);
       fill_phase_begin(s->name, er, ec);
       curKind = s->kind;
       phOn = 1;

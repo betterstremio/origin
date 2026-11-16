@@ -18,7 +18,7 @@
 #define NBIN 1600 /* 0.25 ms bins, up to 400 ms */
 typedef struct {
   unsigned long long key;
-  int used, everSeen, inPh, fin, prior, ready;
+  int used, everSeen, inPh, fin, prior, ready, lastArt, lastLogo, idx, needLogo;
   unsigned long long seenFrame;
   double firstVis, lastVis, visMs, firstFin;
 } Card;
@@ -112,6 +112,10 @@ void fill_card(const void *row, int idx, float x, float y, float w, float h, int
   if (!c || c->seenFrame == frameNo)
     return; /* (drawn twice in a frame: once) */
   c->seenFrame = frameNo;
+  c->lastArt = pendArt;
+  c->lastLogo = pendLogo;
+  c->idx = idx;
+  c->needLogo = needLogo;
   fVis++;
   fFin += fin;
   if (!ph) {
@@ -308,8 +312,12 @@ void fill_phase_end(int row, int col) {
     int t = c->fin ? (int)(c->firstFin - c->firstVis + 0.5) : (int)(c->lastVis - c->firstVis + 0.5);
     if (c->fin && t < 2)
       t = 0;
-    if (!c->fin && c->visMs >= 600)
+    if (!c->fin && c->visMs >= 600) {
       never++;
+      if (getenv("SB_FILL_DUMP"))
+        fprintf(stderr, "[fill] never final: card %d art %d logo %d needLogo %d seen %.0f ms\n", c->idx, c->lastArt,
+                c->lastLogo, c->needLogo, c->visMs);
+    }
     ready += c->ready;
     if (c->prior) {
       prior++;

@@ -2730,7 +2730,7 @@ static void row_draw(Board *b, Row *r, int ri, float y, int near, float rowA) {
       sd = 0;
     fill_begin();
     card_wide(b, r, &r->items.items[r->col], cp, x, ox, ow, cy, cw, ch, ek, rtl, 1);
-    fill_card(r, r->col, ox, cy, ow, ch, cp && cp->crop, ek > 0.001f && ek < 0.999f);
+    fill_card(r, r->col, ox, cy, ow, ch, cp && cp->crop && ek <= 0.001f, ek > 0.001f && ek < 0.999f); /* (the open box: its picture, no crop logo) */
     if (sd > 0)
       gfx_opacity_pop();
     if (hp > 0)
