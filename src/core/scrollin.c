@@ -168,6 +168,48 @@ static int build_input(const char *s) {
   add(S_QUIT, 0, 0, 0, 0);
   return 1;
 }
+/* webOS passes the launch parameters as argv[1], a JSON text. {"sbenv":{"SB_SCROLL":"T150","SB_SCROLL_N":"8"},"sbNoIntro":1}:
+   only keys that start with SB_ are taken (setenv), and sbNoIntro silences the start-up sound (SB_NOINTRO). Development only. */
+void scrollin_launch_params(int argc, char **argv) {
+  if (argc < 2 || !argv[1])
+    return;
+  const char *j = argv[1];
+  if (strstr(j, "\"sbNoIntro\"") && !strstr(j, "\"sbNoIntro\":0"))
+    setenv("SB_NOINTRO", "1", 1);
+  const char *e = strstr(j, "\"sbenv\"");
+  if (!e || !(e = strchr(e + 7, '{')))
+    return;
+  e++;
+  for (;;) {
+    char k[48], v[512];
+    int n = 0;
+    while (*e && *e != '"' && *e != '}')
+      e++;
+    if (*e != '"')
+      return;
+    for (e++; *e && *e != '"' && n < 47; e++)
+      k[n++] = *e;
+    k[n] = 0;
+    if (*e != '"' || !(e = strchr(e, ':')))
+      return;
+    for (e++; *e == ' '; e++)
+      ;
+    int q = *e == '"';
+    if (q)
+      e++;
+    n = 0;
+    for (; *e && n < 511 && (q ? *e != '"' : (*e != ',' && *e != '}')); e++)
+      v[n++] = *e;
+    v[n] = 0;
+    if (q && *e == '"')
+      e++;
+    if (!strncmp(k, "SB_", 3)) {
+      setenv(k, v, 1);
+      fprintf(stderr, "[scroll] launch param %s=%s
+", k, v);
+    }
+  }
+}
 void scrollin_init(void) {
   const char *p = getenv("SB_SCROLL"), *in = getenv("SB_INPUT");
   if (!p && !in)

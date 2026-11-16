@@ -634,8 +634,7 @@ static int curHid; /* the cursor hidden over a film that has the mouse still */
 static SDL_FingerID fingerId;
 static int fingerOn, mouseFinger;
 int main(int argc, char **argv) {
-  (void)argc;
-  (void)argv;
+  scrollin_launch_params(argc, argv);
   setlocale(LC_NUMERIC, "C");
 #if SB_PREVIEW
   signal(SIGABRT, on_alarm);
