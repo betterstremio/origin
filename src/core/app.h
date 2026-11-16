@@ -125,15 +125,16 @@ int app_ok_down(void); /* OK is held down now (a sheet's own hold reads it) */
 void app_clock_draw(float right, float y, float alpha); /* the pages' clock, its right edge at x (the player's too) */
 float app_fs_button(
     float right, float cy); /* Windows: the fullscreen button, right edge at right; the room it takes (0 elsewhere) */
-void app_clock_top(void); /* the bar's clock over the start screen and the guide (main, last) */
 float app_hold_k(double since); /* 0..1 of a hold begun then, on the same clock as the card menu's line */
 
 /* ---- the top bar ---- */
-#define NAV_SET 0 /* the bar reads Settings, Search, the three tabs (as the page) */
-#define NAV_SEARCH 1
-#define NAV_DISC 2
-#define NAV_HOME 3
-#define NAV_LIB 4
+#define NAV_SEARCH 0 /* the bar reads Search, then the four tabs (as the page); the profile picture before them */
+#define NAV_HOME 1
+#define NAV_SHOWS 2 /* Shows and Movies: Discover's board, its titles of that kind (board_disc_type) */
+#define NAV_MOVIES 3
+#define NAV_LIB 4 /* My List */
+#define NAV_SET 5 /* not an item: Settings (opened from the profile panel or the red key); its box is the picture's */
+#define NAV_N 6
 typedef struct {
   int idx, active;
   int want;
@@ -141,9 +142,7 @@ typedef struct {
   Nudge nudge;
   Tween px, pw, pill;
   float pillShown;
-  Tween cornerF[2], cornerS[2], dotK[2];
-  Tween setRot;
-  float chipX[5], chipW[5];
+  float chipX[NAV_N], chipW[NAV_N];
   int laidOut;
 } TopNav;
 extern TopNav topNav;
@@ -152,6 +151,10 @@ void topnav_leave(void); /* the content takes the focus (the pointer): the bar u
 void topnav_draw(void);
 void topnav_tick(float dt);
 void topnav_switch(int idx);
+void app_color_key(int k); /* the remote's red (Settings, or the notice out) and green (Search) keys */
+void app_open_settings(void); /* Settings (the profile panel's row) */
+void app_profile_pic(float x, float y, float D, float r); /* the profile in use: its picture, or colour + initial */
+int profpanel_open(void); /* the profile panel out of the left edge (screens/profpanel.c); 0 when it cannot open */
 
 /* ---- the backdrop ---- */
 void bg_set(const char *url, int delayMs,

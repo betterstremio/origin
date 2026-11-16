@@ -609,7 +609,6 @@ static void live_frame(void) {
   gfx_begin(player_live() ? RGBA(0, 0, 0, 0) : PAGE);
   app_draw();
   splash_draw();
-  app_clock_top();
   gfx_end();
   GL_SWAP(liveWin);
 }
@@ -1217,7 +1216,6 @@ int main(int argc, char **argv) {
       else {
         app_draw();
         splash_draw();
-        app_clock_top();
         castlink_draw();
         nerds_draw();
       }

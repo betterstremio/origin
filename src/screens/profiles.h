@@ -11,4 +11,11 @@ int profiles_is_open(void);
 void profiles_at_start(void); /* at launch: asks if the setting says so; a locked last profile always asks */
 int profile_avatar_draw(const char *av, float x, float y,
                         float D); /* a profile's picture in a circle of D; 0 when not (yet) there */
+int profile_avatar_draw_r(const char *av, float x, float y, float D, float r); /* the same, corners of radius r */
+/* the profile panel's way in: switch to the profile at list position i (no PIN), its PIN pad, the add form; back() runs
+   when Back leaves the pad or the form (the panel takes the keys again) */
+int profiles_can_add(void);
+void profiles_switch(int i);
+void profiles_open_pin(int i, void (*back)(void));
+void profiles_open_add(void (*back)(void));
 #endif

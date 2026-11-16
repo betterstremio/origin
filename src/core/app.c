@@ -660,12 +660,6 @@ static void clock_tick(void) {
 #else
 #define FS_ROOM 0.0f
 #endif
-static int
-    clockLiquid; /* the bar's own clock: its glass bends the backdrop (the player's and the guide's: the glass alone) */
-static void lg_glass(float x, float y, float w, float h, float r, uint32_t tint, float k);
-static int lgSeed; /* the next piece's own timing (0 capsule, 1-2 the circles, 3 the clock), then 0 again */
-static float lgPushX, lgPushY,
-    lgBase[4]; /* the next piece is taking up an edge push (its units; its rest shape), then none again */
 static float lg_drift_at(float ph);
 void app_clock_draw(float right, float y, float alpha) {
   static float W;
@@ -677,13 +671,8 @@ void app_clock_draw(float right, float y, float alpha) {
   {
     float ph = 76, pw = W + 52, px = x0 - 26,
           py = y + text_line_height(38) / 2 - ph / 2; /* a glass pill behind it, the bar's circles' sister */
-    if (clockLiquid) {
-      lgSeed = 3;
-      lg_glass(px, py, pw, ph, ph / 2, ACC, 0.85f);
-    } else {
-      lglass_light(lg_drift_at(113.0f));
-      lglass_shell(px, py, pw, ph, ph / 2, RGBA(14, 14, 22, 120), 0.85f);
-    }
+    lglass_light(lg_drift_at(113.0f));
+    lglass_shell(px, py, pw, ph, ph / 2, RGBA(14, 14, 22, 120), 0.85f);
     lglass_light(0);
   }
   {
@@ -718,108 +707,81 @@ void app_clock_draw(float right, float y, float alpha) {
   if (alpha < 1)
     gfx_opacity_pop();
 }
-/* the profile in use: a disc in its colour with its first letter, left of the clock (a Nuvio account only) */
-static int profFoc; /* the disc, right of the tabs (Right from Library): its own focus, not a tab */
-static void prof_act(int i, int b) {
-  (void)i;
-  (void)b;
-  profFoc = 0;
-  profiles_open(PF_SWITCH);
-}
-/* which service is in use, in words, left of the profile disc (or of the clock) */
-static void acct_tag_draw(void) {
-  static int conf = -1;
-  if (conf < 0)
-    conf = nv_configured();
-  if (!conf || app_rtl())
-    return;
-  float W = text_width("00:00", 38, 600, -0.6f),
-        x = SB_W - 48 - FS_ROOM - W - 26 - 18 - (acct_is_nuvio() ? 64 + 16 : 0);
-  text_draw(acct_is_nuvio() ? "Nuvio" : "Stremio", x, 50 - text_line_height(26) / 2, 26, 600, WHITE_A(190), 0, 0,
-            ALIGN_RIGHT);
-}
-static void prof_draw(void) {
-  if (!acct_is_nuvio() || !nv_profile_current() || app_rtl())
-    return;
-  NvProfile p;
-  int got = 0;
-  for (int i = 0; i < nv_profile_count() && !got; i++)
-    if (nv_profile_get(i, &p) && p.index == nv_profile_current())
-      got = 1;
-  if (!got)
-    return;
-  float W = text_width("00:00", 38, 600, -0.6f), D = 64, x = SB_W - 48 - FS_ROOM - W - 26 - 18 - D, y = 50 - D / 2;
-  int foc = profFoc && topNav.active;
-  hit_add_nav(x, y, D, D, NULL, prof_act, 0, 0);
-  if (foc)
-    gfx_ring(x - 6, y - 6, D + 12, D + 12, (D + 12) / 2, 3, WHITE_A(235));
-  gfx_rrect(x, y, D, D, D / 2, RGB((p.color >> 16) & 255, (p.color >> 8) & 255, p.color & 255));
-  if (profile_avatar_draw(p.avatar, x, y, D))
-    return;
-  gfx_rrect_v(x, y, D, D, D / 2, WHITE_A(50), WHITE_A(0));
-  char ini[8] = { 0 };
-  {
-    const unsigned char *u = (const unsigned char *)p.name;
-    int len = !*u ? 0 : (*u & 0x80) ? ((*u & 0xe0) == 0xc0 ? 2 : (*u & 0xf0) == 0xe0 ? 3 : 4) : 1;
-    memcpy(ini, p.name, (size_t)len);
-  }
-  if (ini[0] >= 'a' && ini[0] <= 'z')
-    ini[0] -= 32;
-  text_draw(ini, x + D / 2, y + D / 2 - text_line_height(30) / 2, 30, 800, WHITE_A(255), 0, 0, ALIGN_CENTER);
-}
-static void clock_draw(void) {
-  float W = text_width("00:00", 38, 600, -0.6f);
-  clockLiquid = 1;
-  app_clock_draw(app_rtl() ? 48 + FS_ROOM + W : SB_W - 48 - FS_ROOM, 50 - 22, 1);
-  clockLiquid = 0;
-  if (FS_ROOM > 0)
-    app_fs_button(app_rtl() ? 22 + 76 : SB_W - 22, 50);
-} /* (the clock's glass reaches 26 past its text: the button keeps the same margin to the edge) */
-
-/* ---- the top bar: centred tabs, the corner icons, one pill that glides to the focused tab ---- */
+/* ---- the top bar (3.0.0, so/header-SPEC.md): the profile picture at the start, Search and the four tabs as plain
+   words centred, one light pill that glides to the focused item, nothing at the end (a window: its fullscreen
+   button). No glass, no accent: the page shows through ---- */
+#define BAR_Y 56.0f /* the bar's centre line */
+#define BAR_H 60.0f /* an item (its pill) */
+#define PIC_X 68.0f /* the profile picture: 48 square, rounded */
+#define PIC_D 48.0f
+#define PILL_ON RGB(0xd9, 0xd9, 0xd9) /* the focus: a light pill, dark words */
+#define INK_ON RGB(0x14, 0x14, 0x14)
+static float lg_drift_at(float ph) {
+  float t = (float)NOW + ph;
+  return 0.018f * sinf(t * 0.157f) + 0.012f * sinf(t * 0.263f + 1.3f) + 0.008f * sinf(t * 0.411f + 4.1f);
+} /* (the player's clock: its glass's light, three slow waves that never line up) */
 TopNav topNav = { .idx = NAV_HOME };
+static int tabPx = 28; /* the words' size (24 when a language's words would crowd the bar) */
 static const char *chipLabel(int i) {
-  return i == NAV_DISC ? T("Discover") : i == NAV_HOME ? T("Home") : T("Library");
+  return i == NAV_HOME ? T("Home") : i == NAV_SHOWS ? T("Shows") : i == NAV_MOVIES ? T("Movies") : T("My List");
 }
-/* the tab a page belongs to: a collection tile's page is Discover's, the other pages under a tab are counted as Home's
- */
+/* the tab a page belongs to: a collection tile's page is the Shows / Movies board's, the other pages under a tab are
+   counted as Home's */
 static Scr tab_scr(void) {
   return SCR == SCR_COL ? SCR_DISC : SCR == SCR_DETAIL || SCR == SCR_SIM || SCR == SCR_CAT ? SCR_HOME : SCR;
 }
+static int tab_of(Scr s) { /* the bar's item for a page, -1 none */
+  return s == SCR_SEARCH ? NAV_SEARCH
+         : s == SCR_HOME ? NAV_HOME
+         : s == SCR_DISC ? (board_disc_type() == 2 ? NAV_MOVIES : NAV_SHOWS)
+         : s == SCR_LIB  ? NAV_LIB
+         : s == SCR_SET  ? NAV_SET
+                         : -1;
+}
+static Scr chipScr(int i) {
+  return i == NAV_SEARCH                     ? SCR_SEARCH
+         : i == NAV_HOME                     ? SCR_HOME
+         : i == NAV_SHOWS || i == NAV_MOVIES ? SCR_DISC
+         : i == NAV_LIB                      ? SCR_LIB
+                                             : SCR_SET;
+}
 static int chipCur(int i) {
-  Scr t = i == NAV_SEARCH ? SCR_SEARCH
-          : i == NAV_SET  ? SCR_SET
-          : i == NAV_DISC ? SCR_DISC
-          : i == NAV_HOME ? SCR_HOME
-                          : SCR_LIB;
-  return t == tab_scr();
+  return tab_of(tab_scr()) == i;
 }
 static int chipFocused(int i) {
-  return topNav.active && topNav.idx == i && !profFoc && !update_pill_focused();
-} /* the update notice holds the highlight */
+  return topNav.active && topNav.idx == i && !update_pill_focused();
+} /* the notice holds the highlight while it has it */
 static void topnav_layout(void) {
-  float w[3], tot = 0;
-  for (int i = 0; i < 3; i++) {
-    int f = chipFocused(NAV_DISC + i) || chipCur(NAV_DISC + i);
-    w[i] = text_width(chipLabel(NAV_DISC + i), 32, f ? 700 : 400, 0) + 80;
-    tot += w[i] + 18;
+  float pad = 36, w[NAV_N] = { 0 }, tot = 0;
+  for (int pass = 0; pass < 3; pass++) {
+    tot = BAR_H;
+    w[NAV_SEARCH] = BAR_H;
+    for (int i = NAV_HOME; i <= NAV_LIB; i++) {
+      w[i] = text_width(chipLabel(i), tabPx, 500, 0) + 2 * pad;
+      tot += 8 + w[i];
+    }
+    if (tot <= SB_W - 400)
+      break;
+    if (pad > 24)
+      pad = 24;
+    else if (tabPx > 24)
+      tabPx = 24;
+  } /* a long language: less room round the words first, then smaller words */
+  int rtl = app_rtl();
+  float x = SB_W / 2 - tot / 2;
+  for (int k = 0; k <= NAV_LIB; k++) {
+    int i = rtl ? NAV_LIB - k : k; /* mirrored: Search at the right end */
+    topNav.chipX[i] = x;
+    topNav.chipW[i] = w[i];
+    x += w[i] + 8;
   }
-  float x = SB_W / 2 - (tot - 18) / 2;
-  for (int i = 0; i < 3; i++) {
-    int ci = app_rtl() ? NAV_DISC + 2 - i : NAV_DISC + i;
-    topNav.chipX[ci] = x;
-    topNav.chipW[ci] = w[ci - NAV_DISC];
-    x += w[ci - NAV_DISC] + 18;
-  }
-  topNav.chipX[NAV_SET] = app_rtl() ? SB_W - 40 - 76 : 40;
-  topNav.chipW[NAV_SET] = 76;
-  topNav.chipX[NAV_SEARCH] = app_rtl() ? SB_W - 128 - 76 : 128;
-  topNav.chipW[NAV_SEARCH] = 76;
+  topNav.chipX[NAV_SET] = rtl ? SB_W - PIC_X - PIC_D : PIC_X; /* the picture: Settings opens out of it */
+  topNav.chipW[NAV_SET] = PIC_D;
   topNav.laidOut = 1;
 }
 static void topnav_paint(void) {
   topnav_layout();
-  int fc = topNav.active && topNav.idx >= NAV_DISC ? topNav.idx : -1;
+  int fc = topNav.active && topNav.idx >= 0 && topNav.idx <= NAV_LIB && !update_pill_focused() ? topNav.idx : -1;
   if (fc >= 0) {
     float x = topNav.chipX[fc], w = topNav.chipW[fc];
     if (topNav.pillShown < 0.5f && !topNav.pill.on) {
@@ -836,24 +798,11 @@ static void topnav_paint(void) {
     tween_to(&topNav.pill, 0, 0.2f, EASE_CSS_EASE);
     topNav.pillShown = 0;
   }
-  /* a corner's glass circle fades in (.2 s) and grows from .78 (.3 s); its coloured dot shrinks away (.24 s) */
-  for (int i = NAV_SET; i <= NAV_SEARCH; i++) {
-    int f = chipFocused(i);
-    tween_to(&topNav.cornerF[i], f, 0.2f, EASE_CSS_EASE);
-    tween_to(&topNav.cornerS[i], f, 0.3f, EASE_OUT);
-    tween_to(&topNav.dotK[i], f, 0.24f, EASE_STD);
-  }
-  tween_to(&topNav.setRot, chipFocused(NAV_SET) ? 90 : 0, 0.5f, EASE_OUT);
-}
-static Scr chipScr(int i) {
-  return i == NAV_SEARCH ? SCR_SEARCH
-         : i == NAV_SET  ? SCR_SET
-         : i == NAV_DISC ? SCR_DISC
-         : i == NAV_HOME ? SCR_HOME
-                         : SCR_LIB;
 }
 void topnav_focus(void) {
   topNav.active = 1;
+  if (topNav.idx < 0 || topNav.idx > NAV_LIB)
+    topNav.idx = NAV_HOME; /* Settings has no item: up from it lands on Home */
   topnav_paint();
 }
 void topnav_leave(void) {
@@ -863,19 +812,17 @@ void topnav_leave(void) {
   topnav_paint();
 } /* the pointer went into the page: the bar's pill lets go too */
 void topnav_switch(int i) {
-  i = i < 0 ? 0 : i > 4 ? 4 : i;
-  if (i == topNav.idx && (app_is_board(SCR) || SCR == SCR_SEARCH || SCR == SCR_SET))
+  i = i < 0 ? 0 : i > NAV_SET ? NAV_SET : i;
+  if (i == NAV_SHOWS || i == NAV_MOVIES)
+    board_disc_type_set(i == NAV_SHOWS ? 1 : 2); /* one board, the kind of title it holds set by the tab */
+  if (i == topNav.idx && (app_is_board(SCR) || SCR == SCR_SEARCH || SCR == SCR_SET) && tab_of(tab_scr()) == i)
     return;
   {
-    Scr c0 = tab_scr();
-    int cs = -1;
-    for (int j = 0; j < 5; j++)
-      if (chipScr(j) == c0)
-        cs = j;
+    int cs = tab_of(tab_scr());
     if (i == NAV_SEARCH || i == NAV_SET) {
       navf.kind = NAV_ZOOM;
       navf.x = topNav.chipX[i] + topNav.chipW[i] / 2;
-      navf.y = 50;
+      navf.y = BAR_Y;
     } else
       nav_slide(i >= cs ? 1 : -1);
   }
@@ -897,15 +844,13 @@ static void topnav_flush(int drop) {
   topnav_switch(w);
 }
 static void topnav_enter_content(void) {
-  profFoc = 0;
   topNav.active = 0;
-  Scr t = chipScr(topNav.idx);
   extern void board_from_bar(void), lib_from_bar(void);
   if (SCR == SCR_HOME || SCR == SCR_DISC)
-    board_from_bar(); /* a board: its first row (Discover: its spotlight) */
+    board_from_bar(); /* a board: its first row (its spotlight) */
   else if (SCR == SCR_LIB)
-    lib_from_bar(); /* the Library: its categories */
-  else if (t != SCR_SEARCH && t != SCR_SET && screens[SCR] && screens[SCR]->key)
+    lib_from_bar(); /* My List: its categories */
+  else if (SCR != SCR_SEARCH && SCR != SCR_SET && screens[SCR] && screens[SCR]->key)
     screens[SCR]->key(K_DOWN); /* Search and Settings keep their own top highlight */
   topnav_paint();
 }
@@ -915,72 +860,52 @@ static void topnav_nudge(void) {
 /* the pill leaves on the key press; the screen follows once the remote rests (150 ms): building a screen in
    the same moment starves the slide, and passing through a tab on the way to another one no longer builds it */
 static int topnav_key(int k) {
-  if (profFoc) { /* the profile: OK opens the profiles, Left back to the tabs, Down into the page */
-    if (k == K_OK) {
-      profFoc = 0;
-      profiles_open(PF_SWITCH);
-      return 1;
-    }
-    if (k == K_LEFT) {
-      profFoc = 0;
-      topnav_paint();
-      return 1;
-    }
-    if (k == K_DOWN) {
-      profFoc = 0;
-      topnav_enter_content();
-      return 1;
-    }
-    nudge_start(&topNav.nudge, k);
-    return 1;
-  }
-  if (update_pill_key(k, topNav.idx == NAV_SET)) {
+  if (update_pill_key(k, topNav.idx == NAV_SEARCH)) {
     topnav_paint();
     return 1;
-  }
+  } /* a notice out beside the picture: Left from Search lands on it */
   topnav_paint();
+  if (k == K_LEFT && topNav.idx == NAV_SEARCH) {
+    topnav_flush(1);
+    if (!profpanel_open())
+      nudge_start(&topNav.nudge, k);
+    return 1;
+  } /* past Search: the profiles and the app's own items, out of the left edge */
   if (k == K_LEFT || k == K_RIGHT) {
     int i = topNav.idx + (k == K_RIGHT ? 1 : -1);
     if (i < 0)
       i = 0;
-    if (i > 4)
-      i = 4;
-    if (i == topNav.idx && k == K_RIGHT && i == NAV_LIB && acct_is_nuvio() && !app_rtl()) {
-      topnav_flush(0);
-      profFoc = 1;
-      topnav_paint();
-      return 1;
-    }
+    if (i > NAV_LIB)
+      i = NAV_LIB;
     if (i == topNav.idx) {
       nudge_start(&topNav.nudge, k);
       return 1;
     } /* the end of the bar */
-    Scr t = chipScr(i);
-    if ((t == SCR_SEARCH || t == SCR_SET) && SCR != t) {
+    if (i == NAV_SEARCH && SCR != SCR_SEARCH) {
       topnav_flush(1);
       topNav.idx = i;
       topnav_paint();
       return 1;
-    }
+    } /* Search opens on OK only */
     topNav.idx = i;
     topnav_paint();
     topNav.want = i;
     topNav.swAt = NOW + 0.15;
   } else if (k == K_DOWN || k == K_OK) {
     topnav_flush(0);
-    Scr tg = chipScr(topNav.idx);
-    if ((tg == SCR_SEARCH || tg == SCR_SET) && SCR != tg) {
+    if (topNav.idx == NAV_SEARCH && SCR != SCR_SEARCH) {
       if (k == K_OK) {
         topNav.active = 1;
-        app_go(tg, NULL, 1);
+        navf.kind = NAV_ZOOM;
+        navf.x = topNav.chipX[NAV_SEARCH] + BAR_H / 2;
+        navf.y = BAR_Y;
+        app_go(SCR_SEARCH, NULL, 1);
         topnav_enter_content();
         return 1;
       }
-      /* Down from a corner icon: into the page you are on */
-      Scr cur = tab_scr();
-      for (int j = 2; j < 5; j++)
-        if (chipScr(j) == cur)
-          topNav.idx = j;
+      int c = tab_of(tab_scr()); /* Down from Search: into the page you are on */
+      if (c >= 0 && c <= NAV_LIB)
+        topNav.idx = c;
     }
     topnav_enter_content();
   } else if (k == K_UP)
@@ -993,244 +918,73 @@ void topnav_tick(float dt) {
   tween_tick(&topNav.px, dt);
   tween_tick(&topNav.pw, dt);
   tween_tick(&topNav.pill, dt);
-  for (int i = 0; i < 2; i++) {
-    tween_tick(&topNav.cornerF[i], dt);
-    tween_tick(&topNav.cornerS[i], dt);
-    tween_tick(&topNav.dotK[i], dt);
-  }
-  tween_tick(&topNav.setRot, dt);
   nudge_tick(&topNav.nudge, dt);
   if (!topNav.laidOut)
     topnav_paint();
 }
-/* Search steps aside for a notice out of the Settings icon; when a long one would push it onto the tabs it fades away
- */
-static float search_fade(float sh) {
-  if (sh == 0)
-    return 1;
-  float sx = topNav.chipX[NAV_SEARCH] + sh, room;
-  if (!app_rtl()) {
-    float l = SB_W;
-    for (int j = NAV_DISC; j <= NAV_LIB; j++)
-      if (topNav.chipX[j] < l)
-        l = topNav.chipX[j];
-    room = l - 16 - (sx + 76);
-  } else {
-    float r = 0;
-    for (int j = NAV_DISC; j <= NAV_LIB; j++)
-      if (topNav.chipX[j] + topNav.chipW[j] > r)
-        r = topNav.chipX[j] + topNav.chipW[j];
-    room = sx - 16 - r;
-  }
-  return room >= 0 ? 1 : clampf(1 + room / 40, 0, 1);
-}
-/* liquid glass, drawn (no blur read back: the bar sits over moving backdrops and trailers): a tinted see-through
-   body, a sheen from the top, the rim lit at the top-left and bottom-right as by a light at 135 degrees, and a soft
-   shadow; k scales it all (0 none, 1 at rest, more when lit), tint is the accent */
-#define LG_H 112.0f /* the top bar glass strip's height (layout units) */
-static GLuint lg_tex(float x, float y, float w, float h, float *u0, float *v0, float *u1, float *v1);
-static void lg_tick(void);
-/* the light on the glass: a slow wander of its own (a few percent along the top, never still) */
-static float lg_drift_at(float ph) {
-  float t = (float)NOW + ph;
-  return 0.018f * sinf(t * 0.157f) + 0.012f * sinf(t * 0.263f + 1.3f) + 0.008f * sinf(t * 0.411f + 4.1f);
-} /* (three slow waves that never line up: a few percent, 15 to 40 s; ph sets each piece of glass apart) */
-static float
-    lgSpotLean; /* the next piece's spot leaning along (the capsule's towards the focused tab), then none again */
-static void lg_glass(float x, float y, float w, float h, float r, uint32_t tint, float k) {
-  if (k <= 0.004f) {
-    lgSpotLean = 0;
-    lgSeed = 0;
-    lgPushX = lgPushY = 0;
-    return;
-  }
-  float pxs = lgPushX, pys = lgPushY, pk = fminf(1, sqrtf(pxs * pxs + pys * pys) / 12);
-  lgPushX = lgPushY = 0; /* how hard it is being pushed, 0..1 */
-  int small = w < 300; /* (the circles and the clock: a softer touch than the capsule) */
-  int sd = lgSeed < 0 ? 0 : lgSeed > 3 ? 3 : lgSeed;
-  float spotK = 0, su = 0.5f, sv = 0.32f;
-  {
-    float n = (float)lgSeed, t = (float)NOW * (1 + 0.13f * n) + 17.0f * n,
-          p = 2.39f * n; /* each piece its own pace and phase */
-    su = 0.5f +
-         0.4f * (0.55f * sinf(t * 0.27f + p) + 0.3f * sinf(t * 0.43f + 2.0f + 1.7f * p) +
-                 0.15f * sinf(t * 0.71f + 4.4f + 2.3f * p)) +
-         lgSpotLean;
-    sv = 0.32f + 0.1f * sinf(t * 0.33f + 1.0f + p);
-    spotK = (small ? 0.6f : 1.0f) * (1 + 0.7f * pk);
-    lglass_light(su - 0.12f);
-    lgSpotLean = 0;
-    lgSeed = 0;
-  } /* every piece of the bar's glass with its own wandering spot, on its own timing, its glint riding with it */
-  gfx_shadow(x, y + 12, w, h, r, 40, BLACK_A((int)(64 * fminf(k, 1))));
-  {
-    float u0, v0, u1, v1;
-    GLuint t =
-        pk > 0 ? lg_tex(lgBase[0], lgBase[1], lgBase[2], lgBase[3], &u0, &v0, &u1, &v1)
-               : lg_tex(x, y, w, h, &u0, &v0, &u1, &v1); /* the blurred page behind, drawn in at the edges as by a lens
-                                                            (pushed: the picture at rest, stretched with the glass) */
-    /* the picture behind changing (signing in, the start screen, the guide, a page of glows): the glass crossfades from
-     * the one it had, never a jump */
-    static GLuint curT[4], oldT[4];
-    static float oldUv[4][4], curUv[4][4], fadeK[4];
-    static unsigned long long seenF[4];
-    if (seenF[sd] + 2 < FRAME) {
-      curT[sd] = t;
-      fadeK[sd] = 0;
-    } /* (not drawn a while: no fade from what it had then) */
-    else if (t != curT[sd]) {
-      oldT[sd] = curT[sd];
-      memcpy(oldUv[sd], curUv[sd], sizeof oldUv[sd]);
-      curT[sd] = t;
-      fadeK[sd] = 1;
-    } /* (from nothing too: out of the plain glass) */
-    seenF[sd] = FRAME;
-    curUv[sd][0] = u0;
-    curUv[sd][1] = v0;
-    curUv[sd][2] = u1;
-    curUv[sd][3] = v1;
-    if (fadeK[sd] > 0)
-      fadeK[sd] -= DT / 0.5f;
-    float pull = fminf(h * 0.5f, 30) * (1 + 0.5f * pk); /* (pushed harder, the lens bends more) */
-    float ok = fadeK[sd] > 0 ? fadeK[sd] * fadeK[sd] * (3 - 2 * fadeK[sd]) : 0;
-    if (t) {
-      float na = oldT[sd] ? 1 : 1 - ok;
-      if (na < 0.999f) {
-        gfx_rrect(x, y, w, h, r, RGBA(16, 16, 24, (int)(fminf(110 * k, 200) * ok)));
-        gfx_opacity_push(na);
-      }
-      gfx_liquid_spot(su, sv, spotK);
-      gfx_liquid(t, x, y, w, h, r, pull, fminf(k, 1), u0, v0, u1, v1);
-      if (na < 0.999f)
-        gfx_opacity_pop();
-    } else
-      gfx_rrect(x, y, w, h, r, RGBA(16, 16, 24, (int)(fminf(110 * k, 200) * (oldT[sd] ? 1 - ok : 1))));
-    if (ok > 0.004f && oldT[sd]) {
-      gfx_opacity_push(ok);
-      gfx_liquid_spot(su, sv, spotK);
-      gfx_liquid(oldT[sd], x, y, w, h, r, pull, fminf(k, 1), oldUv[sd][0], oldUv[sd][1], oldUv[sd][2], oldUv[sd][3]);
-      gfx_opacity_pop();
-    }
-    if (t || ok > 0.004f)
-      gfx_rrect(x, y, w, h, r, RGBA(10, 10, 16, (int)(fminf(18 * k, 50))));
-  }
-  gfx_rrect(x, y, w, h, r, col_alpha(tint | 0xff000000u, 0.08f * k));
-  gfx_rrect_v(x, y, w, h, r, WHITE_A((int)(fminf(28 * k, 70))), WHITE_A(0));
-  gfx_ring(x, y, w, h, r, 1, WHITE_A((int)(fminf(34 * k, 90))));
-  lglass_rim(x, y, w, h, r, 0.10f * k * (1 + 0.4f * pk), (small ? 0.17f : 0.28f) * fminf(k, 1.4f) * (1 + 0.25f * pk),
-             1);
-  lglass_rim(x, y, w, h, r, 0.05f * k, 0.30f * fminf(k, 1.4f), 0); /* (a soft light: the glint at half) */
-}
-/* the edge push (nowhere to go) taken up by the glass holding the focus: it bulges out the way it was pushed, a little
-   thinner across, and springs back with the push's rebound, so the focused pill never pokes out of it */
-static void lg_squish(float *x, float *y, float *w, float *h, float nx, float ny) {
-  lgBase[0] = *x;
-  lgBase[1] = *y;
-  lgBase[2] = *w;
-  lgBase[3] = *h;
-  lgPushX = nx;
-  lgPushY = ny; /* the picture in it stretches with it (lg_glass) */
-  float gx = fabsf(nx) * 0.85f, gy = fabsf(ny) * 0.85f;
-  if (nx > 0)
-    *w += gx;
-  else if (nx < 0) {
-    *x -= gx;
-    *w += gx;
-  }
-  if (ny > 0)
-    *h += gy;
-  else if (ny < 0) {
-    *y -= gy;
-    *h += gy;
-  }
-  float qx = fabsf(nx) * 0.3f, qy = fabsf(ny) * 0.4f;
-  *y += qx;
-  *h -= 2 * qx;
-  *x += qy;
-  *w -= 2 * qy;
-}
-static void corner_draw(int i, const char *icon, uint32_t dot, float rot) {
-  float sh = i == NAV_SEARCH ? update_search_shift(topNav.chipX[NAV_SEARCH], topNav.chipX[NAV_SET]) : 0,
-        sf = i == NAV_SEARCH ? search_fade(sh) : 1;
-  if (sf <= 0.001f)
-    return;
-  if (sf < 0.999f)
-    gfx_opacity_push(sf);
-  float f = topNav.cornerF[i].v, x = topNav.chipX[i] + sh, y = 50 - 38;
-  int nd = chipFocused(i);
-  if (nd)
-    gfx_offset_push(nudge_x(&topNav.nudge), nudge_y(&topNav.nudge)); /* the edge push moves the focused icon too */
-  lgSeed = 1 + i;
-  lg_glass(x, y, 76, 76, 38, ACC,
-           0.85f + 0.3f * f); /* the bar's glass, as the capsule's (its own wandering spot), a little brighter lit */
-  if (f > 0.001f) {
-    float s = 0.78f + 0.22f * topNav.cornerS[i].v;
-    gfx_opacity_push(f);
-    gfx_scale_push(s, s, x + 38, y + 38);
-    gfx_rrect_v(x, y, 76, 76, 38, col_alpha(ACC2 | 0xff000000u, 0.42f),
-                col_alpha(ACC | 0xff000000u, 0.30f)); /* the accent */
-    gfx_scale_pop();
-    gfx_opacity_pop();
-  }
-  static Tween lit[2];
-  tween_to(&lit[i], chipFocused(i) || chipCur(i) ? 1 : 0, 0.22f, EASE_CSS_EASE);
-  tween_tick(&lit[i], DT); /* lit and back crossfaded, as the tabs' words are */
-  uint32_t col = col_mix(WHITE_A(184), WHITE_A(255), lit[i].v);
-  icon_draw_rot(icon, x + 18, y + 18, 40, col, rot); /* outlined, 40 px */
-  if (i == NAV_SET && update_avail()) {
-    float bx = app_rtl() ? x + 9 + 4.5f : x + 76 - 9 - 4.5f, by = y + 76 - 9 - 4.5f;
-    gfx_circle(bx, by, 7.5f, PAGE);
-    gfx_circle(bx, by, 4.5f, ACC2);
-  } /* an update is waiting */
-  float dk = topNav.dotK[i].v, d = (1 - dk) * (i == NAV_SET ? 1 - update_dot_hide() : 1);
-  if (d > 0.001f) { /* the remote's colour key: a short arc along the top, just inside the rim */
-    uint32_t c = dot | 0xff000000u;
-    gfx_clip_push(x, y, 76, 4 + 9);
-    gfx_ring(x + 3.5f, y + 3.5f, 69, 69, 34.5f, 1.75f, col_alpha(c, 0.32f * d));
-    gfx_clip_pop(); /* soft ends */
-    gfx_clip_push(x, y, 76, 4 + 5);
-    gfx_ring(x + 3.5f, y + 3.5f, 69, 69, 34.5f, 1.75f, col_alpha(c, 0.5f * d));
-    gfx_clip_pop();
-  } /* it steps away when the icon is focused */
-  if (nd)
-    gfx_offset_pop();
-  if (sf < 0.999f)
-    gfx_opacity_pop();
-}
 static void chip_focus(int i, int b) {
   (void)b;
+  if (i == NAV_SET)
+    return; /* the picture: a ring while pointed at (drawn), the panel on a click */
   if (!topNav.active || topNav.idx != i) {
     topnav_flush(1);
-    if (!topNav.active) {
-      topNav.active = 1;
-    }
+    topNav.active = 1;
     topNav.idx = i;
     topnav_paint();
   }
 }
 static void chip_act(int i, int b) {
   (void)b;
-  Scr tg = chipScr(i);
-  Scr cur = tab_scr();
-  int ci = -1;
-  for (int j = 2; j < 5; j++)
-    if (chipScr(j) == cur)
-      ci = j;
   if (app_overlay) {
     app_overlay->key(K_BACK);
     app_overlay = NULL;
   }
+  if (i == NAV_SET) {
+    profpanel_open();
+    return;
+  }
   topnav_flush(1);
   topNav.active = 1;
   topNav.idx = i;
-  if (tg == SCR_SEARCH || tg == SCR_SET)
+  if (i == NAV_SEARCH)
     topnav_key(K_OK); /* opens it, the highlight inside */
-  else if (i != ci || !app_is_board(SCR)) {
+  else if (i != tab_of(tab_scr()) || !app_is_board(SCR)) {
     topNav.idx = -1;
     topnav_switch(i);
   } else
     topnav_enter_content();
 }
+/* the profile in use (a Nuvio profile: its picture, or its colour and first letter; a Stremio account: the first
+   letter of its address), rounded as Netflix's, at (x, y) in a square of D */
+static void initial_draw(const char *name, float cx, float cy, float D) {
+  char ini[8] = { 0 };
+  const unsigned char *u = (const unsigned char *)(name ? name : "");
+  int len = !*u ? 0 : (*u & 0x80) ? ((*u & 0xe0) == 0xc0 ? 2 : (*u & 0xf0) == 0xe0 ? 3 : 4) : 1;
+  memcpy(ini, name, (size_t)len);
+  if (ini[0] >= 'a' && ini[0] <= 'z')
+    ini[0] -= 32;
+  float px = D * 0.5f;
+  text_draw(ini, cx, cy - text_line_height((int)px) / 2.0f, (int)px, 600, WHITE_A(255), 0, 0, ALIGN_CENTER);
+}
+void app_profile_pic(float x, float y, float D, float r) {
+  if (acct_is_nuvio() && nv_profile_current()) {
+    NvProfile p;
+    for (int i = 0; i < nv_profile_count(); i++)
+      if (nv_profile_get(i, &p) && p.index == nv_profile_current()) {
+        gfx_rrect(x, y, D, D, r, RGB((p.color >> 16) & 255, (p.color >> 8) & 255, p.color & 255));
+        if (!profile_avatar_draw_r(p.avatar, x, y, D, r))
+          initial_draw(p.name, x + D / 2, y + D / 2, D);
+        return;
+      }
+  }
+  gfx_rrect(x, y, D, D, r, RGB(0x3a, 0x3a, 0x44));
+  initial_draw(sb_user_email(), x + D / 2, y + D / 2, D);
+}
+static void caret_draw(float x, float cy, uint32_t c) {
+  float px[4] = { x, x + 10, x + 5, x + 5 }, py[4] = { cy - 3, cy - 3, cy + 3, cy + 3 };
+  uint32_t cc[4] = { c, c, c, c };
+  gfx_quad_pts(px, py, cc);
+} /* a small down caret beside the picture */
 void topnav_draw(void) {
   if (!topNav.laidOut)
     topnav_paint();
@@ -1238,143 +992,83 @@ void topnav_draw(void) {
   float pg = revpanel_page_k(); /* the reviews risen into the title page: the bar goes up and away for its buttons */
   if (pg >= 0.999f)
     return;
-  if (!signin && pg < 0.3f)
-    for (int i = 0; i < 5; i++) {
-      float h = i < 2 ? 76 : 66;
-      hit_add_nav(topNav.chipX[i] +
-                      (i == NAV_SEARCH ? update_search_shift(topNav.chipX[NAV_SEARCH], topNav.chipX[NAV_SET]) : 0),
-                  50 - h / 2, topNav.chipW[i], h, chip_focus, chip_act, i, 0);
-    }
+  int rtl = app_rtl();
+  if (!signin && pg < 0.3f) {
+    for (int i = 0; i <= NAV_LIB; i++)
+      hit_add_nav(topNav.chipX[i], BAR_Y - BAR_H / 2, topNav.chipW[i], BAR_H, chip_focus, chip_act, i, 0);
+    hit_add_nav(rtl ? topNav.chipX[NAV_SET] - 34 : topNav.chipX[NAV_SET], BAR_Y - 30, PIC_D + 34, BAR_H, chip_focus,
+                chip_act, NAV_SET, 0); /* the picture and its caret: one target */
+  }
   float rv = ease_apply(EASE_CSS_EASE, app_reveal_x(0, 0.4f)) * (1 - pg);
   if (rv < 1)
     gfx_opacity_push(rv);
   float lift = -70 * pg;
   if (lift < 0)
     gfx_offset_push(0, lift);
+  {
+    static Tween fade;
+    tween_to(&fade, !signin && board_rows_docked() ? 1 : 0, 0.3f, EASE_CSS_EASE);
+    tween_tick(&fade, DT);
+    if (fade.v > 0.001f)
+      gfx_rrect_v(0, 0, SB_W, 160, 0, BLACK_A((int)(178 * fade.v)), BLACK_A(0));
+  } /* rows under the bar: a soft dark fade at the top keeps the words readable (none over the billboard at rest) */
   float nx = nudge_x(&topNav.nudge), ny = nudge_y(&topNav.nudge);
   if (!signin) {
-    /* the tabs' capsule: one piece of glass behind the three, brighter while the bar has the focus */
-    {
-      static Tween lit;
-      tween_to(&lit, topNav.active ? 1 : 0, 0.3f, EASE_CSS_EASE);
-      tween_tick(&lit, DT);
-      float cx0 = topNav.chipX[NAV_DISC] - 8, cx1 = topNav.chipX[NAV_LIB] + topNav.chipW[NAV_LIB] + 8;
-      {
-        static float lean;
-        float want = topNav.active && topNav.idx >= NAV_DISC
-                         ? ((topNav.px.v + topNav.pw.v / 2 - cx0) / (cx1 - cx0) - 0.5f) * 0.12f
-                         : 0;
-        lean += (want - lean) * fminf(1, DT * 0.8f); /* the light leans a little towards the focused tab, slowly */
-        lgSpotLean = lean;
-      }
-      {
-        float gx = cx0, gy = 50 - 39, gw = cx1 - cx0, gh = 78;
-        if (topNav.active && topNav.idx >= NAV_DISC)
-          lg_squish(&gx, &gy, &gw, &gh, nx, ny); /* the focus pushed against the end: the capsule bulges with it */
-        lg_glass(gx, gy, gw, gh, gh / 2, ACC, 0.85f + 0.3f * lit.v);
-      }
-      /* the current tab, when the focus is elsewhere: a softer piece of glass inside it */
-      static Tween mk[3]; /* (only while the focus is out of the bar: moving to Search or Settings, nothing is left lit
-                             on the tabs) */
-      for (int i = NAV_DISC; i <= NAV_LIB; i++) {
-        tween_to(&mk[i - NAV_DISC], chipCur(i) && !topNav.active ? 1 : 0, 0.2f, EASE_CSS_EASE);
-        tween_tick(&mk[i - NAV_DISC], DT);
-      }
-      for (int i = NAV_DISC; i <= NAV_LIB; i++) {
-        float a = mk[i - NAV_DISC].v;
-        if (a > 0.01f) {
-          gfx_opacity_push(a);
-          gfx_rrect(topNav.chipX[i], 50 - 30, topNav.chipW[i], 60, 30, WHITE_A(20));
-          gfx_ring(topNav.chipX[i], 50 - 30, topNav.chipW[i], 60, 30, 1, WHITE_A(46));
-          gfx_opacity_pop();
-        }
-      }
+    /* the page you are on, the focus elsewhere: a dark grey pill */
+    static Tween mk[NAV_LIB + 1], em[NAV_LIB + 1];
+    for (int i = 0; i <= NAV_LIB; i++) {
+      tween_to(&mk[i], chipCur(i) && !topNav.active ? 1 : 0, 0.2f, EASE_CSS_EASE);
+      tween_tick(&mk[i], DT);
+      if (mk[i].v > 0.01f)
+        gfx_rrect(topNav.chipX[i], BAR_Y - BAR_H / 2, topNav.chipW[i], BAR_H, BAR_H / 2, WHITE_A((int)(46 * mk[i].v)));
     }
-    /* the focus: liquid accent glass that stretches as it glides and settles back round (its speed, smoothed) */
+    /* the focus: one flat light pill gliding between the items */
     float pa = topNav.pill.v;
     if (pa > 0.001f) {
-      static float lastX, sv, dir;
-      float x = topNav.px.v, w = topNav.pw.v, h = 62, r = 31;
-      float x0 = lastX;
-      lglass_stretch(&sv, &lastX, x, DT);
-      if (fabsf(x - x0) > 0.01f)
-        dir = x > x0 ? 1 : -1; /* 0..1, and which way */
-      float sw = w * (1 + 0.22f * sv), sh = h * (1 - 0.10f * sv), px = x + w / 2 - sw / 2, py = 50 - sh / 2;
-      gfx_opacity_push(pa);
       gfx_offset_push(nx, ny);
-      {
-        float u0, v0, u1, v1;
-        GLuint t = lg_tex(px, py, sw, sh, &u0, &v0, &u1, &v1);
-        if (t) {
-          float lag = (-dir * sv * 7.0f + 1.2f * sinf((float)NOW * 0.9f)) / SB_W,
-                wob = 0.8f * sinf((float)NOW * 0.7f + 1) /
-                      LG_H; /* the picture in it lags a few units the way it moves, a tiny wobble at rest */
-          gfx_liquid(t, px, py, sw, sh, sh / 2, fminf(sh * 0.6f, 36) * (1 + 0.25f * sv), 1, u0 + lag, v0 - wob,
-                     u1 + lag, v1 - wob);
-        }
-      } /* (a stronger lens: it is the drop of glass that moves, stronger still while it moves) */
-      gfx_rrect_v(px, py, sw, sh, sh / 2, col_alpha(ACC2 | 0xff000000u, 0.46f), col_alpha(ACC | 0xff000000u, 0.36f));
-      gfx_rrect_v(px, py, sw, sh, sh / 2, WHITE_A(40), WHITE_A(0));
-      gfx_clip_push(px, py, sw, sh);
-      gfx_alpha_tex(gfx_radial_tex(), px + sw * 0.15f, py - sh * 0.6f, sw * 0.7f, sh, WHITE_A(55));
-      gfx_clip_pop();
-      gfx_ring(px, py, sw, sh, sh / 2, 1.2f, WHITE_A(70));
-      (void)r; /* a fine bright edge: no glint sliding across a moving pill */
+      gfx_rrect(topNav.px.v, BAR_Y - BAR_H / 2, topNav.pw.v, BAR_H, BAR_H / 2, col_alpha(PILL_ON, pa));
       gfx_offset_pop();
-      gfx_opacity_pop();
     }
-    for (int i = NAV_DISC; i <= NAV_LIB; i++) {
-      int cur = chipCur(i), f = chipFocused(i);
+    for (int i = 0; i <= NAV_LIB; i++) {
+      int f = chipFocused(i);
+      tween_to(&em[i], f ? 1 : 0, 0.2f, EASE_CSS_EASE);
+      tween_tick(&em[i], DT); /* the words go dark as the pill arrives under them */
+      uint32_t rest = chipCur(i) && !topNav.active ? WHITE_A(255) : WHITE_A(230);
+      uint32_t col = col_mix(rest, INK_ON, em[i].v);
       float x = topNav.chipX[i], w = topNav.chipW[i];
       if (f)
         gfx_offset_push(nx, ny);
-      {
-        static Tween em[3];
-        Tween *e = &em[i - NAV_DISC];
-        tween_to(e, f || (cur && !topNav.active) ? 1 : 0, 0.22f, EASE_CSS_EASE);
-        tween_tick(e, DT); /* bold while focused, or the page shown with the focus elsewhere: crossfaded both ways */
-        float ty = 50 - text_line_height(32) / 2.0f, k = e->v;
-        if (k < 0.999f)
-          text_draw(chipLabel(i), x + w / 2, ty, 32, 400, WHITE_A((int)(184 * (1 - k))), 0, 0, ALIGN_CENTER);
-        if (k > 0.001f)
-          text_draw(chipLabel(i), x + w / 2, ty, 32, 700, WHITE_A((int)(255 * k)), 0, 0, ALIGN_CENTER);
-      }
+      if (i == NAV_SEARCH)
+        icon_draw("nav_search", x + (w - 32) / 2, BAR_Y - 16, 32, col);
+      else
+        text_draw(chipLabel(i), x + w / 2, BAR_Y - text_line_height(tabPx) / 2.0f, tabPx, 500, col, 0, 0, ALIGN_CENTER);
       if (f)
         gfx_offset_pop();
     }
-    update_pill_draw(topNav.chipX[NAV_SET]); /* under the Settings icon, which is its rounded end */
-    corner_draw(NAV_SEARCH, "nav_search", RGB(0x2f, 0xd6, 0x6b), 0); /* green key: Search */
-    corner_draw(NAV_SET, "nav_set", RGB(0xef, 0x3b, 0x3b), topNav.setRot.v); /* red key: Settings */
+    /* the start: a notice out of the picture, then the picture, its caret and (an update waiting) a dot */
+    float px = topNav.chipX[NAV_SET], py = BAR_Y - PIC_D / 2, nk = update_dot_hide();
+    update_pill_draw(px - 14);
+    app_profile_pic(px, py, PIC_D, 8);
+    if (app_ptr_over(rtl ? px - 34 : px, BAR_Y - 30, PIC_D + 34, BAR_H))
+      gfx_ring(px - 4, py - 4, PIC_D + 8, PIC_D + 8, 12, 2, WHITE_A(204));
+    if (nk < 0.999f) {
+      gfx_opacity_push(1 - nk);
+      caret_draw(rtl ? px - 22 - 10 : px + PIC_D + 22, BAR_Y, WHITE_A(170));
+      if (update_avail()) {
+        float dx = rtl ? px + 2 : px + PIC_D - 2, dy = py + 2;
+        gfx_circle(dx, dy, 7, PAGE);
+        gfx_circle(dx, dy, 5, ACC);
+      }
+      gfx_opacity_pop();
+    }
   }
+  if (FS_ROOM > 0 && !welcome_is_open())
+    app_fs_button(rtl ? 22 + 60 : SB_W - 22, BAR_Y);
   if (lift < 0)
     gfx_offset_pop();
   if (rv < 1)
     gfx_opacity_pop();
-  lglass_light(0);
-  if (!welcome_is_open()) {
-    float ck = 1 - pg;
-    if (ck < 1)
-      gfx_opacity_push(ck);
-    if (lift < 0)
-      gfx_offset_push(0, lift);
-    if (SCR != SCR_LOGIN) {
-      acct_tag_draw();
-      prof_draw();
-    }
-    clock_draw();
-    if (lift < 0)
-      gfx_offset_pop();
-    if (ck < 1)
-      gfx_opacity_pop();
-  } /* the clock: never faded in with the page (it stays where it is through signing in, the start screen and the
-       guide); away only with the bar for a trailer or the reviews */
 }
-void app_clock_top(void) {
-  if (splash_signed_in() || welcome_is_open()) {
-    lglass_light(0);
-    clock_draw();
-  }
-} /* over the start screen and the guide: the same clock, in its place
 
 /* ---- the backdrop: two layers, the new one fades in over the old (never a dip to black) ---- */
 #define BGW 1280
@@ -1820,6 +1514,20 @@ void app_go(Scr s, const void *params, int noStack) {
   text_gc();
   topnav_paint();
 }
+/* Settings or Search, left for the page it was opened from (its colour key again, or Back on Settings) */
+static void color_back(int t) {
+  Scr p = colorFrom;
+  colorFromSet = 0;
+  int ci = tab_of(p);
+  topnav_flush(1);
+  navf.kind = NAV_BACKZ;
+  navf.x = topNav.chipX[t] + topNav.chipW[t] / 2;
+  navf.y = BAR_Y;
+  topNav.idx = ci >= 0 && ci <= NAV_LIB ? ci : NAV_HOME;
+  app_go(p, NULL, 1);
+  topNav.active = 0;
+  topnav_paint();
+}
 /* a phone's tab: the stack of pages starts again from it */
 void app_go_tab(Scr s) {
   nback = 0;
@@ -1854,10 +1562,7 @@ void app_back(void) {
   }
   if (topNav.want >= 0) {
     topnav_flush(1);
-    Scr cur = tab_scr();
-    for (int j = 0; j < 5; j++)
-      if (chipScr(j) == cur)
-        topNav.idx = j;
+    topNav.idx = tab_of(tab_scr());
     topnav_paint();
     return;
   } /* Back while the pill travels: it returns */
@@ -1872,10 +1577,11 @@ void app_back(void) {
   }
   if (screens[SCR] && screens[SCR]->key && screens[SCR]->key(K_BACK))
     return; /* the screen stepped back inside itself */
-  int ci = -1;
-  for (int j = 0; j < 5; j++)
-    if (chipScr(j) == SCR)
-      ci = j;
+  int ci = tab_of(SCR);
+  if (SCR == SCR_SET && colorFromSet && !topNav.active) {
+    color_back(NAV_SET);
+    return;
+  } /* Settings (it has no tab): Back returns to the page it was opened from */
   if (topNav.active) {
     if (SCR != SCR_HOME) {
       nav_slide(NAV_HOME >= ci ? 1 : -1);
@@ -2085,12 +1791,11 @@ static int ptr_tremor(double now) {
 static void ptr_nav_back(void) {
   if (topNav.want >= 0)
     return;
-  Scr cur = tab_scr();
-  for (int j = 2; j < 5; j++)
-    if (chipScr(j) == cur && topNav.idx != j) {
-      topNav.idx = j;
-      topnav_paint();
-    }
+  int c = tab_of(tab_scr());
+  if (c >= NAV_HOME && c <= NAV_LIB && topNav.idx != c) {
+    topNav.idx = c;
+    topnav_paint();
+  }
 }
 static void ptr_keep(const Hit *h) {
   PTR.hv = *h;
@@ -2174,22 +1879,17 @@ static void fs_none(int a, int b) {
 #endif
 float app_fs_button(float right, float cy) {
 #if SB_WINDOWED
-  const float D = 76;
+  const float D = 60; /* as the bar's items: nothing at rest, a grey disc under the pointer */
   float x = right - D, y = cy - D / 2;
   int over = PTR.on && PTR.x >= x && PTR.x < x + D && PTR.y >= y && PTR.y < y + D;
   static Tween lit;
   tween_to(&lit, over ? 1 : 0, 0.18f, EASE_CSS_EASE);
   tween_tick(&lit, DT);
   hit_add(x, y, D, D, fs_none, fs_act, 0, 0);
-  lglass_light(0);
-  lglass_shell(x, y, D, D, D / 2, RGBA(14, 14, 22, 120), 0.85f + 0.3f * lit.v);
-  if (lit.v > 0.001f) {
-    gfx_opacity_push(lit.v);
-    gfx_rrect_v(x, y, D, D, D / 2, col_alpha(ACC2 | 0xff000000u, 0.42f), col_alpha(ACC | 0xff000000u, 0.30f));
-    gfx_opacity_pop();
-  }
-  icon_draw(plat_fullscreen_on() ? "nav_unfull" : "nav_full", x + 20, y + 20, 36,
-            col_mix(WHITE_A(184), WHITE_A(255), lit.v));
+  if (lit.v > 0.001f)
+    gfx_rrect(x, y, D, D, D / 2, WHITE_A((int)(46 * lit.v)));
+  icon_draw(plat_fullscreen_on() ? "nav_unfull" : "nav_full", x + 14, y + 14, 32,
+            col_mix(WHITE_A(204), WHITE_A(255), lit.v));
   return D + 16;
 #else
   (void)right;
@@ -2527,6 +2227,37 @@ static void key_core(int k, int down, int repeat) {
   }
   key_dispatch(k, repeat);
 }
+/* the remote's colour keys: red Settings (or the notice out), green Search; the profile panel hands them on too */
+void app_color_key(int k) {
+  if (k == K_RED && update_notice_key()) {
+    sound_play(SND_TAB);
+    return;
+  } /* a notice out: red takes you to what it is about */
+  int t = k == K_RED ? NAV_SET : NAV_SEARCH;
+  sound_play(SND_TAB);
+  if (SCR == chipScr(t) && colorFromSet) {
+    color_back(t); /* pressed on its own page: back where it was opened from */
+    return;
+  }
+  topnav_flush(1);
+  if (chipScr(t) != SCR) {
+    topNav.idx = -1;
+    topnav_switch(t);
+  }
+  topNav.idx = t;
+  topnav_enter_content();
+  return;
+}
+/* Settings, from the profile panel (it has no item in the bar): out of the picture, Back returns to this page */
+void app_open_settings(void) {
+  if (SCR == SCR_SET)
+    return;
+  topnav_flush(1);
+  topNav.idx = -1;
+  topnav_switch(NAV_SET);
+  topNav.idx = NAV_SET;
+  topnav_enter_content();
+}
 static void key_dispatch(int k, int repeat) {
   if (k == K_OK && repeat) {
     return;
@@ -2556,36 +2287,7 @@ static void key_dispatch(int k, int repeat) {
     return;
   }
   if ((k == K_RED || k == K_GREEN) && SCR != SCR_LOGIN) {
-    if (k == K_RED && update_notice_key()) {
-      sound_play(SND_TAB);
-      return;
-    } /* a notice out: red takes you to what it is about */
-    int t = k == K_RED ? NAV_SET : NAV_SEARCH;
-    sound_play(SND_TAB);
-    if (SCR == chipScr(t) && colorFromSet) {
-      Scr p = colorFrom;
-      colorFromSet = 0;
-      int ci = -1;
-      for (int j = 0; j < 5; j++)
-        if (chipScr(j) == p)
-          ci = j; /* pressed on its own page: back where it was opened from */
-      topnav_flush(1);
-      navf.kind = NAV_BACKZ;
-      navf.x = topNav.chipX[t] + topNav.chipW[t] / 2;
-      navf.y = 50;
-      topNav.idx = ci >= 0 ? ci : NAV_HOME;
-      app_go(p, NULL, 1);
-      topNav.active = 0;
-      topnav_paint();
-      return;
-    }
-    topnav_flush(1);
-    if (chipScr(t) != SCR) {
-      topNav.idx = -1;
-      topnav_switch(t);
-    }
-    topNav.idx = t;
-    topnav_enter_content();
+    app_color_key(k);
     return;
   } /* the remote's colour keys: red Settings, green Search */
   if (topNav.active) {
@@ -2679,7 +2381,6 @@ void app_tick(float dt) {
   amb_bake();
   topnav_tick(dt);
   bg_tick(dt);
-  lg_tick();
   sync_tick();
   recs_tick();
   update_tick(dt);
@@ -2780,7 +2481,8 @@ void app_glow_kick(void) {
   orbs_pulse(ORB_PHONE, 1);
 }
 static void ambient_draw(void) {
-  int srch = SCR == SCR_SEARCH && !ambGuide, want = SCR == SCR_SET || srch || ambGuide == 1;
+  int srch = SCR == SCR_SEARCH && !ambGuide, want = ambGuide == 1; /* 3.0.0: Search and Settings sit on the plain page
+                                                                        (no drifting glows); the guide keeps its own */
   Orbs *o = orbs_app();
   if (want && !ambIn) {
     ambIn = 1;
@@ -2848,107 +2550,6 @@ void app_ambient_draw(void) {
   if (ambGuide)
     ambient_draw();
 } /* (the guide's, once a frame) */
-/* the top bar's glass: what lies under the bar (the backdrop) drawn at an
-   eighth of its size into a strip and lightly blurred, made again when the backdrop changes and each frame while it
-   fades, never else */
-static GfxTarget lgS[3];
-static int lgOk;
-static unsigned lgGen = ~0u;
-static int lgScr = -1;
-static double lgAt;
-/* a backdrop layer's top strip, at a: its own picture unshaded (else its baked one, upside down); never a bake here (a
-   second offscreen picture inside this one) */
-static void lg_layer(BgLayer *l, float a) {
-  if (a <= 0.002f || !l->url[0])
-    return;
-  if (bg_baked_current(l)) {
-    gfx_image(l->baked.tex, 0, 0, SB_W, LG_H, 0, WHITE_A((int)(255 * a + 0.5f)), 0, 1, 1, 1 - LG_H / SB_H);
-    return;
-  } /* the picture as it shows, shading and all: the glass is as dark as what is behind it */
-  if (l->tex && l->aspect > 0) {
-    float u0, v0, u1, v1;
-    img_cover_uv(l->aspect, SB_W / SB_H, 0, &u0, &v0, &u1,
-                 &v1); /* the picture itself, unshaded: the glass takes the backdrop's own colours (the page darkens its
-                          top for the words) */
-    gfx_image(l->tex, 0, 0, SB_W, LG_H, 0, WHITE_A((int)(255 * a + 0.5f)), u0, v0, u1, v0 + (v1 - v0) * (LG_H / SB_H));
-    return;
-  }
-  if (!l->bakedOk || strcmp(l->bakedUrl, l->url))
-    return;
-  gfx_image(l->baked.tex, 0, 0, SB_W, LG_H, 0, WHITE_A((int)(255 * a + 0.5f)), 0, 1, 1, 1 - LG_H / SB_H);
-}
-static void lg_bake(void) {
-  int W = 960, H = 56, bw = 480,
-      bh =
-          28; /* half size, lightly blurred: the glass shows the picture, softened, so its lens has something to bend */
-  int sw[3] = { W, bw, bw }, sh[3] = { H, bh, bh };
-  for (int i = 0; i < 3; i++)
-    if (!lgS[i].fbo && !gfx_target_create(&lgS[i], sw[i], sh[i])) {
-      lgOk = 0;
-      return;
-    }
-  float k = bgFade.on ? ease_apply(EASE_CSS_EASEOUT, timer_x(&bgFade)) : 1,
-        rv = ease_apply(EASE_CSS_EASE, app_reveal_x(0.05f, 0.7f));
-  gfx_target_begin(&lgS[0], PAGE); /* the backdrop's two layers as bg_draw blends them */
-  if (bgFadingIn && bgFade.on) {
-    lg_layer(&bgL[!bgTop], rv);
-    lg_layer(&bgL[bgTop], k * rv);
-  } else if (bgFadingOut && bgFade.on) {
-    lg_layer(&bgL[!bgTop], (1 - k) * rv);
-    lg_layer(&bgL[bgTop], (1 - k) * rv);
-  } else
-    lg_layer(&bgL[bgTop], rv);
-  gfx_target_end();
-  gfx_target_begin(&lgS[1], PAGE);
-  gfx_image(lgS[0].tex, 0, 0, SB_W, LG_H, 0, WHITE_A(255), 0, 1, 1, 0);
-  gfx_target_end();
-  gfx_blur_pass(&lgS[2], lgS[1].tex, bw, bh, 0, 1.0f);
-  gfx_blur_pass(&lgS[1], lgS[2].tex, bw, bh, 1, 1.0f);
-  lgOk = 1;
-  lgAt = NOW;
-}
-static void lg_tick(void) {
-  if (SCR == SCR_LOGIN || player_open())
-    return;
-  static float lastW, lastH;
-  int want = !lgOk || lgGen != bgGen || lgScr != (int)SCR || lastW != SB_W || lastH != SB_H || bgFade.on ||
-             app_reveal_x(0.05f, 0.7f) < 1; /* (each frame while the backdrop fades: the glass fades with it) */
-  if (want) {
-    lgGen = bgGen;
-    lgScr = (int)SCR;
-    lastW = SB_W;
-    lastH = SB_H;
-    lg_bake();
-  }
-}
-/* the strip's part under a box: its texture and uv (0 when there is none yet) */
-static GLuint lg_tex(float x, float y, float w, float h, float *u0, float *v0, float *u1, float *v1) {
-  if (SCR == SCR_LOGIN || splash_signed_in()) {
-    GLuint g = login_glow_tex();
-    *u0 = x / SB_W;
-    *u1 = (x + w) / SB_W;
-    *v0 = 1 - y / SB_H;
-    *v1 = 1 - (y + h) / SB_H;
-    return g;
-  } /* signing in: the glows */
-  if (welcome_is_open() || ((SCR == SCR_SET || SCR == SCR_SEARCH) && !app_overlay)) {
-    GLuint g = app_ambient_glass_tex();
-    if (g) {
-      *u0 = x / SB_W;
-      *u1 = (x + w) / SB_W;
-      *v0 = 1 - y / SB_H;
-      *v1 = 1 - (y + h) / SB_H;
-      return g;
-    }
-  } /* the glows' pages: the glows */
-  if (!lgOk)
-    return 0;
-  *u0 = x / SB_W;
-  *u1 = (x + w) / SB_W;
-  *v0 = 1 - y / LG_H;
-  *v1 = 1 - (y + h) / LG_H;
-  return lgS[1].tex;
-}
 static void page_draw(void) {
   if (welcome_covers() && app_overlay && app_overlay->draw) {
     app_overlay->draw();

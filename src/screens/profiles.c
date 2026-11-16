@@ -20,6 +20,7 @@
 #include "ui/widgets.h"
 #include "ui/osk.h"
 #include <strings.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include "platform/plat.h"
@@ -33,6 +34,8 @@ static struct {
   char pin[12], err[96];
   NvProfile pinFor;
   float foc[MAXP];
+  void (*back)(void); /* opened by the profile panel: Back out of the pad or the form returns there */
+  double shakeAt; /* a wrong PIN: the message shakes */
 } P;
 static Screen overlay;
 
@@ -83,10 +86,21 @@ static void on_pin(int ok, const char *err, void *ud) {
   }
   P.pin[0] = 0;
   snprintf(P.err, sizeof P.err, "%s", T(err ? err : "Wrong PIN"));
+  P.shakeAt = app_now();
 }
 static int can_add(void) {
   return nv_profile_count() < 6;
 } /* (Nuvio's limit) */
+int profiles_can_add(void) {
+  return can_add();
+}
+static void back_out(void) {
+  void (*b)(void) = P.back;
+  P.back = NULL;
+  close_now();
+  if (b)
+    b();
+} /* Back out of the pad or the form opened by the panel: the panel again */
 static int tile_count(void) {
   int n = nv_profile_count();
   if (n > MAXP)
@@ -105,6 +119,10 @@ static void on_added(int ok, const char *err, void *ud) {
   P.addMode = 0;
   P.err[0] = 0;
   osk_close(&P.osk);
+  if (P.back) {
+    back_out();
+    return;
+  } /* added from the panel: back there, the new profile where Add profile was */
   NvProfile p;
   for (int i = 0; i < nv_profile_count() && i < MAXP; i++)
     if (nv_profile_get(i, &p) && !strcasecmp(p.name, P.addName))
@@ -191,6 +209,8 @@ static int key(int k) {
       osk_close(&P.osk);
       if (form_touch())
         SDL_StopTextInput();
+      if (P.back)
+        back_out();
       return 1;
     }
     if (form_touch()) {
@@ -216,6 +236,8 @@ static int key(int k) {
     if (k == K_BACK) {
       P.pinMode = 0;
       P.err[0] = 0;
+      if (P.back)
+        back_out();
       return 1;
     }
     int c = P.pad % 3, r = P.pad / 3;
@@ -276,11 +298,14 @@ static void h_act(int i, int b) {
 /* the profile's picture in its circle (as Nuvio: the whole picture, cropped round); 0 while it loads or when there is
  * none */
 int profile_avatar_draw(const char *av, float x, float y, float D) {
-  GLuint t = av && *av ? img_get_shaped(av, (int)D, (int)D, D / 2, 1) : 0;
+  return profile_avatar_draw_r(av, x, y, D, D / 2);
+}
+int profile_avatar_draw_r(const char *av, float x, float y, float D, float r) {
+  GLuint t = av && *av ? img_get_shaped(av, (int)D, (int)D, r, 1) : 0;
   if (t)
     gfx_image(t, x, y, D, D, 0, WHITE_A(255), 0, 0, 1, 1);
   return t != 0;
-}
+} /* (rounded square: the bar and the profile panel, as Netflix's) */
 static void disc(float x, float y, float D, unsigned color, const char *name, const char *av, float foc, int lock) {
   float s = 1 + 0.08f * foc, cx = x + D / 2, cy = y + D / 2;
   gfx_scale_push(s, s, cx, cy);
@@ -404,10 +429,12 @@ static void draw(void) {
     size_t n = strlen(P.pin);
     float DS = 26 * K, DG = 22 * K, dw = n ? n * DS + (n - 1) * DG : 0;
     for (size_t i = 0; i < n; i++)
-      gfx_rrect(SB_W / 2 - dw / 2 + i * (DS + DG), y0 - 66 * K, DS, DS, DS / 2, WHITE_A(240));
-    if (P.err[0])
-      text_draw(P.err, SB_W / 2, y0 - (30 + 36) * K, (int)(26 * K), 500, RGB(0xff, 0x9a, 0x9a), 0, SB_W - 32,
-                ALIGN_CENTER);
+      gfx_rrect(SB_W / 2 - dw / 2 + i * (DS + DG), y0 - 66 * K, DS, DS, DS / 2, WHITE_A(P.busy ? 110 : 240));
+    if (P.err[0] || (P.busy && n)) {
+      float st = (float)(app_now() - P.shakeAt), sx = st < 0.3f ? 14 * sinf(st * 63) * (1 - st / 0.3f) : 0;
+      text_draw(P.err[0] ? P.err : T("Checkingâ¦"), SB_W / 2 + sx, y0 - (30 + 36) * K + (P.err[0] ? 0 : 44 * K),
+                (int)(26 * K), 500, P.err[0] ? RGB(0xff, 0x9a, 0x9a) : WHITE_A(170), 0, SB_W - 32, ALIGN_CENTER);
+    } /* a wrong PIN shakes once (3 swings, 0.3 s); while it is checked, the dots dim and say so */
     for (int i = 0; i < 12; i++) {
       float x = x0 + (i % 3) * (KW + G), y = y0 + (i / 3) * (KH + G);
       int foc = ph ? touch_pressed(h_foc, h_act, i, 0) : i == P.pad;
@@ -461,6 +488,7 @@ void profiles_open(int mode) {
   fprintf(stderr, "[profiles] open, mode %d\n", mode);
   P.open = 1;
   P.was = 1;
+  P.back = NULL;
   P.mode = mode;
   P.pinMode = 0;
   P.addMode = 0;
@@ -475,4 +503,28 @@ void profiles_open(int mode) {
     if (nv_profile_get(i, &p) && p.index == nv_profile_current())
       P.idx = i;
   app_overlay = &overlay;
+}
+/* ---- the profile panel's way in (screens/profpanel.c) ---- */
+void profiles_switch(int i) {
+  NvProfile p;
+  if (nv_profile_get(i, &p))
+    leave_for(p.index);
+}
+void profiles_open_pin(int i, void (*back)(void)) {
+  NvProfile p;
+  if (!nv_profile_get(i, &p))
+    return;
+  profiles_open(PF_SWITCH);
+  P.back = back;
+  P.idx = i;
+  P.pinFor = p;
+  P.pinMode = 1;
+  P.pad = 0;
+  P.pin[0] = 0;
+  P.err[0] = 0;
+}
+void profiles_open_add(void (*back)(void)) {
+  profiles_open(PF_SWITCH);
+  P.back = back;
+  add_open();
 }

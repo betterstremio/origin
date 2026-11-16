@@ -56,9 +56,8 @@ static struct {
   Tween pa, slide, dot;
   unsigned long job;
   int started;
-  SGlass glass;
-  unsigned shown, glassFor;
-  double shownAt, goAt; /* the capsule's frosted glass, baked once each time it comes out */
+  unsigned shown;
+  double shownAt, goAt;
   int kind;
   struct {
     char lb[128], badge[48];
@@ -600,7 +599,7 @@ void update_notice_cancel(void (*ok)(void)) {
     pill_hide();
   }
 }
-int update_pill_key(int k, int onSettings) {
+int update_pill_key(int k, int onSearch) {
   if (U.pf) {
     if (k == K_OK) {
       if (U.kind == 1)
@@ -611,11 +610,11 @@ int update_pill_key(int k, int onSettings) {
     }
     U.pf = 0;
     U.hideAt = app_now() + 4;
-    if (k == K_LEFT || k == K_UP)
-      return 1; /* Left: back onto the Settings icon */
-    return 0; /* Right and Down go on from the Settings icon */
+    if (k == K_RIGHT || k == K_UP)
+      return 1; /* Right: back onto Search */
+    return 0; /* Left (the profile panel) and Down (the page) go on from Search */
   }
-  if (k == K_RIGHT && U.pill && onSettings) {
+  if (k == K_LEFT && U.pill && onSearch) {
     U.pf = 1;
     U.hideAt = 0;
     return 1;
@@ -646,15 +645,6 @@ static float ver_w(void) {
 static float pill_w(void) {
   return 92 + text_width(pill_lb(), 23, 600, 0.1f) + ver_w() + 16 + KEY_W + 26;
 }
-/* Search makes room when it sits beyond the Settings icon (the notice's side), with the notice's own motion */
-float update_search_shift(float searchX, float setX) {
-  if ((U.kind == 0 && !U.has) || U.slide.v <= 0.001f)
-    return 0;
-  int beyond = app_rtl() ? searchX < setX : searchX > setX;
-  if (!beyond)
-    return 0;
-  return (pill_w() - 76) * ease_apply(EASE_ROW, U.slide.v) * (app_rtl() ? -1 : 1);
-}
 void update_pill_draw(float setX) {
   float a = U.pa.v;
   if (a <= 0.001f || (U.kind == 0 && !U.has))
@@ -662,54 +652,28 @@ void update_pill_draw(float setX) {
   const char *lb = pill_lb(), *ver = pill_badge();
   int rtl = app_rtl(), f = U.pf;
   float tw = text_width(lb, 23, 600, 0.1f), vw = ver_w();
-  float W = pill_w(), h = 76, y = 12, dx = -36 * (1 - ease_apply(EASE_ROW, U.slide.v)) * (rtl ? -1 : 1);
+  float W = pill_w(), h = 60, y = 26, dx = -36 * (1 - ease_apply(EASE_ROW, U.slide.v)) * (rtl ? -1 : 1);
   float x0 = (rtl ? setX + 76 - W : setX) + dx;
   if (U.pill && a > 0.5f)
     hit_act(rtl ? x0 : setX + 76, y, W - 76, h, pill_click, 0, 0); /* beside the icon: the icon keeps its own clicks */
-  /* frosted glass, like the sheets: the page behind baked once where the capsule settles, then a light tint over it */
-  if (U.glassFor != U.shown) {
-    U.glassFor = U.shown;
-    float xf = rtl ? setX + 76 - W : setX;
-    sglass_bake(&U.glass, xf, y, W, h);
-  }
+  /* flat, as the bar: a dark capsule out of the picture; with the highlight, the bar's light pill and dark words */
   gfx_opacity_push(a);
-  gfx_shadow(x0, y + 14, W, h, 38, 34, BLACK_A(87));
-  gfx_opacity_push(0.78f);
-  sglass_draw(&U.glass, x0, y, W, h, 38);
-  gfx_opacity_pop(); /* glass, the page a little seen through it */
+  gfx_shadow(x0, y + 10, W, h, 30, 24, BLACK_A(80));
   double now = app_now();
   float go = U.goAt > 0 && now - U.goAt < 0.5 ? 1 - (float)((now - U.goAt) / 0.5)
                                               : 0; /* OK: it lights up as it takes you there */
-  if (f) {
-    gfx_rrect(x0, y, W, h, 38, acc_a(0.5f));
-    gfx_rrect_v(x0, y, W, h, 38, WHITE_A(51), WHITE_A(15));
-  } else
-    gfx_rrect_v(x0, y, W, h, 38, WHITE_A(34), WHITE_A(6)); /* a sheen from above */
-  if (go > 0)
-    gfx_rrect(x0, y, W, h, 38, acc_a(0.75f * go));
-  {
-    float ph = (float)fmod(now - U.shownAt, 3.2) / 1.1f;
-    if (ph < 1)
-      gfx_glare(x0, y, W, h, 38, -0.2f + 1.4f * ph * ph * (3 - 2 * ph), WHITE_A(46));
-  } /* every few seconds a soft light crosses it: there is something to open */
-  gfx_ring(x0, y, W, h, 38, 1.5f, go > 0 ? col_alpha(ACC2, 0.4f + 0.6f * go) : WHITE_A(44));
-  float tx = rtl ? x0 + W - 92 : x0 + 92, kx = rtl ? x0 + 26 : x0 + W - 26 - KEY_W, ky = 50 - KEY_H / 2;
-  text_draw(lb, tx, 50 - text_line_height(23) / 2.0f, 23, 600, f ? WHITE_A(255) : WHITE_A(230), 0.1f, 0,
-            rtl ? ALIGN_RIGHT : ALIGN_LEFT);
+  gfx_rrect(x0, y, W, h, 30, f || go > 0 ? RGB(0xd9, 0xd9, 0xd9) : RGBA(30, 30, 36, 240));
+  uint32_t ink = f || go > 0 ? RGB(0x14, 0x14, 0x14) : WHITE_A(235);
+  float tx = rtl ? x0 + W - 92 : x0 + 92, kx = rtl ? x0 + 26 : x0 + W - 26 - KEY_W, ky = 56 - KEY_H / 2;
+  text_draw(lb, tx, 56 - text_line_height(23) / 2.0f, 23, 600, ink, 0.1f, 0, rtl ? ALIGN_RIGHT : ALIGN_LEFT);
   if (vw > 0)
-    text_draw(ver, rtl ? tx - tw - 12 : tx + tw + 12, 50 - text_line_height(21) / 2.0f, 21, 600,
-              f ? WHITE_A(220) : WHITE_A(170), 0.2f, 0, rtl ? ALIGN_RIGHT : ALIGN_LEFT);
+    text_draw(ver, rtl ? tx - tw - 12 : tx + tw + 12, 56 - text_line_height(21) / 2.0f, 21, 600, col_alpha(ink, 0.72f),
+              0.2f, 0, rtl ? ALIGN_RIGHT : ALIGN_LEFT);
   if (!plat_color_keys())
-    key_hint(kx + KEY_W / 2 - 18, 50, K_OK, NULL, WHITE_A(235),
+    key_hint(kx + KEY_W / 2 - 18, 56, K_OK, NULL, WHITE_A(235),
              0); /* no red key on this remote: OK, once the notice has the highlight */
   else {
-    float br =
-        0.5f +
-        0.5f * sinf((float)(now - U.shownAt) *
-                    2.4f); /* the red key, as on the remote: a soft rounded block, two small dots; it glows gently */
-    gfx_shadow(kx, ky + 2, KEY_W, KEY_H, 8, 8, BLACK_A(90));
-    gfx_rrect(kx, ky, KEY_W, KEY_H, 8, RGB(0xef, 0x3b, 0x3b));
-    gfx_rrect_v(kx, ky, KEY_W, KEY_H, 8, WHITE_A((int)(40 + 30 * br)), WHITE_A(0));
+    gfx_rrect(kx, ky, KEY_W, KEY_H, 8, RGB(0xef, 0x3b, 0x3b)); /* the red key, as on the remote: a block, two dots */
     gfx_circle(kx + KEY_W / 2 - 7, ky + KEY_H / 2, 2.6f, RGBA(90, 10, 10, 170));
     gfx_circle(kx + KEY_W / 2 + 7, ky + KEY_H / 2, 2.6f, RGBA(90, 10, 10, 170));
   }
@@ -720,7 +684,6 @@ void update_tick(float dt) {
   tween_tick(&U.pa, dt);
   tween_tick(&U.slide, dt);
   tween_tick(&U.dot, dt);
-  sglass_tick(&U.glass, dt);
   plat_luna_pump();
 #if SB_PLAT_INSTALLER
   if (U.state == UPD_INSTALLING) {

@@ -11,9 +11,12 @@ void tabs_warm_tick(void);
 void board_invalidate_all(void); /* another account: Discover too */
 void board_invalidate(void); /* the library changed: Home and Library rebuild when shown */
 void board_rebuild(void); /* the board on screen reloads its rows in place, focus kept */
+int board_disc_type(void); /* what Discover's board holds: 0 everything (phones), 1 the Shows tab, 2 the Movies tab */
+void board_disc_type_set(int t); /* (a change: it builds afresh the next time it is entered) */
 int board_spot_up(void);
 float board_open_wait(void); /* how much longer than its quickest the focused cinematic card waits to open */
 int board_on_billboard(void); /* the focus is on Home's cinematic billboard */
+int board_rows_docked(void); /* the rows have scrolled up under the top bar (its soft top fade shows) */
 int board_near_items(const Item **out, int max); /* the cards around the focus: same row, the rows above and below */
 const Item *board_next_item(void); /* the card right of the focus on Home / Discover, NULL when none */
 void board_col_tick(void); /* an export the phone sent: taken in, Home rebuilt */

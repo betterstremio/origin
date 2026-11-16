@@ -121,7 +121,7 @@ static float meta_draw_at(const MetaParts *p, float x, float y, int px, uint32_t
     }
     cx += bw + 10;
     float w =
-        draw ? text_draw(p->imdb, cx, y, px, 700, WHITE_A(255), 0, 0, ALIGN_LEFT) : text_width(p->imdb, px, 700, 0);
+        draw ? text_draw(p->imdb, cx, y, px, 600, WHITE_A(255), 0, 0, ALIGN_LEFT) : text_width(p->imdb, px, 600, 0);
     cx += w;
   }
   if (p->year[0]) {
@@ -563,7 +563,7 @@ void card_prep(CardPrep *cp, const Item *it, int wide, const char *artOverride) 
       sb_fmt_runtime((int)(it->left + 0.5f) < 1 ? 1 : (int)(it->left + 0.5f), r, sizeof r);
       snprintf(cp->left, sizeof cp->left, "%s", T1("{t} left", "t", r));
     }
-    cp->leftW = text_width(cp->left, 22, 700, 0.2f) + 26;
+    cp->leftW = text_width(cp->left, 22, 600, 0) + 26;
   }
 }
 static int card_body(const Item *it, const CardPrep *cp, float x, float y, float w, float h, int wide, int label,
@@ -637,7 +637,7 @@ static int card_body(const Item *it, const CardPrep *cp, float x, float y, float
     if (it->left > 0) {
       float tw = cp->leftW, th = 10 + text_line_height(22), bx = app_rtl() ? x + 12 : x + w - 12 - tw;
       gfx_rrect(bx, y + 12, tw, th, 11, RGBA(12, 11, 17, 199));
-      text_draw(cp->left, bx + 13, y + 12 + 5, 22, 700, WHITE_A(255), 0.2f, 0, ALIGN_LEFT);
+      text_draw(cp->left, bx + 13, y + 12 + 5, 22, 600, WHITE_A(255), 0, 0, ALIGN_LEFT);
     }
     if (it->progress > 0) {
       float bw = w - 28,

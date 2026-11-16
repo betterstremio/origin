@@ -395,22 +395,35 @@ int sb_home_defs(CatalogDef *out, int max) {
 }
 /* Discover: Cinemeta's trending and top rated, its genres (the ones its manifest offers), then the installed catalogs
    Home has no room for */
-int sb_disc_defs(CatalogDef *out, int max) {
-  const char *defs[3][4] = { { "Trending · Movies", "movie", CINEMETA "/catalog/movie/top", "d_m_top" },
+int sb_disc_defs(CatalogDef *out, int max, const char *type) {
+  /* type NULL: Discover as it was (phones); "series" / "movie": the Shows or Movies tab, only catalogs of that type */
+  const char *defs[4][4] = { { "Trending · Movies", "movie", CINEMETA "/catalog/movie/top", "d_m_top" },
                              { "Trending · Series", "series", CINEMETA "/catalog/series/top", "d_s_top" },
-                             { "Top Rated · Movies", "movie", CINEMETA "/catalog/movie/imdbRating", "d_m_ir" } };
+                             { "Top Rated · Movies", "movie", CINEMETA "/catalog/movie/imdbRating", "d_m_ir" },
+                             { "Top Rated · Series", "series", CINEMETA "/catalog/series/imdbRating", "d_s_ir" } };
   const char *genres[5] = { "Action", "Comedy", "Sci-Fi", "Drama", "Horror" };
-  int n = 0;
-  for (int i = 0; i < 3 && n < max; i++)
-    def_set(&out[n++], defs[i][0], defs[i][1], defs[i][2], NULL, 1, defs[i][3]);
+  const char *sgenres[5] = { "Drama", "Comedy", "Crime", "Sci-Fi", "Animation" };
+  int n = 0, ser = type && !strcmp(type, "series");
+  for (int i = 0; i < 4 && n < max; i++)
+    if (type ? !strcmp(type, defs[i][1]) : i < 3)
+      def_set(&out[n++], defs[i][0], defs[i][1], defs[i][2], NULL, 1, defs[i][3]);
   for (int i = 0; i < 5 && n < max; i++) {
     char ex[64] = "", key[16];
-    addon_extra_add(ex, sizeof ex, "genre", genres[i]);
-    snprintf(key, sizeof key, "d_g_%d", i);
-    def_set(&out[n++], genres[i], "movie", CINEMETA "/catalog/movie/top", ex, 1, key);
+    addon_extra_add(ex, sizeof ex, "genre", ser ? sgenres[i] : genres[i]);
+    snprintf(key, sizeof key, ser ? "d_sg_%d" : "d_g_%d", i);
+    def_set(&out[n++], ser ? sgenres[i] : genres[i], ser ? "series" : "movie",
+            ser ? CINEMETA "/catalog/series/top" : CINEMETA "/catalog/movie/top", ex, 1, key);
   }
-  if (n < max)
-    n += board_defs(out + n, max - n, HOME_ROWS);
+  if (n < max) {
+    int m = board_defs(out + n, max - n, HOME_ROWS), w = n;
+    for (int i = 0; i < m; i++)
+      if (!type || !strcmp(out[n + i].type, type)) {
+        if (w != n + i)
+          out[w] = out[n + i];
+        w++;
+      }
+    n = w;
+  }
   return n;
 }
 /* ---- a collection's sources (the order of Nuvio's fetchAddonSourceItems, GPL-3.0) ---- */

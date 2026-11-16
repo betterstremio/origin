@@ -157,6 +157,8 @@ typedef struct {
 } Board;
 enum { HP_IDLE, HP_GATHER, HP_LATER_WAIT, HP_LATER_OUT };
 static Board boards[3]; /* Home, Discover, a collection tile's page */
+/* what Discover's board holds: 0 everything (phones' Discover), 1 the Shows tab (series), 2 the Movies tab */
+static int discType;
 static const ColFolder *colFolder;
 static double colAt;
 static Board *cur(void) {
@@ -252,6 +254,10 @@ float board_open_wait(void) {
   Board *b = cur();
   return b && b->kind == 0 && b->cine && focusOn(b) ? cine_open_after() - CINE_OPEN_MIN : 0;
 } /* (the clip in the card waits as long as it does) */
+int board_rows_docked(void) {
+  Board *b = cur();
+  return b && focusOn(b) && (b->kind == 0 || b->rowIdx > 0);
+} /* the rows have scrolled up under the top bar */
 int board_on_billboard(void) {
   Board *b = cur();
   return b && !topNav.active && spotOn(b) && b->kind == 0 && b->cine && b->bill;
@@ -662,7 +668,11 @@ static void load_catalog_rows(Board *b, int disc, int keep) {
   if (disc)
     col_disc_rows(b, keep, oldCols);
   CatalogDef defs[12];
-  int nd = disc ? sb_disc_defs(defs, 12) : sb_home_defs(defs, 12);
+  int nd = disc ? sb_disc_defs(defs, 12,
+                               discType == 1   ? "series"
+                               : discType == 2 ? "movie"
+                                               : NULL)
+                : sb_home_defs(defs, 12);
   for (int d = 0; d < nd; d++) {
     Row *r = row_add(b, defs[d].title, 0, 0);
     if (!r)
@@ -699,8 +709,9 @@ static int feat_keep(const Item *it) {
 static void feat_done(Board *b) {
   if (!b->featGotM || !b->featGotS || b->nfeat)
     return; /* both lists in, once (a cached list answers again when refreshed) */
-  int mv[4], sr[64], nm = 0, ns = 0;
-  for (int i = 0; i < b->featM.n && nm < 4; i++)
+  /* Discover: new films and trending series in turn; the Shows / Movies tab: only its own kind, eight of them */
+  int lim = discType ? NFEAT : 4, mmax = discType == 1 ? 0 : lim, mv[NFEAT], sr[64], nm = 0, ns = 0;
+  for (int i = 0; i < b->featM.n && nm < mmax; i++)
     if (feat_keep(&b->featM.items[i]))
       mv[nm++] = i;
   for (int i = 0; i < b->featS.n && ns < 64; i++)
@@ -711,7 +722,9 @@ static void feat_done(Board *b) {
     srr[k++] = sr[i];
   for (int i = 0; i < 4 && i < ns; i++)
     srr[k++] = sr[i]; /* a little further down the trending list than the row below */
-  for (int i = 0; i < 4; i++) {
+  if (discType == 2)
+    k = 0;
+  for (int i = 0; i < lim; i++) {
     if (i < nm && b->nfeat < NFEAT)
       b->feat[b->nfeat++] = b->featM.items[mv[i]];
     if (i < k && b->nfeat < NFEAT)
@@ -1147,22 +1160,11 @@ static HeroLay *hero_lay(Board *b) {
   l->ver = b->viewVer;
   l->lg = i18n_gen();
   l->spot = b->heroSpot;
-  l->discName = text_wrap_count(v->name, 1500, 2, b->heroSpot ? 92 : 76, 800, -1.6f);
+  l->discName = text_wrap_count(v->name, 1500, 2, b->heroSpot ? 92 : 76, 700, -1.2f);
   l->discDesc = v->desc[0] ? text_wrap_count(v->desc, 1080, 2, DESC_PX, 400, 0) : 0;
-  l->homeName = text_wrap_count(v->name, HERO_W, 2, 76, 800, -1.6f);
+  l->homeName = text_wrap_count(v->name, HERO_W, 2, 76, 700, -1.2f);
   meta_prep(&l->mp, v->metaLine, NULL, v->metaName, META_PX);
   return l;
-}
-/* the spotlight's label, upper-cased once per language */
-static const char *trending_up(void) {
-  static char eye[64];
-  static unsigned lg;
-  if (lg != i18n_gen()) {
-    lg = i18n_gen();
-    snprintf(eye, sizeof eye, "%s", T("Trending now"));
-    text_upper(eye, sizeof eye);
-  }
-  return eye;
 }
 static void hero_draw_disc(Board *b, float a) {
   int spot = b->heroSpot;
@@ -1183,38 +1185,6 @@ static void hero_draw_disc(Board *b, float a) {
       spot ? 214
            : 1080 - 622 -
                  bodyH; /* the spotlight's label and dots stay put; otherwise the face stands just above the rows */
-  if (spot) { /* the spotlight's label, where it always was (nothing under it moves): a little bigger and brighter than
-       before, an accent dot before it; it comes in and goes with the title's logo */
-    static float tw;
-    static unsigned lg;
-    if (lg != i18n_gen() || tw <= 0) {
-      lg = i18n_gen();
-      tw = text_width(trending_up(), 25, 800, 5.0f);
-    }
-    float ty = y - 2, l22 = text_line_height(22), ly = ty + (l22 - text_line_height(25)) / 2;
-    int rtl = app_rtl();
-    static int shown;
-    static double inAt; /* it comes in once with the title's logo, then stays put while the titles change (only its
-                           dot's colour follows them, as the page dots do) */
-    float sa = b->spotA.v; /* (the spotlight itself showing: the hero's own fade between titles does not touch it) */
-    if (sa < 0.01f)
-      shown = 0;
-    else if (!shown && a * b->logoIn.v > 0.5f) {
-      shown = 1;
-      inAt = app_now();
-    }
-    float ke = shown ? ease_apply(EASE_OUT, clampf((float)((app_now() - inAt) / 0.45), 0, 1)) : 0, la = sa * ke;
-    if (la > 0.002f) {
-      gfx_opacity_push(la);
-      gfx_offset_push(0, 12 * (1 - ke));
-      text_draw(trending_up(), cx + 9, ly, 25, 800, WHITE_A(236), 5.0f, 0, ALIGN_CENTER);
-      gfx_circle(rtl ? cx + 9 + tw / 2 + 16 : cx + 9 - tw / 2 - 16, ly + text_line_height(25) / 2, 5,
-                 acc_light() | 0xff000000u);
-      gfx_offset_pop();
-      gfx_opacity_pop();
-    }
-    y += l22 + 18;
-  }
   gfx_opacity_push(a);
   if (drewLogo) {
     char sk[80];
@@ -1223,7 +1193,7 @@ static void hero_draw_disc(Board *b, float a) {
   } else if (!v->wait) {
     char sk[80];
     snprintf(sk, sizeof sk, "logo:%s", b->hero.id);
-    sx_text_wrapped(sk, v->name, cx, y, 1500, 2, (int)titlePx, 800, WHITE_A(255), -1.6f, ALIGN_CENTER, titlePx * 1.04f);
+    sx_text_wrapped(sk, v->name, cx, y, 1500, 2, (int)titlePx, 700, WHITE_A(255), -1.2f, ALIGN_CENTER, titlePx * 1.04f);
   } /* the name as text art moves across like a logo */
   y += headH + 20;
   meta_draw_p(&hl->mp, cx, y, WHITE_A(255), ALIGN_CENTER);
@@ -1301,10 +1271,10 @@ static void bill_btn(float x, float y, float w, int play, int on, float a) {
     gfx_ring(x + 30, y + h / 2 - 14, 28, 28, 14, 2.5f, ink);
     text_draw("i", x + 44, y + h / 2 - 15, 20, 800, ink, 0, 0, ALIGN_CENTER);
   }
-  text_draw(T(play ? "Play" : "More info"), x + 72, y + (h - text_line_height(27)) / 2, 27, 700, ink, 0, 0, ALIGN_LEFT);
+  text_draw(T(play ? "Play" : "More info"), x + 72, y + (h - text_line_height(28)) / 2, 28, 600, ink, 0, 0, ALIGN_LEFT);
 }
 static float bill_btn_w(int play) {
-  return 72 + text_width(T(play ? "Play" : "More info"), 27, 700, 0) + 34;
+  return 72 + text_width(T(play ? "Play" : "More info"), 28, 600, 0) + 34;
 }
 static int bill_hi(void) {
   static int v = -1;
@@ -1419,7 +1389,7 @@ static void bill_draw(Board *b) {
     if (logo_fit(v->logo, 560, 160, &lw, &lh, &lt))
       gfx_image(lt, rtl ? x - lw : x, my - 26 - lh, lw, lh, 0, WHITE_A((int)(255 * b->logoIn.v)), 0, 0, 1, 1);
     else if (!v->wait)
-      text_draw_wrapped(v->name, x, my - 26 - 2 * 80, 900, 2, 76, 800, WHITE_A(255), -1.6f, align, 80);
+      text_draw_wrapped(v->name, x, my - 26 - 2 * 80, 900, 2, 76, 700, WHITE_A(255), -1.2f, align, 80);
     meta_draw_p(&hl->mp, x, my, WHITE_A(235), align);
     gfx_opacity_pop();
   }
@@ -1509,7 +1479,7 @@ static void crop_logo(const Item *it, const CardPrep *cp, float x, float y, floa
     }
     gfx_image(lt, rtl ? x + w - 20 - lw : x + 20, y + h - 22 - lh, lw, lh, 0, WHITE_A((int)(255 * a)), 0, 0, 1, 1);
   } else if (!lu[0] || img_failed(lu))
-    text_draw(it->name, rtl ? x + w - 20 : x + 20, y + h - 22 - text_line_height(28), 28, 800, WHITE_A((int)(255 * a)),
+    text_draw(it->name, rtl ? x + w - 20 : x + 20, y + h - 22 - text_line_height(28), 28, 600, WHITE_A((int)(255 * a)),
               -0.2f, w - 40, rtl ? ALIGN_RIGHT : ALIGN_LEFT);
 }
 /* the open card's own logo and badges (cinematic Home) */
@@ -1529,12 +1499,12 @@ static void cine_card_art(const Item *it, float ox, float cy, float ow, float ch
     if (!on)
       continue;
     const char *t = T(k == 0 ? "We think you'll love this" : "Recently added");
-    float tw = text_width(t, 21, 700, 0), w = tw + 62;
+    float tw = text_width(t, 21, 600, 0), w = tw + 62;
     float px = rtl ? bx : bx - w;
     gfx_rrect(px, byy, w, 42, 10, RGBA(12, 11, 17, (int)(220 * ek)));
     gfx_rrect(px + 12, byy + 10, 22, 22, 5,
               k == 0 ? RGBA(0xe8, 0xb0, 0x4a, (int)(255 * ek)) : RGBA(0xe5, 0x48, 0x4d, (int)(255 * ek)));
-    text_draw(t, px + 44, byy + (42 - text_line_height(21)) / 2, 21, 700, WHITE_A((int)(255 * ek)), 0, 0, ALIGN_LEFT);
+    text_draw(t, px + 44, byy + (42 - text_line_height(21)) / 2, 21, 600, WHITE_A((int)(255 * ek)), 0, 0, ALIGN_LEFT);
     byy -= 50;
   }
 }
@@ -1618,7 +1588,7 @@ static void hero_draw(Board *b) {
   } /* a little smaller: the rows get room */
   else {
     int lines = v->wait ? hl->homeName
-                        : sx_text_wrapped(hero_key(b), v->name, x, y, HERO_W, 2, 76, 800, WHITE_A(255), -1.6f, align,
+                        : sx_text_wrapped(hero_key(b), v->name, x, y, HERO_W, 2, 76, 700, WHITE_A(255), -1.2f, align,
                                           76 * 1.04f);
     y += lines * 76 * 1.04f;
   } /* text art on its way: the name waits unseen */
@@ -1680,6 +1650,25 @@ static void enter_home(const void *p) {
   (void)p;
   board_leave();
   board_enter_k(&boards[0]);
+}
+int board_disc_type(void) {
+  return discType;
+}
+void board_disc_type_set(int t) {
+  if (t == discType)
+    return;
+  discType = t;
+  Board *b = &boards[1]; /* the other kind's rows and spotlight go; the board builds afresh when it is entered */
+  for (int i = 0; i < b->n; i++)
+    row_clear(&b->rows[i]);
+  b->n = 0;
+  b->gen++;
+  b->rowIdx = 0;
+  b->built = 0;
+  b->nfeat = 0;
+  b->featLoad = 0;
+  b->featIdx = 0;
+  b->heroSet = 0;
 }
 static void enter_disc(const void *p) {
   (void)p;
@@ -2263,15 +2252,16 @@ static void row_prefetch(Row *r, int slot, int from, int to) {
   }
   r->pfWait[slot] = (unsigned char)wait;
 }
-/* the row being scrolled under the open box: the next cards' box picture, sharp crop and logo before anything else, asked
-   every frame so a scroll never drops them (the rest of the row keeps the quick crops). 2 on a stick, 4 elsewhere */
+/* the row being scrolled under the open box: the next cards' box picture, sharp crop and logo before anything else,
+   asked every frame so a scroll never drops them (the rest of the row keeps the quick crops). 2 on a stick, 4 elsewhere
+ */
 static void row_ahead(Row *r, int cw, int ch) {
   static int n;
   if (!n) {
     int mb = plat_mem_total_mb();
     n = mb > 0 && mb <= 1200 ? 2 : 4; /* (0: not known, a computer) */
   }
-  static const int far[] = {-1, 4, 3, 2, 1, 0}; /* the last asked is taken first: the nearest last */
+  static const int far[] = { -1, 4, 3, 2, 1, 0 }; /* the last asked is taken first: the nearest last */
   for (int k = 0; k < (int)(sizeof far / sizeof *far); k++) {
     int d = far[k], i = r->col + d;
     if (d > n || i < 0 || i >= r->items.n)
@@ -2565,7 +2555,7 @@ static void row_draw(Board *b, Row *r, int ri, float y, int near, float rowA) {
   gfx_offset_push(nudge_x(&r->nudge), nudge_y(&r->nudge) + rx);
   if (ta < 1)
     gfx_opacity_push(ta);
-  text_draw(T(r->title), rtl ? SB_W - 52 : 52, y + 18, 31, 700, RGB(0xe9, 0xe9, 0xee), -0.3f, SB_W - 104,
+  text_draw(T(r->title), rtl ? SB_W - 52 : 52, y + 18, 31, 600, RGB(0xe9, 0xe9, 0xee), 0, SB_W - 104,
             rtl ? ALIGN_RIGHT : ALIGN_LEFT);
   if (ta < 1)
     gfx_opacity_pop();
@@ -2746,7 +2736,7 @@ static void row_draw(Board *b, Row *r, int ri, float y, int near, float rowA) {
           ph_surface(x, cy, cw, ch, CARD_R);
         if (!f->hideTitle || !f->cover[0] ||
             (!pic && f->cover[0] && img_shaped_failed(f->cover, (int)cw, (int)ch, CARD_R, fit)))
-          text_draw(f->title, x + cw / 2, cy + (ch - lh) / 2, 31, 700, WHITE_A(on ? 255 : 217), 0, cw - 32,
+          text_draw(f->title, x + cw / 2, cy + (ch - lh) / 2, 31, 600, WHITE_A(on ? 255 : 217), 0, cw - 32,
                     ALIGN_CENTER);
         lift_end(lk, x, cy, cw, ch, CARD_R);
       }
@@ -2766,7 +2756,7 @@ static void row_draw(Board *b, Row *r, int ri, float y, int near, float rowA) {
         gfx_opacity_push(ca);
       lift_begin(lk, on, 0, x, cy, cw, ch, CARD_R);
       gfx_rrect(x, cy, cw, ch, CARD_R, WHITE_A(on ? 40 : 18));
-      text_draw(T("See All"), x + cw / 2, cy + (ch - lh) / 2, 31, 700, WHITE_A(on ? 255 : 191), 0, cw - 32,
+      text_draw(T("See All"), x + cw / 2, cy + (ch - lh) / 2, 31, 600, WHITE_A(on ? 255 : 191), 0, cw - 32,
                 ALIGN_CENTER);
       lift_end(lk, x, cy, cw, ch, CARD_R);
       if (ca < 1)
@@ -2794,7 +2784,7 @@ static void board_draw(void) {
       if (tf->logo[0] && logo_fit(tf->logo, 480, 150, &lw, &lh, &lt))
         gfx_image(lt, rtl ? x - lw : x, HERO_Y, lw, lh, 0, WHITE_A(255), 0, 0, 1, 1);
       else if (!tf->logo[0] || img_failed(tf->logo))
-        text_draw(tf->title, x, HERO_Y, 76, 800, WHITE_A(255), -1.6f, HERO_W, rtl ? ALIGN_RIGHT : ALIGN_LEFT);
+        text_draw(tf->title, x, HERO_Y, 76, 700, WHITE_A(255), -1.2f, HERO_W, rtl ? ALIGN_RIGHT : ALIGN_LEFT);
       else
         img_get(tf->logo, 520, 175, NULL);
     }
