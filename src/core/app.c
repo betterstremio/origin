@@ -983,7 +983,7 @@ void app_profile_pic(float x, float y, float D, float r) {
   initial_draw(sb_user_email(), x + D / 2, y + D / 2, D);
 }
 static void caret_draw(float x, float cy, uint32_t c) {
-  float px[4] = { x, x + 10, x + 5, x + 5 }, py[4] = { cy - 3, cy - 3, cy + 3, cy + 3 };
+  float px[4] = { x, x + 12, x + 6, x + 6 }, py[4] = { cy - 3.5f, cy - 3.5f, cy + 3.5f, cy + 3.5f };
   uint32_t cc[4] = { c, c, c, c };
   gfx_quad_pts(px, py, cc);
 } /* a small down caret beside the picture */
@@ -1057,7 +1057,7 @@ void topnav_draw(void) {
       gfx_ring(px - 4, py - 4, PIC_D + 8, PIC_D + 8, 12, 2, WHITE_A(204));
     if (nk < 0.999f && pk < 0.999f) {
       gfx_opacity_push((1 - nk) * (1 - pk));
-      caret_draw(rtl ? px - 22 - 10 : px + PIC_D + 22, BAR_Y, WHITE_A(170));
+      caret_draw(rtl ? px - 20 - 12 : px + PIC_D + 20, BAR_Y, WHITE_A(217));
       if (update_avail()) {
         float dx = rtl ? px + 2 : px + PIC_D - 2, dy = py + 2;
         gfx_circle(dx, dy, 7, PAGE);

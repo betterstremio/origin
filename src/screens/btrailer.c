@@ -43,8 +43,15 @@ static int card_place(void) {
   int vw = video_width(), vh = video_height();
   if (!vw || !vh || CD.w <= 0 || app_now() - CD.at > 0.25)
     return 0;
-  float k = CD.w / vw > CD.h / vh ? CD.w / vw : CD.h / vh;
-  int sw = (int)(CD.w / k), sh = (int)(CD.h / k), sx = (vw - sw) / 2, sy = (vh - sh) / 2;
+  float k = CD.w / vw > CD.h / vh ? CD.w / vw : CD.h / vh, ba = CD.w / CD.h;
+  int sw = (int)(CD.w / k), sh = (int)(CD.h / k);
+  if (ba >= 2.0f && (float)vw / vh < 2.0f && vw / 2.39f < sh) {
+    sh = (int)(vw / 2.39f);
+    sw = (int)(sh * ba);
+    if (sw > vw)
+      sw = vw;
+  } /* the billboard: the scope band of a letterboxed trailer fills it */
+  int sx = (vw - sw) / 2, sy = (vh - sh) / 2;
   int crop = video_set_crop(sx, sy, sw, sh, CD.x, CD.y, CD.w, CD.h);
   if (!crop)
     video_set_window(CD.x, CD.y, CD.w, CD.h);

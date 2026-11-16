@@ -981,7 +981,9 @@ static void hero_apply(Board *b) {
     tween_to(&b->heroA, 0, 0.12f, EASE_CSS_EASEIN);
     b->heroSet = 0;
     const ColFolder *tf = tile_cur(b);
-    if (tf && (tf->hero[0] || tf->cover[0]))
+    if (b->cine)
+      bg_set(NULL, 0, NULL); /* the cinematic layout has no page backdrop, for a tile either */
+    else if (tf && (tf->hero[0] || tf->cover[0]))
       bg_set(tf->hero[0] ? tf->hero : tf->cover, b->fastBg ? 0 : 400, tf->cover);
     b->fastBg = 0;
     return;

@@ -26,8 +26,8 @@
 #define CARD_Y 4.0f
 #define CARD_R 24.0f
 #define PAD 12.0f /* the card to its rows */
-#define TOP_H 88.0f /* the first row (two lines); the picture centred on the bar's line, as in the bar */
-#define ROW_H 68.0f /* the others */
+#define TOP_H 96.0f /* the first row (two lines); the picture centred on the bar's line, as in the bar */
+#define ROW_H 72.0f /* the others */
 #define PIC_X 68.0f /* the bar's picture: the column of pictures and icons */
 #define PIC_D 48.0f
 #define TXT_X 140.0f
@@ -215,21 +215,21 @@ static void draw(void) {
   /* its size: the rows' words decide the width (never narrower than 380), their number the height */
   float tw = 0, upd = update_avail() ? 18 + text_width(T("Update available"), 20, 500, 0) : 0;
   for (int i = 0; i < 3; i++) {
-    float w = text_width(lb[i], 26, 500, 0) + (i == R_SET ? upd : 0);
+    float w = text_width(lb[i], 28, 500, 0) + (i == R_SET ? upd : 0);
     tw = w > tw ? w : tw;
   }
   for (int i = 0; i < np; i++) {
     NvProfile p;
     if (nv_profile_get(at[i], &p)) {
-      float w = text_width(p.name, 26, i ? 500 : 600, 0);
+      float w = text_width(p.name, 28, i ? 500 : 600, 0);
       tw = w > tw ? w : tw;
     }
   }
   if (np) {
-    float w = text_width(T("Switch profiles"), 22, 400, 0);
+    float w = text_width(T("Switch profiles"), 24, 400, 0);
     tw = w > tw ? w : tw;
   } else {
-    float w = text_width(sb_user_email(), 22, 400, 0);
+    float w = text_width(sb_user_email(), 24, 400, 0);
     tw = w > tw ? (w > 520 ? 520 : w) : tw;
   }
   float W = TXT_X - CARD_X + tw + 48, H = 2 * PAD + TOP_H + (np ? np - 1 : 0) * ROW_H + 3 * ROW_H;
@@ -278,14 +278,14 @@ static void draw(void) {
   if (!nuv) {
     app_profile_pic(mx(PIC_X, PIC_D), 56 - PIC_D / 2, PIC_D, 8);
     gfx_opacity_push(ca);
-    text_draw(T("Account"), mx(TXT_X, 0), 56 - text_line_height(26) + 2, 26, 600, WHITE_A(235), 0, 0, al);
-    text_draw(sb_user_email(), mx(TXT_X, 0), 58, 22, 400, WHITE_A(160), 0, 520, al);
+    text_draw(T("Account"), mx(TXT_X, 0), 56 - text_line_height(28) + 2, 28, 600, WHITE_A(235), 0, 0, al);
+    text_draw(sb_user_email(), mx(TXT_X, 0), 58, 24, 400, WHITE_A(170), 0, 520, al);
     gfx_opacity_pop();
   }
   for (int i = 0; i < n; i++) {
     int on = i == f;
     float cy = rows[i] + hts[i] / 2;
-    uint32_t ink = on ? INK_ON : WHITE_A(235), sub = on ? col_alpha(INK_ON, 0.7f) : WHITE_A(160);
+    uint32_t ink = on ? INK_ON : WHITE_A(235), sub = on ? col_alpha(INK_ON, 0.72f) : WHITE_A(170);
     if (i < np) {
       NvProfile p;
       if (!nv_profile_get(at[i], &p))
@@ -296,18 +296,18 @@ static void draw(void) {
       if (!i)
         gfx_opacity_push(ca);
       if (!i) {
-        text_draw(p.name, mx(TXT_X, 0), cy - text_line_height(26) + 2, 26, 600, ink, 0, 0, al);
-        text_draw(T("Switch profiles"), mx(TXT_X, 0), cy + 2, 22, 400, sub, 0, 0, al);
+        text_draw(p.name, mx(TXT_X, 0), cy - text_line_height(28) + 2, 28, 600, ink, 0, 0, al);
+        text_draw(T("Switch profiles"), mx(TXT_X, 0), cy + 2, 24, 400, sub, 0, 0, al);
       } else
-        text_draw(p.name, mx(TXT_X, 0), cy - text_line_height(26) / 2.0f, 26, 500, ink, 0, 0, al);
+        text_draw(p.name, mx(TXT_X, 0), cy - text_line_height(28) / 2.0f, 28, 500, ink, 0, 0, al);
       gfx_opacity_pop();
     } else {
       int r = i - np;
       gfx_opacity_push(ca);
       icon_draw(ic[r], mx(PIC_X + 8, 32), cy - 16, 32, ink);
-      text_draw(lb[r], mx(TXT_X, 0), cy - text_line_height(26) / 2.0f, 26, 500, ink, 0, 0, al);
+      text_draw(lb[r], mx(TXT_X, 0), cy - text_line_height(28) / 2.0f, 28, 500, ink, 0, 0, al);
       if (r == R_SET && upd > 0) { /* an update waiting: said here; the bar's dot pointed to it */
-        float lw = text_width(lb[r], 26, 500, 0), dx = rtl ? SB_W - TXT_X - lw - 14 : TXT_X + lw + 14;
+        float lw = text_width(lb[r], 28, 500, 0), dx = rtl ? SB_W - TXT_X - lw - 14 : TXT_X + lw + 14;
         gfx_circle(dx, cy, 5, on ? INK_ON : ACC);
         text_draw(T("Update available"), rtl ? dx - 12 : dx + 12, cy - text_line_height(20) / 2.0f, 20, 500, sub, 0, 0,
                   al);
