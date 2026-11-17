@@ -217,6 +217,7 @@ typedef struct Img {
 static unsigned phEv[5], phUps, phUpFrames, phUpHist[130];
 static long frUp, phPeak;
 static Img *upCur;
+static long upBudget = 320L * 1024; /* per frame upload bytes (img_init: more on a device over 2 GB) */
 static unsigned stEvict, stReturn, stRetFade; /* development: pictures evicted, shown again, and of those faded in */
 static int ctxRow = -1, focusRow = -1; /* the row being drawn; the focused row (set by the board each frame) */
 static unsigned focusAt, hgen = 1;
@@ -671,6 +672,8 @@ int img_init(const char *dir) {
   long nc = sysconf(_SC_NPROCESSORS_ONLN);
   if (nc >= 4 && (mb <= 0 || mb >= 1500))
     decMax = nc > 5 ? 4 : (int)nc - 1;
+  if (mb > 2000)
+    upBudget = 1024L * 1024;
   int n = mb > 0 && mb < 1200 ? 6 : WORKERS_MAX;
   fprintf(stderr, "[img] %d workers, %d decoding at once\n", n, decMax);
   for (int i = 0; i < n; i++) {
@@ -710,7 +713,7 @@ void img_frame(void) {
   frameNo++;
   if (frUp) {
     long kb = frUp / 1024;
-    phUpHist[kb > 128 ? 129 : (kb + 15) / 16 > 128 ? 128 : (kb + 15) / 16]++;
+    phUpHist[kb / 16 > 128 ? 128 : kb / 16]++;
     phUpFrames++;
     frUp = 0;
   }
@@ -1056,7 +1059,7 @@ int img_loaded(const char *url) {
 /* uploads take about 3/4 MB a frame: the TV's driver rearranges every texel on the CPU as it uploads (a 1280x720
    backdrop in one go was a 25-30 ms frame), so a large picture goes up in bands of rows over a few frames and is
    only shown once complete */
-#define UP_BUDGET (320L * 1024) /* this TV converts ~100 KB a millisecond for its GPU: ~3 ms a frame */
+#define UP_BUDGET upBudget /* this TV converts ~100 KB a millisecond for its GPU: ~3 ms a frame (more on a device over 2 GB: see img_init) */
 #define UP_URGENT (768L * 1024) /* a backdrop: in a few frames, as before (its fade waits for the whole picture) */
 static int upLog = -1; /* SB_UPLOG: each upload's size and time (development) */
 static void up_log(const char *what, long bytes, Uint64 t0) {
@@ -1085,7 +1088,6 @@ static void up_done(Img *im) {
   im->bytes = im->pw * im->ph * im->pch;
   usedBytes += im->bytes;
   phUps++;
-  frUp += im->bytes;
   if (usedBytes > phPeak)
     phPeak = usedBytes;
   free(im->px);
@@ -1101,6 +1103,7 @@ static long up_band(Img *im, long budget) { /* rows up to the budget, in whole 1
   Uint64 u0 = SDL_GetPerformanceCounter();
   gfx_tex_update(im->upTex, im->px + (size_t)im->upRow * row, 0, im->upRow, im->pw, rows, im->pch);
   up_log("band", (long)rows * row, u0);
+  frUp += (long)rows * row;
   im->upRow += rows;
   if (im->upRow >= im->ph) {
     up_done(im);
@@ -1110,6 +1113,7 @@ static long up_band(Img *im, long budget) { /* rows up to the budget, in whole 1
 }
 void img_pump(void) {
   long sent = 0;
+  Uint64 t0 = SDL_GetPerformanceCounter();
   if (upCur) {
     if (!upCur->wantTex) {
       if (upCur->shown) {
@@ -1123,12 +1127,11 @@ void img_pump(void) {
       upCur->state = 0;
       upCur = NULL;
     } else {
-      sent += up_band(upCur, upCur->urgent ? UP_URGENT : UP_BUDGET);
-      if (upCur)
-        return;
+      sent += up_band(upCur, upCur->urgent ? UP_URGENT : UP_BUDGET / 2);
+      if (upCur && (upCur->urgent || sent >= UP_BUDGET))
+        return; /* (a banded box leaves room for the small ones: logos, crops) */
     }
   }
-  Uint64 t0 = SDL_GetPerformanceCounter();
   double hz = (double)SDL_GetPerformanceFrequency();
   for (int n = 0; n < 6 && sent < UP_BUDGET; n++) {
     if (sent && (double)(SDL_GetPerformanceCounter() - t0) * 1000.0 / hz > 3.0)
@@ -1156,6 +1159,7 @@ void img_pump(void) {
       Uint64 u0 = SDL_GetPerformanceCounter();
       im->upTex = gfx_tex_create(im->px, im->pw, im->ph, im->pch, 1);
       up_log("whole", bytes, u0);
+      frUp += bytes;
       up_done(im);
       continue;
     }
@@ -1233,6 +1237,8 @@ void img_release_unused(int keepMb) {
       for (Img *i = table[b]; i; i = i->next) {
         if (!i->tex || i->pin || (!keepMb && i->hpin == hgen) || frameNo - i->lastUse < minAge)
           continue;
+        if (!keepMb && useFocus && i->row >= 0 && abs(i->row - focusRow) <= 3)
+          continue; /* the rows the focus reaches in under a second stay (the guard still takes what it must) */
         unsigned d = 0;
         if (useFocus)
           d = i->row < 0 ? 2u : i->row <= 1 ? 0u : (unsigned)abs(i->row - focusRow);
