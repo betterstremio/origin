@@ -160,6 +160,14 @@ static int build(const char *p) {
     ph("RT-deep-up", X_START);
     add(S_TAPS, K_UP, 40, 250, 0);
     add(S_END, 0, 0, 0, 1500);
+  } else if (!strcmp(p, "RT-deep-slow")) { /* a reader's pace down (700 ms a row, so the cards fill in), then fast back up */
+    nPh = 40;
+    ph("RT-deep-slow-down", X_DOWN);
+    add(S_TAPS, K_DOWN, 40, 700, 0);
+    add(S_END, 0, 0, 0, 1000);
+    ph("RT-deep-slow-up", X_START);
+    add(S_TAPS, K_UP, 40, 250, 0);
+    add(S_END, 0, 0, 0, 1500);
   } else if (!strcmp(p, "RT-deep-hold")) { /* the same with the arrow held (500 ms, then 50 ms repeats) */
     ph("RT-deep-hold-down", X_LAST);
     add(S_HOLD, K_DOWN, 0, 0, HC_LASTROW);
