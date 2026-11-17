@@ -399,7 +399,7 @@ int sb_home_defs(CatalogDef *out, int max) {
 }
 /* Discover: Cinemeta's trending and top rated, its genres (the ones its manifest offers), then the installed catalogs
    Home has no room for */
-int sb_disc_defs(CatalogDef *out, int max, const char *type) {
+int sb_disc_defs(CatalogDef *out, int max, const char *type, int own) {
   /* type NULL: Discover as it was (phones); "series" / "movie": the Shows or Movies tab, only catalogs of that type */
   const char *defs[4][4] = { { "Trending · Movies", "movie", CINEMETA "/catalog/movie/top", "d_m_top" },
                              { "Trending · Series", "series", CINEMETA "/catalog/series/top", "d_s_top" },
@@ -418,7 +418,8 @@ int sb_disc_defs(CatalogDef *out, int max, const char *type) {
     def_set(&out[n++], ser ? sgenres[i] : genres[i], ser ? "series" : "movie",
             ser ? CINEMETA "/catalog/series/top" : CINEMETA "/catalog/movie/top", ex, 1, key);
   }
-  if (n < max) {
+  if (n < max &&
+      !own) { /* own: the Shows / Movies tabs keep to their own rows; the addons' catalogues are on the Catalogue */
     int m = board_defs(out + n, max - n, HOME_ROWS), w = n;
     for (int i = 0; i < m; i++)
       if (!type || !strcmp(out[n + i].type, type)) {
@@ -429,6 +430,10 @@ int sb_disc_defs(CatalogDef *out, int max, const char *type) {
     n = w;
   }
   return n;
+}
+/* the Catalogue tab: every installed catalogue of every addon, in addon order (Home's first rows too) */
+int sb_all_defs(CatalogDef *out, int max) {
+  return board_defs(out, max, 0);
 }
 /* ---- a collection's sources (the order of Nuvio's fetchAddonSourceItems, GPL-3.0) ---- */
 static const cJSON *cat_find(const cJSON *ad, const char *id, const char *type, int comma) {

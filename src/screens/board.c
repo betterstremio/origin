@@ -17,6 +17,7 @@
 #include <string.h>
 #include <time.h>
 #include "core/hit.h"
+#include "core/form.h"
 #include "screens/player.h"
 #include "screens/lib.h"
 #include "screens/catgrid.h"
@@ -105,6 +106,7 @@ typedef struct {
 } HeroLay;
 typedef struct {
   int kind; /* 0 home, 1 disc */
+  int dtype; /* what a Discover-kind board holds: 0 everything (phones), 1 Shows, 2 Movies, 3 Catalogue */
   Row rows[MAXROWS];
   int n, rowIdx, built, winRow;
   unsigned gen, libVer;
@@ -158,13 +160,15 @@ typedef struct {
   double billSwitch;
 } Board;
 enum { HP_IDLE, HP_GATHER, HP_LATER_WAIT, HP_LATER_OUT };
-static Board boards[3]; /* Home, Discover, a collection tile's page */
-/* what Discover's board holds: 0 everything (phones' Discover), 1 the Shows tab (series), 2 the Movies tab */
-static int discType;
+#define NBOARDS 5
+#define B_CATALOGUE 4
+static Board boards[NBOARDS]; /* Home, Shows (the phones' Discover), a collection tile's page, Movies, Catalogue */
+/* the board SCR_DISC shows: Shows 1, Movies 3, Catalogue 4 (each tab keeps its own rows: switching never rebuilds) */
+static int discBoard = 1;
 static const ColFolder *colFolder;
 static double colAt;
 static Board *cur(void) {
-  return SCR == SCR_HOME ? &boards[0] : SCR == SCR_DISC ? &boards[1] : SCR == SCR_COL ? &boards[2] : NULL;
+  return SCR == SCR_HOME ? &boards[0] : SCR == SCR_DISC ? &boards[discBoard] : SCR == SCR_COL ? &boards[2] : NULL;
 }
 /* laid out as Home (the billboard, the cinematic rows): Home, and the Shows / Movies tabs in the cinematic layout; the
    other Discover board (phones, the classic layout) keeps its own spotlight */
@@ -172,7 +176,7 @@ static int lay0(const Board *b) {
   return b->kind == 0 || (b->kind == 1 && b->cine);
 }
 static int spot1(const Board *b) {
-  return b->kind == 1 && !b->cine;
+  return b->kind == 1 && !b->cine && b->dtype != 3; /* (the Catalogue has no spotlight, in either layout) */
 }
 static int spotk(const Board *b) {
   return spot1(b) || (b->bill && b->cine);
@@ -413,7 +417,7 @@ static int colPend, colSearched;
 static void on_catalog(ItemList *l, int cached, void *ud) {
   (void)cached;
   uintptr_t t = (uintptr_t)ud;
-  Board *b = &boards[(t >> 28) & 3];
+  Board *b = &boards[(t >> 28) & 7];
   int row = t & 63;
   unsigned gen = (t >> 6) & 0x3fffff;
   if ((b->gen & 0x3fffff) != gen || row >= b->n) {
@@ -635,11 +639,14 @@ static void bill_fill(Board *b, int first) {
   if ((first || !was) && b->cine)
     b->featOn = 1; /* Home opens on its billboard */
 }
+static double catAt; /* when the Catalogue last built: an empty page says so a moment after */
+#define CATDEFS 60 /* the Catalogue: every installed catalogue of every addon, as many as fit the board's rows */
 static void load_catalog_rows(Board *b, int disc, int keep) {
   if (b->kind == 2) {
     col_rows(b, colFolder);
     return;
   }
+  double t0 = app_now();
   int oldRow = b->rowIdx, oldCols[MAXROWS] = { 0 }; /* (rows new since: at their start) */
   for (int i = 0; i < b->n; i++)
     oldCols[i] = b->rows[i].col;
@@ -700,15 +707,18 @@ static void load_catalog_rows(Board *b, int disc, int keep) {
     pinned_rows(b);
   }
   if (disc) {
-    b->cine = discType && strcmp(store_get("homeLayout", "cinematic"), "classic");
-    col_disc_rows(b, keep, oldCols);
+    b->cine = b->dtype && strcmp(store_get("homeLayout", "cinematic"), "classic");
+    if (b->dtype == 0 || b->dtype == 3)
+      col_disc_rows(b, keep, oldCols); /* (the collections live on the Catalogue now; phones' Discover keeps them) */
   }
-  CatalogDef defs[12];
-  int nd = disc ? sb_disc_defs(defs, 12,
-                               discType == 1   ? "series"
-                               : discType == 2 ? "movie"
-                                               : NULL)
-                : sb_home_defs(defs, 12);
+  static CatalogDef defs[CATDEFS]; /* (the main thread only; too big for a stack) */
+  int nd = !disc           ? sb_home_defs(defs, 12)
+           : b->dtype == 3 ? sb_all_defs(defs, CATDEFS)
+                           : sb_disc_defs(defs, 12,
+                                          b->dtype == 1   ? "series"
+                                          : b->dtype == 2 ? "movie"
+                                                          : NULL,
+                                          b->dtype != 0);
   for (int d = 0; d < nd; d++) {
     Row *r = row_add(b, defs[d].title, 0, 0);
     if (!r)
@@ -734,6 +744,15 @@ static void load_catalog_rows(Board *b, int disc, int keep) {
     }
   } else
     b->rowIdx = 0;
+  if (disc && b->dtype) {
+    if (b->dtype == 3)
+      catAt = app_now();
+    fprintf(stderr, "[tabs] %s: %d rows in %.0f ms\n",
+            b->dtype == 1   ? "Shows"
+            : b->dtype == 2 ? "Movies"
+                            : "Catalogue",
+            b->n, (app_now() - t0) * 1000);
+  }
 }
 /* ---- the spotlight's own picks: this year's new films and the trending series, alternating (not the first row again)
  * ---- */
@@ -746,7 +765,7 @@ static void feat_done(Board *b) {
   if (!b->featGotM || !b->featGotS || b->nfeat)
     return; /* both lists in, once (a cached list answers again when refreshed) */
   /* Discover: new films and trending series in turn; the Shows / Movies tab: only its own kind, eight of them */
-  int lim = discType ? NFEAT : 4, mmax = discType == 1 ? 0 : lim, mv[NFEAT], sr[64], nm = 0, ns = 0;
+  int lim = b->dtype ? NFEAT : 4, mmax = b->dtype == 1 ? 0 : lim, mv[NFEAT], sr[64], nm = 0, ns = 0;
   for (int i = 0; i < b->featM.n && nm < mmax; i++)
     if (feat_keep(&b->featM.items[i]))
       mv[nm++] = i;
@@ -758,7 +777,7 @@ static void feat_done(Board *b) {
     srr[k++] = sr[i];
   for (int i = 0; i < 4 && i < ns; i++)
     srr[k++] = sr[i]; /* a little further down the trending list than the row below */
-  if (discType == 2)
+  if (b->dtype == 2)
     k = 0;
   for (int i = 0; i < lim; i++) {
     if (i < nm && b->nfeat < NFEAT)
@@ -788,8 +807,8 @@ static void feat_done(Board *b) {
 }
 static void on_feat(ItemList *l, int cached, void *ud) {
   (void)cached;
-  Board *b = &boards[1];
-  int series = (int)(uintptr_t)ud;
+  Board *b = &boards[(uintptr_t)ud >> 1];
+  int series = (int)((uintptr_t)ud & 1);
   if (b->nfeat || (series ? b->featGotS : b->featGotM)) {
     itemlist_free(l);
     return;
@@ -805,7 +824,7 @@ static void on_feat(ItemList *l, int cached, void *ud) {
   feat_done(b);
 }
 static void feat_fill(Board *b) {
-  if (b->kind != 1 || b->nfeat || b->featLoad)
+  if (b->kind != 1 || b->dtype == 3 || b->nfeat || b->featLoad)
     return;
   b->featLoad = 1;
   b->featGotM = b->featGotS = 0;
@@ -814,8 +833,9 @@ static void feat_fill(Board *b) {
   localtime_r(&t, &tm);
   char u[200];
   snprintf(u, sizeof u, CINEMETA "/catalog/movie/year/genre=%d.json", tm.tm_year + 1900);
-  sb_catalog_url(u, "movie", 20, on_feat, (void *)0);
-  sb_catalog_url(CINEMETA "/catalog/series/top.json", "series", 20, on_feat, (void *)1);
+  sb_catalog_url(u, "movie", 20, on_feat, (void *)(uintptr_t)((b - boards) << 1));
+  sb_catalog_url(CINEMETA "/catalog/series/top.json", "series", 20, on_feat,
+                 (void *)(uintptr_t)(((b - boards) << 1) | 1));
 }
 static void feat_arm(Board *b) {
   if (spotk(b))
@@ -855,7 +875,7 @@ static Item *item_at(Board *b, int row, int col) {
 }
 static void on_meta(cJSON *m, void *ud) {
   uintptr_t t = (uintptr_t)ud;
-  Board *b = &boards[(t >> 28) & 3];
+  Board *b = &boards[(t >> 28) & 7];
   int row = (t >> 0) & 255, col = (t >> 8) & 0xfff;
   unsigned gen = (t >> 20) & 0xff;
   if (!m || (row != 15 && (b->gen & 0xff) != gen))
@@ -1491,9 +1511,12 @@ static void crop_logo(const Item *it, const CardPrep *cp, float x, float y, floa
     return;
   char lu[512];
   logo_src(it, lu, sizeof lu);
-  if (!(img_shaped_loaded(cp->art, (int)w, (int)h, CARD_R, 3) || img_shaped_loaded(cp->pre, (int)w, (int)h, CARD_R, 3))) {
-    if (lu[0] && img_seen_shaped(cp->art, (int)w, (int)h, CARD_R, 3) && img_seen_shaped(lu, CROP_LOGO_W, CROP_LOGO_H, 0, -1))
-      img_ahead_shaped(lu, CROP_LOGO_W, CROP_LOGO_H, 0, -1); /* a return: the logo is asked with its picture, not after it */
+  if (!(img_shaped_loaded(cp->art, (int)w, (int)h, CARD_R, 3) ||
+        img_shaped_loaded(cp->pre, (int)w, (int)h, CARD_R, 3))) {
+    if (lu[0] && img_seen_shaped(cp->art, (int)w, (int)h, CARD_R, 3) &&
+        img_seen_shaped(lu, CROP_LOGO_W, CROP_LOGO_H, 0, -1))
+      img_ahead_shaped(lu, CROP_LOGO_W, CROP_LOGO_H, 0,
+                       -1); /* a return: the logo is asked with its picture, not after it */
     return;
   }
   int rtl = app_rtl();
@@ -1677,7 +1700,7 @@ static void board_enter_k(Board *b) {
   hero_soon(b, 70);
 }
 static void board_leave(void) {
-  for (int i = 0; i < 3; i++) {
+  for (int i = 0; i < NBOARDS; i++) {
     Board *b = &boards[i];
     if (cur() == b)
       continue; /* another board: the last title leaves at once (its own will fade in) */
@@ -1694,13 +1717,16 @@ static void enter_home(const void *p) {
   board_enter_k(&boards[0]);
 }
 int board_disc_type(void) {
-  return discType;
+  return boards[discBoard].dtype;
 }
+/* selects the board SCR_DISC shows; the other tabs' boards keep their rows (Shows -> Movies -> Shows builds nothing) */
 void board_disc_type_set(int t) {
-  if (t == discType)
+  int bi = t == 2 ? 3 : t == 3 ? B_CATALOGUE : 1;
+  discBoard = bi;
+  Board *b = &boards[bi];
+  if (b->dtype == t)
     return;
-  discType = t;
-  Board *b = &boards[1]; /* the other kind's rows and spotlight go; the board builds afresh when it is entered */
+  b->dtype = t; /* (only the Shows board, first used by the phones' mix, ever changes its kind) */
   for (int i = 0; i < b->n; i++)
     row_clear(&b->rows[i]);
   b->n = 0;
@@ -1717,7 +1743,7 @@ void board_disc_type_set(int t) {
 static void enter_disc(const void *p) {
   (void)p;
   board_leave();
-  board_enter_k(&boards[1]);
+  board_enter_k(&boards[discBoard]);
 }
 static void enter_col(const void *p) {
   if (p) {
@@ -1750,7 +1776,7 @@ void board_col_tick(void) {
     colstore_clear();
   free(t);
   colGen++;
-  boards[1].built = 0;
+  boards[1].built = boards[B_CATALOGUE].built = 0;
   if (SCR == SCR_DISC)
     board_rebuild();
 }
@@ -1762,7 +1788,7 @@ static int key_col(int k) {
    way, with skip); a page that brings nothing new, a 404 or hasMore false ends it; a failed one is asked again later */
 static void on_page(ItemList *l, int more, void *ud) {
   uintptr_t t = (uintptr_t)ud;
-  Board *b = &boards[(t >> 28) & 3];
+  Board *b = &boards[(t >> 28) & 7];
   int row = t & 63;
   unsigned gen = (t >> 6) & 0x3fffff;
   if ((b->gen & 0x3fffff) != gen || row >= b->n) {
@@ -1973,7 +1999,7 @@ static int key_home(int k) {
   return board_key(&boards[0], k);
 }
 static int key_disc(int k) {
-  return board_key(&boards[1], k);
+  return board_key(&boards[discBoard], k);
 }
 static const Item *focused_cur(void) {
   Board *b = cur();
@@ -2046,10 +2072,11 @@ static void board_tick(float dt) {
   card_open_tick(b, dt);
   timer_tick(&b->fade, dt);
   nudge_tick(&b->nudge, dt);
-  if (b->kind == 0 || (b->kind == 1 && discType)) {
-    static unsigned ser[2]; /* (each board its own: the one not on screen sees the change when it comes back) */
-    if (store_serial() != ser[b->kind]) {
-      ser[b->kind] = store_serial();
+  if (b->kind == 0 || (b->kind == 1 && b->dtype)) {
+    static unsigned ser[NBOARDS]; /* (each board its own: the one not on screen sees the change when it comes back) */
+    int si = (int)(b - boards);
+    if (store_serial() != ser[si]) {
+      ser[si] = store_serial();
       int c = strcmp(store_get("homeLayout", "cinematic"), "classic") != 0;
       if (c != b->cine)
         board_rebuild();
@@ -2281,7 +2308,9 @@ static void row_prefetch(Row *r, int slot, int from, int to) {
     to = r->items.n - 1;
   prep_check(r);
   int same = r->pf[slot][0] == from && r->pf[slot][1] == to;
-  int again = app_now() >= r->pfAt[slot] && img_has_room(); /* the same range, asked again every 0.75 s while there is room (the loader drops an ask left for 1.5 s; a full budget would only churn) */
+  int again = app_now() >= r->pfAt[slot] &&
+              img_has_room(); /* the same range, asked again every 0.75 s while there is room (the loader drops an ask
+                                 left for 1.5 s; a full budget would only churn) */
   if (same && !r->pfWait[slot] && !again)
     return;
   if (again)
@@ -2298,9 +2327,11 @@ static void row_prefetch(Row *r, int slot, int from, int to) {
       continue;
     if (r->cpSt[i] != 1)
       wait = 1;
-    int back = cp->crop && img_back_shaped(cp->art, cw, ch, CARD_R, 3); /* shown before: the sharp one comes straight back */
+    int back =
+        cp->crop && img_back_shaped(cp->art, cw, ch, CARD_R, 3); /* shown before: the sharp one comes straight back */
     if ((!same || ch2 || again) && cp->pre[0] && !(cp->crop && img_shaped_loaded(cp->art, cw, ch, CARD_R, 3)))
-      img_get_shaped(back ? cp->art : cp->pre, cw, ch, CARD_R, cp->crop ? 3 : fit); /* (not the quick crop once the sharp one is in) */
+      img_get_shaped(back ? cp->art : cp->pre, cw, ch, CARD_R,
+                     cp->crop ? 3 : fit); /* (not the quick crop once the sharp one is in) */
     if (cp->crop && ((img_idle() && img_shaped_loaded(cp->pre, cw, ch, CARD_R, 3)) || back)) {
       char lu[512];
       logo_src(&r->items.items[i], lu, sizeof lu);
@@ -2311,10 +2342,10 @@ static void row_prefetch(Row *r, int slot, int from, int to) {
   img_prefetch_mode(0);
   r->pfWait[slot] = (unsigned char)wait;
 }
-/* a row off screen within 3 of the focus (a few presses away, either way): what it showed before comes back ahead of the
-   focus, so a return finds its cards final (sharp crop, logo, and the box picture of its card). Only pictures that were
-   loaded before (img_back_shaped): a row never seen keeps the quick look-ahead. Asked every quarter second, farthest
-   cards first (the last asked is taken first) */
+/* a row off screen within 3 of the focus (a few presses away, either way): what it showed before comes back ahead of
+   the focus, so a return finds its cards final (sharp crop, logo, and the box picture of its card). Only pictures that
+   were loaded before (img_back_shaped): a row never seen keeps the quick look-ahead. Asked every quarter second,
+   farthest cards first (the last asked is taken first) */
 static void row_far_ahead(Row *r) {
   if (fill_dev_no_ahead() || !r->items.n || r->ntiles || app_now() < r->farAt)
     return;
@@ -2606,8 +2637,7 @@ static void card_wide(Board *b, const Row *r, const Item *it, const CardPrep *cp
           : focused
               ? clampf((float)((wn - b->wideBt) / 0.18), 0, 1)
               : 1; /* the sharp one: over the stand-in, softly; there before the card opened: nothing to see change */
-      if (ek >= 0.999f && focused)
-      {
+      if (ek >= 0.999f && focused) {
         fill_art(bt && sk >= 1 && gfx_tex_fade(bt) >= 1);
         if (fill_on() && (!bt || gfx_tex_fade(bt) < 1))
           fill_why(img_why_shaped(bu, fw, (int)ch, CARD_R, 1));
@@ -2804,7 +2834,8 @@ static void row_draw(Board *b, Row *r, int ri, float y, int near, float rowA) {
     if (hold || !cp)
       fill_why_prep();
     card_wide(b, r, &r->items.items[r->col], cp, x, ox, ow, cy, cw, ch, ek, rtl, 1);
-    fill_card(r, r->col, ox, cy, ow, ch, cp && cp->crop && ek <= 0.001f, ek > 0.001f && ek < 0.999f); /* (the open box: its picture, no crop logo) */
+    fill_card(r, r->col, ox, cy, ow, ch, cp && cp->crop && ek <= 0.001f,
+              ek > 0.001f && ek < 0.999f); /* (the open box: its picture, no crop logo) */
     if (sd > 0)
       gfx_opacity_pop();
     if (hp > 0)
@@ -2960,6 +2991,18 @@ static void board_draw(void) {
     if (!any)
       text_draw(T("Nothing found."), SB_W / 2, SB_H / 2, 31, 600, WHITE_A(204), 0, SB_W - 96, ALIGN_CENTER);
   }
+  if (b->kind == 1 && b->dtype == 3) {
+    int any = 0;
+    for (int i = 0; i < b->n && !any; i++)
+      any = !b->rows[i].hidden;
+    if (!any && (!b->n || app_now() - catAt > 6)) {
+      text_draw(T("No catalogues yet"), SB_W / 2, SB_H / 2 - 40, 44, 700, WHITE_A(230), 0, SB_W - 96, ALIGN_CENTER);
+      text_draw_wrapped(
+          T("Addons you install in Stremio or Nuvio show their catalogues here. Collections imported from "
+            "your phone show here too."),
+          SB_W / 2, SB_H / 2 + 24, 960, 3, 28, 400, WHITE_A(150), 0, ALIGN_CENTER, 40);
+    }
+  }
   float top = lay0(b) ? b->topY.v : ROWS_TOP;
   gfx_clip_push(0, top, SB_W, SB_H - top);
   float sy = spotk(b) ? b->spotY.v : 0, ra0 = spotk(b) ? b->rowsA.v : 1;
@@ -3088,8 +3131,10 @@ static int board_warm(Board *b) {
    gets 10 s at most */
 void tabs_warm_tick(void) {
   static double t0, next, tabAt;
-  static int step;
-  if (step >= 3 || !app_splash_done || SCR == SCR_LOGIN || player_open())
+  static int step, nsteps;
+  if (!nsteps)
+    nsteps = form_touch() ? 3 : plat_mem_total_mb() == 0 || plat_mem_total_mb() > 1200 ? 5 : 3;
+  if (step >= nsteps || !app_splash_done || SCR == SCR_LOGIN || player_open())
     return;
   double now = app_now();
   if (!t0) {
@@ -3101,9 +3146,19 @@ void tabs_warm_tick(void) {
   next = now + 0.25;
   if (!tabAt)
     tabAt = now;
-  int done = step == 0 ? board_warm(&boards[1]) : step == 1 ? board_warm(&boards[0]) : lib_warm();
+  /* Shows (the phones' mixed Discover on a phone), Home, the Library, then Movies and the Catalogue where memory is
+     plentiful (a computer, or more than 1200 MB) */
+  static const char *const nm[5] = { "Discover", "Home", "Library", "Movies", "Catalogue" };
+  if (step == 0 && !form_touch() && boards[1].dtype != 1) {
+    boards[1].dtype = 1;
+    boards[1].built = 0;
+  }
+  int done = step == 0   ? board_warm(&boards[1])
+             : step == 1 ? board_warm(&boards[0])
+             : step == 2 ? lib_warm()
+             : step == 3 ? board_warm(&boards[3])
+                         : board_warm(&boards[B_CATALOGUE]);
   if (done || now - tabAt > 10) {
-    static const char *const nm[3] = { "Discover", "Home", "Library" };
     fprintf(stderr, "[warm] %s %s in %.1f s\n", nm[step], done ? "ready" : "gave up", now - tabAt);
     step++;
     tabAt = 0;
@@ -3113,7 +3168,8 @@ void board_invalidate(void) {
   boards[0].built = 0;
 }
 void board_invalidate_all(void) {
-  boards[0].built = boards[1].built = 0;
+  for (int i = 0; i < NBOARDS; i++)
+    boards[i].built = 0;
 }
 /* the bar hands the focus down: the first row (Discover: its spotlight) */
 void board_from_bar(void) {
@@ -3246,11 +3302,17 @@ __attribute__((constructor)) static void board_kinds(void) {
   boards[0].kind = 0;
   boards[1].kind = 1;
   boards[2].kind = 2;
-  boards[1].featOn = 1;
+  boards[3].kind = boards[B_CATALOGUE].kind = 1;
+  boards[3].dtype = 2;
+  boards[B_CATALOGUE].dtype = 3;
+  boards[1].featOn = boards[3].featOn = 1;
   tween_set(&boards[1].rowsA, 1);
+  tween_set(&boards[3].rowsA, 1);
+  tween_set(&boards[B_CATALOGUE].rowsA, 1);
   tween_set(&boards[0].rowsA, 1);
   tween_set(&boards[0].topY, ROWS_TOP);
-  for (int i = 0; i < 2; i++)
+  tween_set(&boards[B_CATALOGUE].topY, ROWS_TOP);
+  for (int i = 0; i < NBOARDS; i++)
     tween_set(&boards[i].logoIn, 1);
 } /* Discover opens on its spotlight */
 int board_sample(Item *out, int max, char *rowTitle, int cap) {

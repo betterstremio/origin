@@ -60,7 +60,9 @@ void sb_addon_key(const cJSON *addon, char *out, size_t cap); /* its manifest id
 /* ---- catalogs ---- */
 int sb_pinned_defs(CatalogDef *out, int max); /* the catalogs that always head Home, when their addon is installed */
 int sb_home_defs(CatalogDef *out, int max);
-int sb_disc_defs(CatalogDef *out, int max, const char *type); /* type NULL, "series" or "movie" */
+int sb_disc_defs(CatalogDef *out, int max, const char *type,
+                 int own); /* type NULL, "series" or "movie"; own: Cinemeta's rows only (no installed addon's) */
+int sb_all_defs(CatalogDef *out, int max); /* every installed catalogue (the Catalogue tab) */
 /* cached copy first (cb with cached=1), then the fresh one if it differs; the list is malloc'd for the callback owner
  */
 void sb_catalog(const CatalogDef *def, void (*cb)(ItemList *list, int cached, void *ud), void *ud);
