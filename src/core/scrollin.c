@@ -13,7 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { S_PH, S_TAPS, S_HOLD, S_WAIT, S_END, S_GOROW, S_EVT, S_QUIT };
+enum { S_PH, S_TAPS, S_HOLD, S_WAIT, S_END, S_GOROW, S_EVT, S_QUIT, S_FINDROW };
 enum { HC_LASTROW, HC_ROW_START, HC_COL_START, HC_MS };
 enum { X_NONE, X_DOWN, X_UP, X_RIGHT, X_LEFT, X_LAST, X_START, X_BACKH }; /* what the phase should end on */
 typedef struct {
@@ -135,6 +135,11 @@ static int build(const char *p) {
       add(S_WAIT, 0, 0, 0, 700);
     }
     add(S_END, 0, 0, 0, 1200);
+  } else if (!strcmp(p, "BR")) { /* DOWN until the focused row's title has "best-rated" (25 rows at most), then still for 6 s */
+    nPh = 0;
+    ph("BR", X_NONE);
+    add(S_FINDROW, K_DOWN, 25, 350, 0);
+    add(S_END, 0, 0, 0, 6000);
   } else if (!strcmp(p, "RT")) {
     nPh = N;
     ph("RT-down", X_DOWN);
@@ -146,6 +151,37 @@ static int build(const char *p) {
     nPh = N;
     ph("RT-down2", X_DOWN);
     add(S_TAPS, K_DOWN, N, 150, 0);
+    add(S_END, 0, 0, 0, 1500);
+  } else if (!strcmp(p, "RT-deep")) { /* Home far down (the last row, 40 at most) at 250 ms, rest 1 s, back up to the top */
+    nPh = 40;
+    ph("RT-deep-down", X_DOWN);
+    add(S_TAPS, K_DOWN, 40, 250, 0);
+    add(S_END, 0, 0, 0, 1000);
+    ph("RT-deep-up", X_START);
+    add(S_TAPS, K_UP, 40, 250, 0);
+    add(S_END, 0, 0, 0, 1500);
+  } else if (!strcmp(p, "RT-deep-slow")) { /* a reader's pace down (700 ms a row, so the cards fill in), then fast back up */
+    nPh = 40;
+    ph("RT-deep-slow-down", X_DOWN);
+    add(S_TAPS, K_DOWN, 40, 700, 0);
+    add(S_END, 0, 0, 0, 1000);
+    ph("RT-deep-slow-up", X_START);
+    add(S_TAPS, K_UP, 40, 250, 0);
+    add(S_END, 0, 0, 0, 1500);
+  } else if (!strcmp(p, "RT-deep-slow500")) { /* a reader's pace both ways: 700 ms a row down, 500 ms back up */
+    nPh = 40;
+    ph("RT-deep-slow500-down", X_DOWN);
+    add(S_TAPS, K_DOWN, 40, 700, 0);
+    add(S_END, 0, 0, 0, 1000);
+    ph("RT-deep-slow500-up", X_START);
+    add(S_TAPS, K_UP, 40, 500, 0);
+    add(S_END, 0, 0, 0, 1500);
+  } else if (!strcmp(p, "RT-deep-hold")) { /* the same with the arrow held (500 ms, then 50 ms repeats) */
+    ph("RT-deep-hold-down", X_LAST);
+    add(S_HOLD, K_DOWN, 0, 0, HC_LASTROW);
+    add(S_END, 0, 0, 0, 1000);
+    ph("RT-deep-hold-up", X_START);
+    add(S_HOLD, K_UP, 0, 0, HC_ROW_START);
     add(S_END, 0, 0, 0, 1500);
   } else
     return 0;
@@ -302,6 +338,7 @@ void scrollin_tick(void) {
     return;
   double now = SDL_GetTicks();
   track_motion(now);
+  fill_focus_row(board_focus_row(NULL, 0));
   if (!started) {
     if (profiles_is_open()) { /* "Who's watching?": the first profile */
       static double okAt;
@@ -409,6 +446,29 @@ void scrollin_tick(void) {
       send(K_DOWN, !(sub & 1), 0, t);
       if (sub & 1)
         lastTap = now;
+      sub++;
+      continue;
+    }
+    case S_FINDROW: { /* a tap every `every` ms until the focused row's title holds "best-rated" */
+      char tl[96] = "";
+      const void *fr = board_focus_row(tl, sizeof tl);
+      for (char *q = tl; *q; q++)
+        *q = (char)(*q >= 'A' && *q <= 'Z' ? *q + 32 : *q);
+      int k = sub / 2;
+      if ((sub & 1) == 0 && (fr && strstr(tl, "best-rated"))) {
+        fprintf(stderr, "[scroll] found \"%s\" after %d taps\n", tl, k);
+        next(now);
+        continue;
+      }
+      if (k >= s->n) {
+        fprintf(stderr, "[scroll] no best-rated row in %d rows\n", k);
+        next(now);
+        continue;
+      }
+      double t = base + (double)k * s->every + ((sub & 1) ? 40 : 0);
+      if (now < t)
+        return;
+      send(s->key, !(sub & 1), 0, t);
       sub++;
       continue;
     }

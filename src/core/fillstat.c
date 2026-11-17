@@ -18,11 +18,32 @@
 #define NBIN 1600 /* 0.25 ms bins, up to 400 ms */
 typedef struct {
   unsigned long long key;
-  int used, everSeen, inPh, fin, prior, ready, lastArt, lastLogo, idx, needLogo;
+  int foc, used, everSeen, inPh, fin, prior, ready, lastArt, lastLogo, idx, needLogo;
   unsigned long long seenFrame;
   double firstVis, lastVis, visMs, firstFin;
 } Card;
 static Card tab[NCARD];
+/* what a title showed before, kept across phases and keyed by its id (not its row slot: rows move on a rebuild). A card
+   with a picture once final that is not final again later is a "reload" (the thing the return test looks for) */
+#define NEV 16384
+typedef struct {
+  unsigned long long key;
+  int used, finEver, inPh, reloaded;
+  unsigned finGen;
+  unsigned long long lastFrame;
+} Ev;
+static Ev evt[NEV];
+enum { R_EVB, R_EVG, R_EVD, R_EVS, R_UPLOAD, R_QUEUE, R_NEW, R_NOASK, R_FAIL, R_FADE, R_LOGO, R_PREP, R_REBUILD, R_OTHER, NR };
+static const char *const rname[NR] = { "EVb", "EVg", "EVd", "EVs", "UPLOAD", "QUEUE", "NEW", "NOASK", "FAIL", "FADE", "LOGO", "PREP", "REBUILD", "OTHER" };
+static unsigned whyN[2][NR], evStage[4], rtN, rtF, reloadN, rebuildGen, rebuildPh;
+static unsigned long long pendKey;
+static int pendKind, pendWhy = -1, pendPrep, pendDist;
+static unsigned reloadD[9], farN[3];
+void fill_far(int asked, int already) {
+  farN[0]++;
+  farN[1] += (unsigned)asked;
+  farN[2] += (unsigned)already;
+}
 static int on = -1, ph, phActive;
 static char phName[48];
 static int expRow, expCol;
@@ -49,6 +70,17 @@ static int relDone, boxN, boxR;
 static float keyLat[4096];
 static int nKey;
 static int hwmMB;
+/* the BR profile: the cards of the other rows and of the focused row, apart */
+static const void *focRow;
+static int fVisO, fFinO, fVisF, fFinF;
+#define NSEC 16
+static double phT0, secO[NSEC], secF[NSEC];
+static int secNO[NSEC], secNF[NSEC];
+static double sumO, minO, sumF, minF;
+static unsigned frO, frF;
+void fill_focus_row(const void *row) {
+  focRow = row;
+}
 
 int fill_on(void) {
   if (on < 0)
@@ -65,9 +97,63 @@ void fill_screen_ref(void) {
   gfx_xform_point(&sx1, &sy1);
   refSet = 1;
 }
-void fill_begin(void) {
+void fill_begin(const char *id, int kind, int dist) {
+  pendDist = dist < 0 ? -dist : dist;
   pendArt = 0;
   pendLogo = -1;
+  pendWhy = -1;
+  pendPrep = 0;
+  pendKind = kind;
+  pendKey = 0;
+  if (id && id[0] && fill_on()) {
+    unsigned long long h = 1469598103934665603ull;
+    for (const unsigned char *q = (const unsigned char *)id; *q; q++)
+      h = (h ^ *q) * 1099511628211ull;
+    pendKey = h * 4 + (unsigned)kind + 1;
+  }
+}
+void fill_why(int imgCode) { /* the picture the card waits on (img_why_shaped); the last one asked wins */
+  pendWhy = imgCode;
+}
+void fill_why_prep(void) { /* the card's prep is missing or held (its picture is not even asked) */
+  pendPrep = 1;
+}
+void fill_rebuild(void) {
+  rebuildGen++;
+  rebuildPh++;
+}
+static Ev *find_ev(unsigned long long key) {
+  unsigned h = (unsigned)((key ^ (key >> 31)) * 2654435761u) % NEV;
+  for (int i = 0; i < NEV; i++) {
+    Ev *e = &evt[(h + (unsigned)i) % NEV];
+    if (!e->used) {
+      memset(e, 0, sizeof *e);
+      e->used = 1;
+      e->key = key;
+      return e;
+    }
+    if (e->key == key)
+      return e;
+  }
+  return NULL;
+}
+static int reason_of(Ev *e, int fin, int *stage) {
+  *stage = -1;
+  if (pendPrep)
+    return R_PREP;
+  int r = R_OTHER;
+  if (!pendArt && pendWhy >= 0) {
+    int lost = pendWhy >> 4, st = pendWhy & 15;
+    if (lost > 0) {
+      r = R_EVB + lost - 1;
+      *stage = st == 1 ? 0 : st == 2 ? 1 : st == 3 ? 2 : 3;
+    } else
+      r = st == 5 ? R_FADE : st == 4 ? R_FAIL : st == 2 ? R_UPLOAD : st == 1 ? R_QUEUE : st == 3 ? R_NOASK : R_NEW;
+  } else if (pendArt && !fin)
+    r = R_LOGO;
+  if ((r == R_NEW || r == R_NOASK || r == R_OTHER) && e->finGen != rebuildGen)
+    r = R_REBUILD;
+  return r;
 }
 void fill_art(int final) {
   pendArt = final;
@@ -118,6 +204,43 @@ void fill_card(const void *row, int idx, float x, float y, float w, float h, int
   c->needLogo = needLogo;
   fVis++;
   fFin += fin;
+  if (pendKey) {
+    Ev *e = find_ev(pendKey);
+    if (e && e->lastFrame != frameNo) {
+      e->lastFrame = frameNo;
+      if (ph) {
+        if (!e->inPh) {
+          e->inPh = 1;
+          if (e->finEver) {
+            rtN++;
+            rtF += fin != 0;
+          }
+        }
+        if (e->finEver && !fin && !e->reloaded) {
+          e->reloaded = 1;
+          reloadN++;
+          int stg;
+          int r = reason_of(e, fin, &stg);
+          whyN[pendKind & 1][r]++;
+          reloadD[pendDist > 8 ? 8 : pendDist]++;
+          if (stg >= 0)
+            evStage[stg]++;
+        }
+      }
+      if (fin) {
+        e->finEver = 1;
+        e->finGen = rebuildGen;
+      }
+    }
+  }
+  c->foc = row == focRow;
+  if (c->foc) {
+    fVisF++;
+    fFinF += fin;
+  } else {
+    fVisO++;
+    fFinO += fin;
+  }
   if (!ph) {
     c->everSeen = 1;
     return;
@@ -202,6 +325,30 @@ void fill_tick(void) {
             ckbN++;
         } else
           sumV += 1;
+        if (fVisO) {
+          double v = (double)fFinO / fVisO;
+          sumO += v;
+          if (v < minO)
+            minO = v;
+          frO++;
+          int k = (int)((now - phT0) / 1000);
+          if (k >= 0 && k < NSEC) {
+            secO[k] += v;
+            secNO[k]++;
+          }
+        }
+        if (fVisF) {
+          double v = (double)fFinF / fVisF;
+          sumF += v;
+          if (v < minF)
+            minF = v;
+          frF++;
+          int k = (int)((now - phT0) / 1000);
+          if (k >= 0 && k < NSEC) {
+            secF[k] += v;
+            secNF[k]++;
+          }
+        }
       } else {
         if (run >= 5)
           run5++;
@@ -222,7 +369,7 @@ void fill_tick(void) {
   prevNow = now;
   fnow = now;
   frameNo++;
-  fVis = fFin = 0;
+  fVis = fFin = fVisO = fFinO = fVisF = fFinF = 0;
 }
 void fill_phase_begin(const char *name, int er, int ec) {
   if (!fill_on())
@@ -234,6 +381,16 @@ void fill_phase_begin(const char *name, int er, int ec) {
     tab[i].inPh = 0;
     tab[i].fin = 0;
   }
+  for (int i = 0; i < NEV; i++) {
+    evt[i].inPh = 0;
+    evt[i].reloaded = 0;
+  }
+  memset(whyN, 0, sizeof whyN);
+  memset(evStage, 0, sizeof evStage);
+  memset(reloadD, 0, sizeof reloadD);
+  memset(farN, 0, sizeof farN);
+  rtN = rtF = reloadN = rebuildPh = 0;
+  img_phase_reset();
   memset(hist, 0, sizeof hist);
   fr = lateN = run = run5 = ckbN = 0;
   sumV = 0;
@@ -243,6 +400,14 @@ void fill_phase_begin(const char *name, int er, int ec) {
   relDone = 0;
   settleAt = -1;
   boxN = boxR = 0;
+  phT0 = fnow;
+  sumO = sumF = 0;
+  minO = minF = 1;
+  frO = frF = 0;
+  memset(secO, 0, sizeof secO);
+  memset(secF, 0, sizeof secF);
+  memset(secNO, 0, sizeof secNO);
+  memset(secNF, 0, sizeof secNF);
   nKey = 0;
   lastKeyT = -1;
   ph = 1;
@@ -339,6 +504,20 @@ void fill_phase_end(int row, int col) {
   int h = hwm_mb();
   if (h > hwmMB)
     hwmMB = h;
+  ImgPhase ip;
+  img_phase_get(&ip);
+  char wy[2][240] = { "", "" };
+  for (int k = 0; k < 2; k++) {
+    size_t o = 0;
+    for (int r = 0; r < NR; r++)
+      if (whyN[k][r])
+        o += (size_t)snprintf(wy[k] + o, sizeof wy[k] - o, "%s%s:%u", o ? "," : "", rname[r], whyN[k][r]);
+    if (!o)
+      snprintf(wy[k], sizeof wy[k], "-");
+  }
+  char rtf[24] = "n/a";
+  if (rtN)
+    snprintf(rtf, sizeof rtf, "%d%%", (int)(100.0 * rtF / rtN + 0.5));
   fprintf(stderr,
           "[fill] phase=%s cards=%d vfr=%.2f vfrmin=%.2f ckb=%.1f%% ttf p50=%d p95=%d max=%d ready=%d%% never=%d "
           "box=%d/%d rt=%s rel300=%.2f settle=%d frames n=%u per=%.1f p50=%.1f p95=%.1f p99=%.1f worst=%.0f "
@@ -347,6 +526,47 @@ void fill_phase_end(int row, int col) {
           n ? (int)(100.0 * ready / n + 0.5) : 100, never, boxR, boxN, rt, rel300, (int)settleAt, fr, refPer,
           pctl(hist, fr, 0.5), pctl(hist, fr, 0.95), pctl(hist, fr, 0.99), worst, fr ? 100.0 * lateN / fr : 0.0, run5,
           kp95, keys, h, img_used_mb());
+  fprintf(stderr,
+          "[fill] why phase=%s rtfin=%s (%u/%u) reload=%u why=%s bwhy=%s evstage=Q%u/U%u/N%u/o%u ev=%u/%u/%u/%u ups=%u "
+          "upfr=%u up95=%dKB rebuild=%u picpk=%dMB dnpk=%dMB rdist=%u/%u/%u/%u/%u/%u/%u/%u/%u far=%u/%u/%u\n",
+          phName, rtf, rtF, rtN, reloadN, wy[0], wy[1], evStage[0], evStage[1], evStage[2], evStage[3], ip.ev[1], ip.ev[2],
+          ip.ev[3], ip.ev[4], ip.ups, ip.upFrames, ip.upP95KB, rebuildPh, ip.picPeakMB, ip.dnPeakMB, reloadD[0], reloadD[1], reloadD[2], reloadD[3], reloadD[4], reloadD[5],
+          reloadD[6], reloadD[7], reloadD[8], farN[0], farN[1], farN[2]);
+  if (!strncmp(phName, "BR", 2)) /* the cards of the other rows, then of the focused row: per card, first visible to final */
+    for (int g = 0; g < 2; g++) {
+      int gn2 = 0, gready = 0, gnever = 0, gnt = 0, gmx = 0;
+      for (int i = 0; i < NCARD; i++) {
+        Card *c = &tab[i];
+        if (!c->used || !c->inPh || (c->foc != 0) != g)
+          continue;
+        gn2++;
+        gready += c->ready;
+        int t = c->fin ? (int)(c->firstFin - c->firstVis + 0.5) : (int)(c->lastVis - c->firstVis + 0.5);
+        if (c->fin && t < 2)
+          t = 0;
+        if (!c->fin && c->visMs >= 600)
+          gnever++;
+        tt[gnt++] = t;
+        if (t > gmx)
+          gmx = t;
+      }
+      qsort(tt, gnt, sizeof *tt, cmpi);
+      int q50 = gnt ? tt[gnt / 2] : 0, j95 = (int)(gnt * 0.95), q95 = gnt ? tt[j95 < gnt ? j95 : gnt - 1] : 0;
+      char tl[200] = "";
+      size_t o = 0;
+      for (int k = 0; k < NSEC && k < 10; k++) {
+        int cn = g ? secNF[k] : secNO[k];
+        double sv = g ? secF[k] : secO[k];
+        o += (size_t)snprintf(tl + o, sizeof tl - o, "%s%.2f", k ? "/" : "", cn ? sv / cn : -1.0);
+      }
+      unsigned f2 = g ? frF : frO;
+      double s2 = g ? sumF : sumO;
+      fprintf(stderr,
+              "[fill] phase=%s-%s cards=%d vfr=%.2f vfrmin=%.2f ttf p50=%d p95=%d max=%d ready=%d%% never=%d vfrT=%s "
+              "hwm=%dMB pic=%dMB\n",
+              phName, g ? "focus" : "others", gn2, f2 ? s2 / f2 : 1.0, g ? minF : minO, q50, q95, gmx,
+              gn2 ? (int)(100.0 * gready / gn2 + 0.5) : 100, gnever, tl, h, img_used_mb());
+    }
   ph = 0;
   phActive = 0;
 }

@@ -68,7 +68,7 @@ typedef struct {
   FocusPop pop;
   int popCol;
   Nudge nudge;
-  double locAt, wideAt;
+  double locAt, wideAt, farAt;
   CardPrep *cp;
   unsigned char *cpSt;
   int ncp;
@@ -184,6 +184,14 @@ static int focusOn(Board *b) {
   return cur() == b && !topNav.active && !spotOn(b);
 }
 /* the fast-scroll test: where Home's focus is (rank among the shown rows; -2 top bar, -1 billboard), the shown rows */
+const void *board_focus_row(char *title, size_t cap) { /* the fast-scroll test: the focused row and its title */
+  Board *b = &boards[0];
+  if (SCR != SCR_HOME || b->rowIdx < 0 || b->rowIdx >= b->n)
+    return NULL;
+  if (title && cap)
+    snprintf(title, cap, "%s", b->rows[b->rowIdx].title);
+  return &b->rows[b->rowIdx];
+}
 int board_focus_pos(int *row, int *col, int *nrows) {
   Board *b = &boards[0];
   int n = 0, rk = -1;
@@ -1479,14 +1487,18 @@ static void cine_details(Board *b, float x, float y, int rtl) {
 /* a poster card cut from its wide picture: the title's logo at its foot (as Netflix's), over a soft shade; the name
    when there is no logo. Only over the cut picture (a card that fell back to its poster has its own words) */
 static void crop_logo(const Item *it, const CardPrep *cp, float x, float y, float w, float h, float a) {
-  if (!cp || !cp->crop || a <= 0.01f ||
-      !(img_shaped_loaded(cp->art, (int)w, (int)h, CARD_R, 3) || img_shaped_loaded(cp->pre, (int)w, (int)h, CARD_R, 3)))
+  if (!cp || !cp->crop || a <= 0.01f)
     return;
-  int rtl = app_rtl();
   char lu[512];
+  logo_src(it, lu, sizeof lu);
+  if (!(img_shaped_loaded(cp->art, (int)w, (int)h, CARD_R, 3) || img_shaped_loaded(cp->pre, (int)w, (int)h, CARD_R, 3))) {
+    if (lu[0] && img_seen_shaped(cp->art, (int)w, (int)h, CARD_R, 3) && img_seen_shaped(lu, CROP_LOGO_W, CROP_LOGO_H, 0, -1))
+      img_ahead_shaped(lu, CROP_LOGO_W, CROP_LOGO_H, 0, -1); /* a return: the logo is asked with its picture, not after it */
+    return;
+  }
+  int rtl = app_rtl();
   float lw, lh;
   GLuint lt;
-  logo_src(it, lu, sizeof lu);
   gfx_rrect_v(x, y + h * 0.5f, w, h * 0.5f, CARD_R, RGBA(0, 0, 0, 0), RGBA(0, 0, 0, (int)(175 * a)));
   float asp = 0;
   if (lu[0] && !img_shaped_loaded(lu, CROP_LOGO_W, CROP_LOGO_H, 0, -1) &&
@@ -2278,6 +2290,7 @@ static void row_prefetch(Row *r, int slot, int from, int to) {
   r->pf[slot][1] = to;
   int wait = 0;
   int cw = (int)card_w(r), ch = (int)card_h(r), fit = r->wide ? 1 : 0;
+  img_prefetch_mode(1);
   for (int i = from; i <= to; i++) {
     int hold, ch2;
     const CardPrep *cp = row_prep(r, i, 0, &hold, &ch2);
@@ -2295,7 +2308,50 @@ static void row_prefetch(Row *r, int slot, int from, int to) {
         img_get_sized(lu, CROP_LOGO_W, CROP_LOGO_H, NULL);
     } /* its logo too */
   }
+  img_prefetch_mode(0);
   r->pfWait[slot] = (unsigned char)wait;
+}
+/* a row off screen within 3 of the focus (a few presses away, either way): what it showed before comes back ahead of the
+   focus, so a return finds its cards final (sharp crop, logo, and the box picture of its card). Only pictures that were
+   loaded before (img_back_shaped): a row never seen keeps the quick look-ahead. Asked every quarter second, farthest
+   cards first (the last asked is taken first) */
+static void row_far_ahead(Row *r) {
+  if (fill_dev_no_ahead() || !r->items.n || r->ntiles || app_now() < r->farAt)
+    return;
+  r->farAt = app_now() + 0.25;
+  prep_check(r);
+  int cw = (int)card_w(r), ch = (int)card_h(r), n = r->items.n;
+  int c0 = (int)(r->off.v / step_of(r)), c1 = c0 + 7 < n - 1 ? c0 + 7 : n - 1;
+  img_prefetch_mode(1);
+  int asked = 0, have = 0;
+  for (int i = c1; i >= (c0 > 0 ? c0 - 1 : 0); i--) {
+    int hold, chg;
+    const CardPrep *cp = row_prep(r, i, 0, &hold, &chg);
+    if (!cp || hold)
+      continue;
+    if (!cp->crop) {
+      if (img_seen_shaped(cp->art, cw, ch, CARD_R, r->wide ? 1 : 0))
+        img_ahead_shaped(cp->art, cw, ch, CARD_R, r->wide ? 1 : 0);
+      continue;
+    }
+    if (img_seen_shaped(cp->art, cw, ch, CARD_R, 3)) {
+      char lu[512];
+      logo_src(&r->items.items[i], lu, sizeof lu);
+      if (lu[0] && img_seen_shaped(lu, CROP_LOGO_W, CROP_LOGO_H, 0, -1))
+        img_ahead_shaped(lu, CROP_LOGO_W, CROP_LOGO_H, 0, -1);
+      img_ahead_shaped(cp->art, cw, ch, CARD_R, 3);
+      asked++;
+      have += img_shaped_loaded(cp->art, cw, ch, CARD_R, 3);
+    }
+  }
+  if (r->col >= 0 && r->col < n) {
+    const CardPrep *cp = row_prep(r, r->col, 0, &(int){ 0 }, NULL);
+    int fw = r->wide ? cw : (int)CARD_OPEN_W;
+    if (cp && cp->crop && img_seen_shaped(cp->art, fw, ch, CARD_R, 1))
+      img_ahead_shaped(cp->art, fw, ch, CARD_R, 1); /* the one the box shows */
+  }
+  img_prefetch_mode(0);
+  fill_far(asked, have);
 }
 /* the row being scrolled under the open box: the next cards' box picture, sharp crop and logo before anything else,
    asked every frame so a scroll never drops them (the rest of the row keeps the quick crops). 2 on a stick, 4 elsewhere
@@ -2551,7 +2607,11 @@ static void card_wide(Board *b, const Row *r, const Item *it, const CardPrep *cp
               ? clampf((float)((wn - b->wideBt) / 0.18), 0, 1)
               : 1; /* the sharp one: over the stand-in, softly; there before the card opened: nothing to see change */
       if (ek >= 0.999f && focused)
+      {
         fill_art(bt && sk >= 1 && gfx_tex_fade(bt) >= 1);
+        if (fill_on() && (!bt || gfx_tex_fade(bt) < 1))
+          fill_why(img_why_shaped(bu, fw, (int)ch, CARD_R, 1));
+      }
       if (fc >= 0) { /* the stand-in at the sides, the crop where it was, the sharp picture over both once in */
         GLuint ct = img_get_shaped(cu, (int)cw, (int)ch, CARD_R, 3);
         gfx_clip_push(ox, cy, ow, ch);
@@ -2675,8 +2735,10 @@ static void row_draw(Board *b, Row *r, int ri, float y, int near, float rowA) {
     const CardPrep *cp = row_prep(r, i, load, &hold, NULL);
     unsigned long long lk = lift_key(r, i);
     lift_begin(lk, 0, 0, x, cy, cw, ch, CARD_R); /* (the one the focus just left settles back) */
-    fill_begin();
+    fill_begin(r->items.items[i].id, r->wide ? 2 : 0, ri - b->rowIdx);
     card_draw_prep(&r->items.items[i], cp, x, cy, cw, ch, r->wide, r->label, !hold && (load || near));
+    if (hold || !cp)
+      fill_why_prep();
     crop_logo(&r->items.items[i], cp, x, cy, cw, ch, 1);
     fill_card(r, i, x, cy, cw, ch, cp && cp->crop, 0);
     lift_end(lk, x, cy, cw, ch, CARD_R);
@@ -2738,7 +2800,9 @@ static void row_draw(Board *b, Row *r, int ri, float y, int near, float rowA) {
       gfx_opacity_push(1 - sd);
     } else
       sd = 0;
-    fill_begin();
+    fill_begin(r->items.items[r->col].id, (r->wide ? 2 : 0) + (ek >= 0.999f), ri - b->rowIdx);
+    if (hold || !cp)
+      fill_why_prep();
     card_wide(b, r, &r->items.items[r->col], cp, x, ox, ow, cy, cw, ch, ek, rtl, 1);
     fill_card(r, r->col, ox, cy, ow, ch, cp && cp->crop && ek <= 0.001f, ek > 0.001f && ek < 0.999f); /* (the open box: its picture, no crop logo) */
     if (sd > 0)
@@ -2924,10 +2988,12 @@ static void board_draw(void) {
       row_draw(b, r, i, y, abs(i - b->rowIdx) <= 3, ra0 * rk * r->a.v);
       if (rdy > 0.01f)
         gfx_offset_pop();
-    } else if (abs(i - b->rowIdx) <= 2) {
+    } else if (abs(i - b->rowIdx) <= 3) {
       int c0 = (int)(r->off.v / step_of(r));
-      row_prefetch(r, 2, c0 - 1, c0 + 7);
-    } /* off screen but one or two presses away */
+      if (abs(i - b->rowIdx) <= 2)
+        row_prefetch(r, 2, c0 - 1, c0 + 7);
+      row_far_ahead(r);
+    } /* off screen but a few presses away */
     y += h;
   }
   img_ctx_row(-1);
@@ -3123,6 +3189,7 @@ void board_rebuild(void) {
   Board *b = cur();
   if (!b)
     return;
+  fill_rebuild();
   static char titles[MAXROWS][96];
   int cols[MAXROWS], n = b->n, ri = b->rowIdx;
   for (int i = 0; i < n; i++) {

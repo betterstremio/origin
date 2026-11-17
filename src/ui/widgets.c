@@ -509,6 +509,8 @@ static void card_art(const char *src, float x, float y, float w, float h, float 
     return;
   } /* nothing is coming: the surface stays still */
   fill_art(tex && gfx_tex_fade(tex) >= 1);
+  if (fill_on() && (!tex || gfx_tex_fade(tex) < 1))
+    fill_why(!loadArt && !tex ? (img_why_shaped(src, (int)w, (int)h, r, fit) & ~15) | 3 : img_why_shaped(src, (int)w, (int)h, r, fit));
   if (tex && !wide && cardKey[0] && !ph_hold() && gfx_tex_fade(tex) >= 1) {
     sx_image(cardKey, tex, x, y, w, h, 0, WHITE_A(255), 0, 0, 1, 1);
     *shown = 1;
@@ -584,6 +586,8 @@ static int card_body(const Item *it, const CardPrep *cp, float x, float y, float
       img_get_shaped(cp->art, (int)w, (int)h, CARD_R, 3); /* the sharp one, once nothing else waits */
     card_art(cp->pre, x, y, w, h, CARD_R, 3, loadArt, &shown); /* the quick one meanwhile */
     fill_art(0);
+    if (fill_on())
+      fill_why(img_why_shaped(cp->art, (int)w, (int)h, CARD_R, 3));
     }
   } else {
     card_art(cp->art, x, y, w, h, CARD_R, cp->crop ? 3 : wide ? 1 : 0, loadArt, &shown);
