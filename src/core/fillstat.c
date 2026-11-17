@@ -518,9 +518,9 @@ void fill_phase_end(int row, int col) {
           kp95, keys, h, img_used_mb());
   fprintf(stderr,
           "[fill] why phase=%s rtfin=%s (%u/%u) reload=%u why=%s bwhy=%s evstage=Q%u/U%u/N%u/o%u ev=%u/%u/%u/%u ups=%u "
-          "upfr=%u up95=%dKB rebuild=%u picpk=%dMB\n",
+          "upfr=%u up95=%dKB rebuild=%u picpk=%dMB dnpk=%dMB\n",
           phName, rtf, rtF, rtN, reloadN, wy[0], wy[1], evStage[0], evStage[1], evStage[2], evStage[3], ip.ev[1], ip.ev[2],
-          ip.ev[3], ip.ev[4], ip.ups, ip.upFrames, ip.upP95KB, rebuildPh, ip.picPeakMB);
+          ip.ev[3], ip.ev[4], ip.ups, ip.upFrames, ip.upP95KB, rebuildPh, ip.picPeakMB, ip.dnPeakMB);
   if (!strncmp(phName, "BR", 2)) /* the cards of the other rows, then of the focused row: per card, first visible to final */
     for (int g = 0; g < 2; g++) {
       int gn2 = 0, gready = 0, gnever = 0, gnt = 0, gmx = 0;

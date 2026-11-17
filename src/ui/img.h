@@ -56,7 +56,7 @@ int img_used_mb(void);
 typedef struct {
   unsigned ev[5]; /* development, per fill-test phase: textures evicted by cause (1 budget, 2 guard, 3 queue drop, 4 upload skipped) */
   unsigned ups, upFrames;
-  int upP95KB, picPeakMB;
+  int upP95KB, picPeakMB, dnPeakMB; /* (dn: decoded pixels waiting for upload) */
 } ImgPhase;
 void img_phase_reset(void);
 void img_phase_get(ImgPhase *o);

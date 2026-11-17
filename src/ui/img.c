@@ -267,6 +267,7 @@ static double mono_s(void);
    its pixels and never showed: a backdrop waiting for one never changed again) */
 static Img *doneHead;
 static int dn;
+static long dnBytes, dnPeak; /* pixels decoded and waiting for upload (the workers pause above a cap: uploads are the slower side) */
 static void done_push(Img *im) {
   if (im->inDone)
     return;
@@ -275,6 +276,9 @@ static void done_push(Img *im) {
   im->dnext = doneHead;
   doneHead = im;
   dn++;
+  dnBytes += (long)im->pw * im->ph * im->pch;
+  if (dnBytes > dnPeak)
+    dnPeak = dnBytes;
 } /* under mu; never twice (it would point to itself and the list never end) */
 static Img *done_pop(void) { /* the order of the loading: a backdrop, what is on screen (in its order), title art, the rest */
   Img **pp = &doneHead;
@@ -302,6 +306,7 @@ static Img *done_pop(void) { /* the order of the loading: a backdrop, what is on
     im->dnext = NULL;
     im->inDone = 0;
     dn--;
+    dnBytes -= (long)im->pw * im->ph * im->pch;
   }
   return im;
 }
@@ -620,13 +625,17 @@ static void decode_part(Img *im, unsigned char *data, size_t len, int fromNet, c
   im->pch = 4;
   im->aspect = (float)w / h;
 }
+static long dn_cap(void) { /* a tenth of the budget, 6..24 MB */
+  long c = budgetBytes / 10;
+  return c < 6L << 20 ? 6L << 20 : c > 24L << 20 ? 24L << 20 : c;
+}
 static void *worker(void *a) {
   plat_thread_background(10);
   int wid = (int)(intptr_t)a;
   net_keep_this_thread();
   for (;;) {
     pthread_mutex_lock(&mu);
-    while (!qn && !urg)
+    while ((!qn && !urg) || (!urg && dnBytes > dn_cap()))
       pthread_cond_wait(&cv, &mu);
     Img *im;
     if (urg) {
@@ -723,6 +732,7 @@ void img_phase_reset(void) {
   memset(phUpHist, 0, sizeof phUpHist);
   phUps = phUpFrames = 0;
   phPeak = usedBytes;
+  dnPeak = dnBytes;
 }
 void img_phase_get(ImgPhase *o) {
   for (int i = 0; i < 5; i++)
@@ -739,6 +749,7 @@ void img_phase_get(ImgPhase *o) {
     }
   }
   o->picPeakMB = (int)(phPeak / 1048576);
+  o->dnPeakMB = (int)(dnPeak / 1048576);
 }
 
 /* a full queue leaves the picture waiting (state 5), asked again on its next request, never failed for good */
@@ -1138,6 +1149,8 @@ void img_pump(void) {
       return; /* first uploads also allocate: time counts too */
     pthread_mutex_lock(&mu);
     Img *im = done_pop();
+    if (im && dnBytes <= dn_cap())
+      pthread_cond_signal(&cv);
     pthread_mutex_unlock(&mu);
     if (!im)
       return;
