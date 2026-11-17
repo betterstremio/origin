@@ -11,6 +11,7 @@
 #define SB_POINTER 1 /* the Magic Remote's pointer: rows hold still under it (board.c) */
 #define SB_TV_PACER 1 /* the loop paces itself and finds the panel's refresh rate */
 #define SB_CACHE_MB 40 /* the app partition is small and shared with every app's install */
+#define SB_SYS_JPEG 1 /* the TV has libjpeg.so.62 (libjpeg-turbo): JPEGs decoded scaled (ui/jpegscale.c) */
 #define SB_IMG_BUDGET_MB 40 /* the TVs have little memory to spare */
 #define SB_VTX_CLIENT_ARRAYS 1 /* the driver maps new memory for every buffer update */
 #define SB_SDL_QUEUE_BY_NAME 1 /* older TVs have an SDL without the audio queue */

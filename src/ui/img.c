@@ -1,6 +1,7 @@
 #include "core/fillstat.h"
 #include "platform/plat.h"
 #include "ui/img.h"
+#include "ui/jpegscale.h"
 #include <SDL2/SDL.h>
 #include "ui/gfx.h"
 #include "core/net.h"
@@ -12,6 +13,7 @@
 #include <unistd.h>
 #include <time.h>
 #include <math.h>
+#include <stdint.h>
 /* the JPEG decoder's NEON loops on ARM (stb_image never switches them on by itself): Android (arm64 and v7, NDK clang)
    and any 64-bit ARM. Not the webOS ARMv7 build: its zig compiler stops with "Do not know how to split the result of this
    operator" on them (as it does on libwebp's NEON, see tools/targets/webos.sh) */
@@ -188,7 +190,12 @@ typedef struct Img {
   int upRow; /* a large picture uploading in bands over several frames */
   int urgent; /* the picture the screen waits on (a backdrop): it goes up first, in bigger bands */
   int pin; /* never evicted (title art: small, wanted at once) */
-  int inPri; /* waiting in the first stack (pstk) */
+  int inPri; /* asked to go ahead (img_ahead_shaped): class 2 in the queue, like pinned art */
+  unsigned seq; /* the order it was queued in (on-screen pictures load in it: draw order) */
+  int pfOnly; /* only a look-ahead has asked for it so far (not on screen) */
+  int saveLater; /* its small copy is written once the decode slot is free */
+  int gone; /* the host said it does not exist (404/410): not asked again */
+  double readyAt; /* when its decode was done (an on-screen one may wait a moment for the ones before it) */
   struct Img *dnext;
   int inDone; /* decoded, waiting for upload (inDone: in that list now) */
   int wantPal, palAlpha, palReady;
@@ -213,19 +220,43 @@ static long hpinBytes; /* what the first-screen pins hold now */
 static Img *table[BUCKETS];
 static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t cv = PTHREAD_COND_INITIALIZER;
-/* what to load, newest first: what the screen asks for now goes before what a fast scroll asked for and left behind
-   (a first-come queue showed placeholders while passed titles loaded); title art has its own stack, served first */
-static Img *stk[1024], *pstk[128];
-static int sn, psn, qn;
-static Img *urg; /* the one picture the screen waits on (the backdrop): taken before both stacks */
+/* what to load: one list, each pick the one that matters most now: the backdrop the screen waits on (urg, taken first),
+   then what is on screen (asked in the last two frames), then title art and pictures asked to go ahead, then what a
+   look-ahead asked for. What is on screen goes in the order it was asked for, which is the order it is drawn in (rows
+   top to bottom, cards left to right): a row fills in from its start, never from its middle; the others go most
+   recently asked first (a fast scroll's passed titles wait behind the ones it reached) */
+static Img *pend[1024];
+static int qn;
+static unsigned qSeq, frameNo;
+static Img *urg; /* the one picture the screen waits on (the backdrop): taken before the list (not counted in qn) */
 static void q_push(Img *im, int pri) {
-  if (pri && psn < 128) {
-    pstk[psn++] = im;
+  im->seq = ++qSeq;
+  if (pri)
     im->inPri = 1;
-  } else
-    stk[sn++] = im;
-  qn++;
+  pend[qn++] = im;
 } /* under mu; room checked by the caller */
+static int q_class(const Img *im) {
+  return im->urgent ? 4 : (!im->pfOnly && frameNo - im->lastUse <= 2) ? 3 : (im->pin || im->inPri) ? 2 : 1;
+}
+static int q_before(const Img *a, int ca, const Img *b) {
+  return ca == 3 ? a->seq < b->seq : a->seq > b->seq;
+} /* (same class: on screen, the first asked; else the newest) */
+static Img *q_pop(void) { /* under mu, qn > 0 */
+  int best = -1, bc = -1;
+  for (int i = 0; i < qn; i++) {
+    int c = q_class(pend[i]);
+    if (c > bc || (c == bc && q_before(pend[i], c, pend[best]))) {
+      best = i;
+      bc = c;
+    }
+  }
+  Img *im = pend[best];
+  pend[best] = pend[--qn];
+  im->inPri = 0;
+  return im;
+}
+static Img *busy[8]; /* what each worker is loading now (under mu) */
+static double mono_s(void);
 /* decoded pictures waiting for upload: a list without a limit (a full array dropped them, and a dropped picture held
    its pixels and never showed: a backdrop waiting for one never changed again) */
 static Img *doneHead;
@@ -234,17 +265,31 @@ static void done_push(Img *im) {
   if (im->inDone)
     return;
   im->inDone = 1;
+  im->readyAt = mono_s();
   im->dnext = doneHead;
   doneHead = im;
   dn++;
 } /* under mu; never twice (it would point to itself and the list never end) */
-static Img *done_pop(void) { /* an urgent one first (a backdrop is never kept behind posters), else the newest */
+static Img *done_pop(void) { /* the order of the loading: a backdrop, what is on screen (in its order), title art, the rest */
   Img **pp = &doneHead;
-  for (Img **q = &doneHead; *q; q = &(*q)->dnext)
-    if ((*q)->urgent) {
+  int bc = -1;
+  for (Img **q = &doneHead; *q; q = &(*q)->dnext) {
+    int c = q_class(*q);
+    if (c > bc || (c == bc && q_before(*q, c, *pp))) {
+      bc = c;
       pp = q;
-      break;
     }
+  }
+  if (*pp && bc == 3) { /* on screen: one asked before it and still loading is waited for a moment, so a row shows in order */
+    const Img *im = *pp;
+    int ahead = 0;
+    for (int i = 0; i < qn && !ahead; i++)
+      ahead = q_class(pend[i]) == 3 && pend[i]->seq < im->seq;
+    for (int i = 0; i < 8 && !ahead; i++)
+      ahead = busy[i] && busy[i] != im && q_class(busy[i]) == 3 && busy[i]->seq < im->seq;
+    if (ahead && mono_s() - im->readyAt < 0.3)
+      return NULL; /* (never longer: a slow one does not hold the rest) */
+  }
   Img *im = *pp;
   if (im) {
     *pp = im->dnext;
@@ -254,7 +299,6 @@ static Img *done_pop(void) { /* an urgent one first (a backdrop is never kept be
   }
   return im;
 }
-static unsigned frameNo;
 static long usedBytes, budgetBytes = SB_IMG_BUDGET_MB * 1024L * 1024;
 static char cacheDir[1024];
 #define WORKERS_MAX                                                                                                   \
@@ -405,9 +449,22 @@ static void load_(Img *im) {
     }
   } /* a bundled picture */
   else if (!data) {
-    int st;
+    char nk[2100], np[1200];
+    snprintf(nk, sizeof nk, "neg:%s", im->src);
+    if (cache_file(nk, 86400, np, sizeof np)) { /* missing yesterday: not asked again for a day */
+      im->gone = 1;
+      im->fails++;
+      im->failAt = mono_s();
+      im->state = 3;
+      return;
+    }
+    int st = 0;
     data = net_fetch_sync(im->src, &len, &st, 20000);
     fromNet = 1;
+    if (!data && (st == 404 || st == 410)) {
+      cache_write(nk, (const unsigned char *)"1", 1);
+      im->gone = 1;
+    }
   }
   if (!data || len < 64) {
     fprintf(stderr, "[img] failed %s\n", im->src);
@@ -420,16 +477,61 @@ static void load_(Img *im) {
   dec_enter();
   decode_part(im, data, len, fromNet, key);
   dec_leave();
+  if (im->saveLater) { /* the small copy's encoding (tens of ms on the TV) no longer holds a decode slot */
+    im->saveLater = 0;
+    if (im->px) {
+      small_save(im, im->px, im->pw, im->ph);
+      if (im->fit >= 0)
+        round_corners(im->px, im->pw, im->ph, im->radius);
+    }
+  }
+}
+/* the scale a w0 x h0 picture must keep to still cover what it is cut to (1 or more: decode it whole). A crop (fit 3) is
+   cut from the picture's 16:9 middle, so it is that window's height that must reach the box's height */
+static float cover_scale(const Img *im, int w0, int h0) {
+  if (im->w <= 0 || im->h <= 0 || w0 <= 0 || h0 <= 0)
+    return 1;
+  if (im->fit == 3) {
+    float rh = (float)w0 / OPEN_ASPECT < (float)h0 ? (float)w0 / OPEN_ASPECT : (float)h0;
+    return (float)im->h / rh;
+  }
+  float sx = (float)im->w / w0, sy = (float)im->h / h0;
+  return sx > sy ? sx : sy;
 }
 static void decode_part(Img *im, unsigned char *data, size_t len, int fromNet, const char *key) {
   int w, h, ch = 4;
-  unsigned char *px;
+  unsigned char *px = NULL;
   fill_dev_decode_delay();
-  if (len > 12 && !memcmp(data, "RIFF", 4) && !memcmp(data + 8, "WEBP", 4)) {
-    px = WebPDecodeRGBA(data, len, &w, &h);
-  } /* metahub serves WebP */
-  else
-    px = stbi_load_from_memory(data, (int)len, &w, &h, &ch, 4);
+  if (len > 12 && !memcmp(data, "RIFF", 4) && !memcmp(data + 8, "WEBP", 4)) { /* metahub serves WebP: decoded straight at the size it is shown */
+    int w0 = 0, h0 = 0;
+    if (WebPGetInfo(data, len, &w0, &h0) && w0 > 0 && h0 > 0) {
+      float sc = cover_scale(im, w0, h0);
+      if (sc < 0.9f) {
+        WebPDecoderConfig cf;
+        if (WebPInitDecoderConfig(&cf)) {
+          cf.options.use_scaling = 1;
+          cf.options.scaled_width = (int)(w0 * sc + 0.999f);
+          cf.options.scaled_height = (int)(h0 * sc + 0.999f);
+          cf.output.colorspace = MODE_RGBA;
+          if (WebPDecode(data, len, &cf) == VP8_STATUS_OK) {
+            px = cf.output.u.RGBA.rgba;
+            w = cf.output.width;
+            h = cf.output.height;
+            cf.output.is_external_memory = 1; /* (ours now: freed with free()) */
+          } else
+            WebPFreeDecBuffer(&cf.output);
+        }
+      }
+    }
+    if (!px)
+      px = WebPDecodeRGBA(data, len, &w, &h);
+  } else {
+    int w0 = 0, h0 = 0, c0;
+    if (stbi_info_from_memory(data, (int)len, &w0, &h0, &c0))
+      px = jpeg_scaled_rgba(data, len, cover_scale(im, w0, h0), &w, &h); /* (the system's libjpeg at 1/2, 1/4, 1/8 when that covers it) */
+    if (!px)
+      px = stbi_load_from_memory(data, (int)len, &w, &h, &ch, 4);
+  }
   if (px && fromNet && im->fit != 3 && !(im->fit < 0 && im->w * im->h <= 260 * 88))
     cache_write(key, data, len); /* (not the big original behind a card's crop or a card's logo: only what they keep,
                                     saved small below; a full original each would push the cards out of a TV's cache) */
@@ -480,8 +582,7 @@ static void decode_part(Img *im, unsigned char *data, size_t len, int fromNet, c
       im->state = 3;
       return;
     }
-    small_save(im, out, im->w, im->h); /* before the corners: they are put back on load */
-    round_corners(out, im->w, im->h, im->radius);
+    im->saveLater = 1; /* its small copy (before the corners: they are put back on load) is made out of the decode slot */
     im->px = out;
     im->pw = im->w;
     im->ph = im->h;
@@ -506,7 +607,7 @@ static void decode_part(Img *im, unsigned char *data, size_t len, int fromNet, c
       h = nh;
     }
   }
-  small_save(im, px, w, h);
+  im->saveLater = 1;
   im->px = px;
   im->pw = w;
   im->ph = h;
@@ -515,23 +616,18 @@ static void decode_part(Img *im, unsigned char *data, size_t len, int fromNet, c
 }
 static void *worker(void *a) {
   plat_thread_background(10);
-  (void)a;
+  int wid = (int)(intptr_t)a;
   net_keep_this_thread();
   for (;;) {
     pthread_mutex_lock(&mu);
-    while (!qn)
+    while (!qn && !urg)
       pthread_cond_wait(&cv, &mu);
     Img *im;
-    if (urg)
+    if (urg) {
       im = urg;
-    else if (psn) {
-      im = pstk[--psn];
-      im->inPri = 0;
-    } else
-      im = stk[--sn];
-    qn--;
-    if (im == urg)
       urg = NULL;
+    } else
+      im = q_pop();
     if (im->state == 1 || im->inDone) {
       pthread_mutex_unlock(&mu);
       continue;
@@ -544,9 +640,13 @@ static void *worker(void *a) {
       continue;
     }
     im->state = 1;
+    if (wid < 8)
+      busy[wid] = im;
     pthread_mutex_unlock(&mu);
     load(im);
     pthread_mutex_lock(&mu);
+    if (wid < 8)
+      busy[wid] = NULL;
     if (im->state != 3)
       im->state = 2;
     done_push(im);
@@ -566,7 +666,7 @@ int img_init(const char *dir) {
   fprintf(stderr, "[img] %d workers, %d decoding at once\n", n, decMax);
   for (int i = 0; i < n; i++) {
     pthread_t t;
-    pthread_create(&t, NULL, worker, NULL);
+    pthread_create(&t, NULL, worker, (void *)(intptr_t)i);
     pthread_detach(t);
   }
   return 1;
@@ -587,7 +687,7 @@ int img_budget_mb(void) {
 }
 void img_queue_stats(int *queued, int *waiting) {
   pthread_mutex_lock(&mu);
-  *queued = qn;
+  *queued = qn + (urg != NULL);
   *waiting = dn;
   pthread_mutex_unlock(&mu);
 }
@@ -605,7 +705,7 @@ void img_frame(void) {
 static void enqueue_at(Img *im, int front) {
   pthread_mutex_lock(&mu);
   im->askAt = mono_s();
-  if (sn < 1024) {
+  if (qn < 1024) {
     q_push(im, front);
     im->state = 0;
     pthread_cond_signal(&cv);
@@ -616,15 +716,21 @@ static void enqueue_at(Img *im, int front) {
 static void enqueue(Img *im) {
   enqueue_at(im, 0);
 }
+static int pfMode; /* the caller is looking ahead (img_prefetch_mode): what it asks for is not on screen */
+void img_prefetch_mode(int on) {
+  pfMode = on;
+}
 static Img *request_as(const char *key, const char *src, int w, int h, int fit, float radius) {
   unsigned hs = fnv(key);
   Img *im = find(key, hs);
   if (im) {
     im->lastUse = frameNo;
     im->row = ctxRow;
+    if (!pfMode)
+      im->pfOnly = 0;
     if (im->state == 5)
       enqueue(im);
-    if (im->state == 3 && im->fails > 0 && im->fails < 6 && mono_s() - im->failAt > 1.5 * (1 << (im->fails - 1))) {
+    if (im->state == 3 && !im->gone && im->fails > 0 && im->fails < 6 && mono_s() - im->failAt > 1.5 * (1 << (im->fails - 1))) {
       fprintf(stderr, "[img] again (%d) %s\n", im->fails, im->src);
       enqueue(im);
     } /* failed (a network blip): asked for again, it tries again after 1.5, 3, 6, 12, 24 s */
@@ -654,6 +760,7 @@ static Img *request_as(const char *key, const char *src, int w, int h, int fit, 
   im->lastUse = frameNo;
   im->row = ctxRow;
   im->wantTex = 1;
+  im->pfOnly = pfMode;
   im->next = table[hs % BUCKETS];
   table[hs % BUCKETS] = im;
   enqueue(im);
@@ -778,7 +885,7 @@ GLuint img_get_sized(const char *url, int w, int h, float *aspect) {
   return im->tex;
 } /* a picture at a size of its own (img_get keeps one size per address: the first asked) */
 int img_idle(void) {
-  return qn == 0;
+  return qn == 0 && !urg;
 } /* nothing waits to load: room for what only makes things nicer (a sharp card, its logo) */
 int img_has_room(void) {
   return usedBytes < budgetBytes / 100 * 85;
@@ -804,31 +911,14 @@ static void urgent_move(Img *im) {
   if (im->state != 0 || im == urg)
     return;
   pthread_mutex_lock(&mu);
-  int found = 0;
-  for (int i = sn - 1; i >= 0 && !found; i--)
-    if (stk[i] == im) {
-      memmove(stk + i, stk + i + 1, (size_t)(sn - i - 1) * sizeof *stk);
-      sn--;
-      found = 1;
-    }
-  for (int i = psn - 1; i >= 0 && !found; i--)
-    if (pstk[i] == im) {
-      memmove(pstk + i, pstk + i + 1, (size_t)(psn - i - 1) * sizeof *pstk);
-      psn--;
-      im->inPri = 0;
-      found = 1;
-    }
-  if (found) {
-    if (urg) {
-      if (sn < 1024)
-        stk[sn++] = urg;
-      else {
-        pstk[psn++] = urg;
-        urg->inPri = 1;
-      }
-    }
-    urg = im;
-  } /* (a picture already taken by a worker is not in them: nothing to do) */
+  for (int i = qn - 1; i >= 0; i--)
+    if (pend[i] == im) {
+      pend[i] = pend[--qn];
+      if (urg)
+        pend[qn++] = urg; /* the one it replaces goes back to the list */
+      urg = im;
+      break;
+    } /* (a picture already taken by a worker is not in the list: nothing to do) */
   pthread_mutex_unlock(&mu);
 }
 void img_urgent(const char *url, int w, int h) {
@@ -848,38 +938,20 @@ void img_ahead_shaped(const char *url, int w, int h, float radius, int fit) {
     return;
   char k[2300];
   Img *im = request_as(shaped_key(k, sizeof k, url, w, h, radius, fit), url, w, h, fit, radius);
-  if (im->state != 0 || im->inPri || im == urg)
-    return;
-  pthread_mutex_lock(&mu);
-  if (im->state == 0 && !im->inPri && im != urg && psn < 128)
-    for (int i = sn - 1; i >= 0; i--)
-      if (stk[i] == im) {
-        memmove(stk + i, stk + i + 1, (size_t)(sn - i - 1) * sizeof *stk);
-        sn--;
-        pstk[psn++] = im;
-        im->inPri = 1;
-        break;
-      }
-  pthread_mutex_unlock(&mu);
+  if (im->state == 0)
+    im->inPri = 1; /* (class 2 in the queue: after what is on screen, before the plain look-ahead) */
 }
 /* title art: decoded before the posters waiting in the queue, and kept */
 void img_prefetch_pri(const char *url, int w, int h) {
   if (!url || !*url)
     return;
   Img *im = find(url, fnv(url));
-  if (!im) {
+  if (!im)
     im = request(url, w, h);
-    if (im->state == 0) {
-      pthread_mutex_lock(&mu); /* move it from the back to the front */
-      if (sn && stk[sn - 1] == im) {
-        sn--;
-        qn--;
-      }
-      pthread_mutex_unlock(&mu);
-      enqueue_at(im, 1);
-    }
-  } else
+  else
     im->lastUse = frameNo;
+  if (im->state == 0)
+    im->inPri = 1;
   /* the last 32 kept (a logo at its drawn size is ~360 KB: about 12 MB of the picture budget at most) */
   static Img *pinned[32];
   static int pn;
@@ -912,7 +984,7 @@ int img_palette(const char *url, int w, int h, int alpha, Palette *out) {
     if ((im->state == 2 || im->tex) &&
         !im->px) { /* already decoded without it: load again for the colours (not while its pixels wait to go up) */
       pthread_mutex_lock(&mu);
-      if (sn < 1024) {
+      if (qn < 1024) {
         q_push(im, 0);
         pthread_cond_signal(&cv);
       }

@@ -39,6 +39,7 @@ void img_ahead_shaped(const char *url, int w, int h, float radius, int fit);
 void img_prefetch(const char *url, int w, int h);
 int img_budget_mb(void); /* the picture memory allowed (small on most TVs) */
 void img_urgent(const char *url, int w, int h); /* the next one decoded (the backdrop waited on) */
+void img_prefetch_mode(int on); /* 1 while a look-ahead asks: what it asks for is not on screen (loaded after what is) */
 void img_prefetch_pri(const char *url, int w, int h); /* ahead of the queue, and never evicted (title art) */
 void img_pump(void); /* uploads finished decodes; call per frame (bounded work) */
 void img_frame(void); /* marks the frame (for eviction) */

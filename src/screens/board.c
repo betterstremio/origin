@@ -2303,6 +2303,7 @@ static void row_prefetch(Row *r, int slot, int from, int to) {
   r->pf[slot][1] = to;
   int wait = 0;
   int cw = (int)card_w(r), ch = (int)card_h(r), fit = r->wide ? 1 : 0;
+  img_prefetch_mode(1);
   for (int i = from; i <= to; i++) {
     int hold, ch2;
     const CardPrep *cp = row_prep(r, i, 0, &hold, &ch2);
@@ -2320,6 +2321,7 @@ static void row_prefetch(Row *r, int slot, int from, int to) {
         img_get_sized(lu, CROP_LOGO_W, CROP_LOGO_H, NULL);
     } /* its logo too */
   }
+  img_prefetch_mode(0);
   r->pfWait[slot] = (unsigned char)wait;
 }
 /* the row being scrolled under the open box: the next cards' box picture, sharp crop and logo before anything else,
