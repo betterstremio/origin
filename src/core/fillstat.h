@@ -8,6 +8,7 @@ void fill_screen_ref(void); /* board_draw start, before any offset: the screen's
 void fill_begin(const char *id, int kind, int rowDist); /* before a card is drawn: the title's id, kind (bit 0: the open box; bit 1: a wide row), the row's distance from the focus */
 void fill_why(int imgCode); /* the card's picture is not final: img_why_shaped of the picture it waits on */
 void fill_why_prep(void); /* the card has no prep or holds it */
+void fill_far(int asked, int already); /* a far row's look-ahead: pictures asked, of those already loaded */
 void fill_rebuild(void); /* the board rebuilt its rows */
 void fill_art(int final); /* card_art / the open card: what the card's picture drew */
 void fill_logo(int final); /* crop_logo: the logo's state */

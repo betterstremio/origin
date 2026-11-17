@@ -903,6 +903,15 @@ int img_back_shaped(const char *url, int w, int h, float radius, int fit) {
     im->smOk = 1;
   return 1;
 }
+/* shown before in this session (no disk look-up: a hash find, cheap enough for a row of cards every few frames) */
+int img_seen_shaped(const char *url, int w, int h, float radius, int fit) {
+  if (!url || !*url)
+    return 0;
+  char k[2300];
+  shaped_key(k, sizeof k, url, w, h, radius, fit);
+  Img *im = find(k, fnv(k));
+  return im && im->shown;
+}
 int img_shaped_loaded(const char *url, int w, int h, float radius, int fit) {
   char k[2300];
   shaped_key(k, sizeof k, url, w, h, radius, fit);

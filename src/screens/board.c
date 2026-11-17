@@ -1492,7 +1492,7 @@ static void crop_logo(const Item *it, const CardPrep *cp, float x, float y, floa
   char lu[512];
   logo_src(it, lu, sizeof lu);
   if (!(img_shaped_loaded(cp->art, (int)w, (int)h, CARD_R, 3) || img_shaped_loaded(cp->pre, (int)w, (int)h, CARD_R, 3))) {
-    if (lu[0] && img_back_shaped(cp->art, (int)w, (int)h, CARD_R, 3) && img_back_shaped(lu, CROP_LOGO_W, CROP_LOGO_H, 0, -1))
+    if (lu[0] && img_seen_shaped(cp->art, (int)w, (int)h, CARD_R, 3) && img_seen_shaped(lu, CROP_LOGO_W, CROP_LOGO_H, 0, -1))
       img_ahead_shaped(lu, CROP_LOGO_W, CROP_LOGO_H, 0, -1); /* a return: the logo is asked with its picture, not after it */
     return;
   }
@@ -2323,31 +2323,35 @@ static void row_far_ahead(Row *r) {
   int cw = (int)card_w(r), ch = (int)card_h(r), n = r->items.n;
   int c0 = (int)(r->off.v / step_of(r)), c1 = c0 + 7 < n - 1 ? c0 + 7 : n - 1;
   img_prefetch_mode(1);
+  int asked = 0, have = 0;
   for (int i = c1; i >= (c0 > 0 ? c0 - 1 : 0); i--) {
     int hold, chg;
     const CardPrep *cp = row_prep(r, i, 0, &hold, &chg);
     if (!cp || hold)
       continue;
     if (!cp->crop) {
-      if (img_back_shaped(cp->art, cw, ch, CARD_R, r->wide ? 1 : 0))
+      if (img_seen_shaped(cp->art, cw, ch, CARD_R, r->wide ? 1 : 0))
         img_ahead_shaped(cp->art, cw, ch, CARD_R, r->wide ? 1 : 0);
       continue;
     }
-    if (img_back_shaped(cp->art, cw, ch, CARD_R, 3)) {
+    if (img_seen_shaped(cp->art, cw, ch, CARD_R, 3)) {
       char lu[512];
       logo_src(&r->items.items[i], lu, sizeof lu);
-      if (lu[0] && img_back_shaped(lu, CROP_LOGO_W, CROP_LOGO_H, 0, -1))
+      if (lu[0] && img_seen_shaped(lu, CROP_LOGO_W, CROP_LOGO_H, 0, -1))
         img_ahead_shaped(lu, CROP_LOGO_W, CROP_LOGO_H, 0, -1);
       img_ahead_shaped(cp->art, cw, ch, CARD_R, 3);
+      asked++;
+      have += img_shaped_loaded(cp->art, cw, ch, CARD_R, 3);
     }
   }
   if (r->col >= 0 && r->col < n) {
     const CardPrep *cp = row_prep(r, r->col, 0, &(int){ 0 }, NULL);
     int fw = r->wide ? cw : (int)CARD_OPEN_W;
-    if (cp && cp->crop && img_back_shaped(cp->art, fw, ch, CARD_R, 1))
+    if (cp && cp->crop && img_seen_shaped(cp->art, fw, ch, CARD_R, 1))
       img_ahead_shaped(cp->art, fw, ch, CARD_R, 1); /* the one the box shows */
   }
   img_prefetch_mode(0);
+  fill_far(asked, have);
 }
 /* the row being scrolled under the open box: the next cards' box picture, sharp crop and logo before anything else,
    asked every frame so a scroll never drops them (the rest of the row keeps the quick crops). 2 on a stick, 4 elsewhere

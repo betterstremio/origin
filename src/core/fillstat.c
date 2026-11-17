@@ -38,7 +38,12 @@ static const char *const rname[NR] = { "EVb", "EVg", "EVd", "EVs", "UPLOAD", "QU
 static unsigned whyN[2][NR], evStage[4], rtN, rtF, reloadN, rebuildGen, rebuildPh;
 static unsigned long long pendKey;
 static int pendKind, pendWhy = -1, pendPrep, pendDist;
-static unsigned reloadD[9];
+static unsigned reloadD[9], farN[3];
+void fill_far(int asked, int already) {
+  farN[0]++;
+  farN[1] += (unsigned)asked;
+  farN[2] += (unsigned)already;
+}
 static int on = -1, ph, phActive;
 static char phName[48];
 static int expRow, expCol;
@@ -383,6 +388,7 @@ void fill_phase_begin(const char *name, int er, int ec) {
   memset(whyN, 0, sizeof whyN);
   memset(evStage, 0, sizeof evStage);
   memset(reloadD, 0, sizeof reloadD);
+  memset(farN, 0, sizeof farN);
   rtN = rtF = reloadN = rebuildPh = 0;
   img_phase_reset();
   memset(hist, 0, sizeof hist);
@@ -522,10 +528,10 @@ void fill_phase_end(int row, int col) {
           kp95, keys, h, img_used_mb());
   fprintf(stderr,
           "[fill] why phase=%s rtfin=%s (%u/%u) reload=%u why=%s bwhy=%s evstage=Q%u/U%u/N%u/o%u ev=%u/%u/%u/%u ups=%u "
-          "upfr=%u up95=%dKB rebuild=%u picpk=%dMB dnpk=%dMB rdist=%u/%u/%u/%u/%u/%u/%u/%u/%u\n",
+          "upfr=%u up95=%dKB rebuild=%u picpk=%dMB dnpk=%dMB rdist=%u/%u/%u/%u/%u/%u/%u/%u/%u far=%u/%u/%u\n",
           phName, rtf, rtF, rtN, reloadN, wy[0], wy[1], evStage[0], evStage[1], evStage[2], evStage[3], ip.ev[1], ip.ev[2],
           ip.ev[3], ip.ev[4], ip.ups, ip.upFrames, ip.upP95KB, rebuildPh, ip.picPeakMB, ip.dnPeakMB, reloadD[0], reloadD[1], reloadD[2], reloadD[3], reloadD[4], reloadD[5],
-          reloadD[6], reloadD[7], reloadD[8]);
+          reloadD[6], reloadD[7], reloadD[8], farN[0], farN[1], farN[2]);
   if (!strncmp(phName, "BR", 2)) /* the cards of the other rows, then of the focused row: per card, first visible to final */
     for (int g = 0; g < 2; g++) {
       int gn2 = 0, gready = 0, gnever = 0, gnt = 0, gmx = 0;
