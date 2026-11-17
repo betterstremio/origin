@@ -18,7 +18,7 @@
 #define NBIN 1600 /* 0.25 ms bins, up to 400 ms */
 typedef struct {
   unsigned long long key;
-  int used, everSeen, inPh, fin, prior, ready, lastArt, lastLogo, idx, needLogo;
+  int foc, used, everSeen, inPh, fin, prior, ready, lastArt, lastLogo, idx, needLogo;
   unsigned long long seenFrame;
   double firstVis, lastVis, visMs, firstFin;
 } Card;
@@ -49,6 +49,17 @@ static int relDone, boxN, boxR;
 static float keyLat[4096];
 static int nKey;
 static int hwmMB;
+/* the BR profile: the cards of the other rows and of the focused row, apart */
+static const void *focRow;
+static int fVisO, fFinO, fVisF, fFinF;
+#define NSEC 16
+static double phT0, secO[NSEC], secF[NSEC];
+static int secNO[NSEC], secNF[NSEC];
+static double sumO, minO, sumF, minF;
+static unsigned frO, frF;
+void fill_focus_row(const void *row) {
+  focRow = row;
+}
 
 int fill_on(void) {
   if (on < 0)
@@ -118,6 +129,14 @@ void fill_card(const void *row, int idx, float x, float y, float w, float h, int
   c->needLogo = needLogo;
   fVis++;
   fFin += fin;
+  c->foc = row == focRow;
+  if (c->foc) {
+    fVisF++;
+    fFinF += fin;
+  } else {
+    fVisO++;
+    fFinO += fin;
+  }
   if (!ph) {
     c->everSeen = 1;
     return;
@@ -202,6 +221,30 @@ void fill_tick(void) {
             ckbN++;
         } else
           sumV += 1;
+        if (fVisO) {
+          double v = (double)fFinO / fVisO;
+          sumO += v;
+          if (v < minO)
+            minO = v;
+          frO++;
+          int k = (int)((now - phT0) / 1000);
+          if (k >= 0 && k < NSEC) {
+            secO[k] += v;
+            secNO[k]++;
+          }
+        }
+        if (fVisF) {
+          double v = (double)fFinF / fVisF;
+          sumF += v;
+          if (v < minF)
+            minF = v;
+          frF++;
+          int k = (int)((now - phT0) / 1000);
+          if (k >= 0 && k < NSEC) {
+            secF[k] += v;
+            secNF[k]++;
+          }
+        }
       } else {
         if (run >= 5)
           run5++;
@@ -222,7 +265,7 @@ void fill_tick(void) {
   prevNow = now;
   fnow = now;
   frameNo++;
-  fVis = fFin = 0;
+  fVis = fFin = fVisO = fFinO = fVisF = fFinF = 0;
 }
 void fill_phase_begin(const char *name, int er, int ec) {
   if (!fill_on())
@@ -243,6 +286,14 @@ void fill_phase_begin(const char *name, int er, int ec) {
   relDone = 0;
   settleAt = -1;
   boxN = boxR = 0;
+  phT0 = fnow;
+  sumO = sumF = 0;
+  minO = minF = 1;
+  frO = frF = 0;
+  memset(secO, 0, sizeof secO);
+  memset(secF, 0, sizeof secF);
+  memset(secNO, 0, sizeof secNO);
+  memset(secNF, 0, sizeof secNF);
   nKey = 0;
   lastKeyT = -1;
   ph = 1;
@@ -347,6 +398,41 @@ void fill_phase_end(int row, int col) {
           n ? (int)(100.0 * ready / n + 0.5) : 100, never, boxR, boxN, rt, rel300, (int)settleAt, fr, refPer,
           pctl(hist, fr, 0.5), pctl(hist, fr, 0.95), pctl(hist, fr, 0.99), worst, fr ? 100.0 * lateN / fr : 0.0, run5,
           kp95, keys, h, img_used_mb());
+  if (!strncmp(phName, "BR", 2)) /* the cards of the other rows, then of the focused row: per card, first visible to final */
+    for (int g = 0; g < 2; g++) {
+      int gn2 = 0, gready = 0, gnever = 0, gnt = 0, gmx = 0;
+      for (int i = 0; i < NCARD; i++) {
+        Card *c = &tab[i];
+        if (!c->used || !c->inPh || (c->foc != 0) != g)
+          continue;
+        gn2++;
+        gready += c->ready;
+        int t = c->fin ? (int)(c->firstFin - c->firstVis + 0.5) : (int)(c->lastVis - c->firstVis + 0.5);
+        if (c->fin && t < 2)
+          t = 0;
+        if (!c->fin && c->visMs >= 600)
+          gnever++;
+        tt[gnt++] = t;
+        if (t > gmx)
+          gmx = t;
+      }
+      qsort(tt, gnt, sizeof *tt, cmpi);
+      int q50 = gnt ? tt[gnt / 2] : 0, j95 = (int)(gnt * 0.95), q95 = gnt ? tt[j95 < gnt ? j95 : gnt - 1] : 0;
+      char tl[200] = "";
+      size_t o = 0;
+      for (int k = 0; k < NSEC && k < 10; k++) {
+        int cn = g ? secNF[k] : secNO[k];
+        double sv = g ? secF[k] : secO[k];
+        o += (size_t)snprintf(tl + o, sizeof tl - o, "%s%.2f", k ? "/" : "", cn ? sv / cn : -1.0);
+      }
+      unsigned f2 = g ? frF : frO;
+      double s2 = g ? sumF : sumO;
+      fprintf(stderr,
+              "[fill] phase=%s-%s cards=%d vfr=%.2f vfrmin=%.2f ttf p50=%d p95=%d max=%d ready=%d%% never=%d vfrT=%s "
+              "hwm=%dMB pic=%dMB\n",
+              phName, g ? "focus" : "others", gn2, f2 ? s2 / f2 : 1.0, g ? minF : minO, q50, q95, gmx,
+              gn2 ? (int)(100.0 * gready / gn2 + 0.5) : 100, gnever, tl, h, img_used_mb());
+    }
   ph = 0;
   phActive = 0;
 }

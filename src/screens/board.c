@@ -184,6 +184,14 @@ static int focusOn(Board *b) {
   return cur() == b && !topNav.active && !spotOn(b);
 }
 /* the fast-scroll test: where Home's focus is (rank among the shown rows; -2 top bar, -1 billboard), the shown rows */
+const void *board_focus_row(char *title, size_t cap) { /* the fast-scroll test: the focused row and its title */
+  Board *b = &boards[0];
+  if (SCR != SCR_HOME || b->rowIdx < 0 || b->rowIdx >= b->n)
+    return NULL;
+  if (title && cap)
+    snprintf(title, cap, "%s", b->rows[b->rowIdx].title);
+  return &b->rows[b->rowIdx];
+}
 int board_focus_pos(int *row, int *col, int *nrows) {
   Board *b = &boards[0];
   int n = 0, rk = -1;

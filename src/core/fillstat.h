@@ -12,6 +12,7 @@ void fill_logo(int final); /* crop_logo: the logo's state */
    skip: not counted now (the card is opening) */
 void fill_card(const void *row, int idx, float x, float y, float w, float h, int needLogo, int skip);
 void fill_box(int ready); /* the open box got its title: its picture was in on arrival or not */
+void fill_focus_row(const void *row); /* the focused row (BR profile: its cards are kept apart from the others) */
 void fill_tick(void); /* once per frame, before keys are sent */
 void fill_phase_begin(const char *name, int expectRow, int expectCol);
 void fill_phase_active(int on); /* keys are being sent (frame numbers count); off: settling */
