@@ -330,6 +330,10 @@ static int board_defs(CatalogDef *out, int max, int from) {
       cJSON_ArrayForEach(cat, cats) {
         const char *ctype = js_str(cat, "type", NULL), *cid = js_str(cat, "id", NULL);
         char ex[200];
+        if (ctype && !strcmp(ctype, "library")) {
+          ci++;
+          continue;
+        } /* a debrid service's own file list (AIOStreams' "TorBox" library): no artwork, no row */
         if (ctype && cid && *ctype && *cid && addon_cat_default_extra(cat, ex, sizeof ex) == 0 && seen++ >= from &&
             n < max) {
           CatalogDef *d = &out[n++];
