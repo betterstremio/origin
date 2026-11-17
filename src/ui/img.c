@@ -267,7 +267,7 @@ static double mono_s(void);
    its pixels and never showed: a backdrop waiting for one never changed again) */
 static Img *doneHead;
 static int dn;
-static long dnBytes, dnPeak; /* pixels decoded and waiting for upload (the workers pause above a cap: uploads are the slower side) */
+static long dnBytes, dnPeak; /* pixels decoded and waiting for upload (a worker pause above a cap was tried: no effect on the memory peaks, dropped) */
 static void done_push(Img *im) {
   if (im->inDone)
     return;
@@ -625,17 +625,13 @@ static void decode_part(Img *im, unsigned char *data, size_t len, int fromNet, c
   im->pch = 4;
   im->aspect = (float)w / h;
 }
-static long dn_cap(void) { /* a tenth of the budget, 6..24 MB */
-  long c = budgetBytes / 10;
-  return c < 6L << 20 ? 6L << 20 : c > 24L << 20 ? 24L << 20 : c;
-}
 static void *worker(void *a) {
   plat_thread_background(10);
   int wid = (int)(intptr_t)a;
   net_keep_this_thread();
   for (;;) {
     pthread_mutex_lock(&mu);
-    while ((!qn && !urg) || (!urg && dnBytes > dn_cap()))
+    while (!qn && !urg)
       pthread_cond_wait(&cv, &mu);
     Img *im;
     if (urg) {
@@ -773,13 +769,10 @@ static Img *request_as(const char *key, const char *src, int w, int h, int fit, 
   unsigned hs = fnv(key);
   Img *im = find(key, hs);
   if (im) {
-    int onScreen = !im->pfOnly && frameNo - im->lastUse <= 2;
     im->lastUse = frameNo;
     im->row = ctxRow;
     if (!pfMode)
       im->pfOnly = 0;
-    else if (!im->tex && !onScreen)
-      im->pfOnly = 1; /* (a look-ahead for a picture not on screen: not the class of what is) */
     if (im->state == 5)
       enqueue(im);
     if (im->state == 3 && !im->gone && im->fails > 0 && im->fails < 6 && mono_s() - im->failAt > 1.5 * (1 << (im->fails - 1))) {
@@ -1160,8 +1153,6 @@ void img_pump(void) {
       return; /* first uploads also allocate: time counts too */
     pthread_mutex_lock(&mu);
     Img *im = done_pop();
-    if (im && dnBytes <= dn_cap())
-      pthread_cond_signal(&cv);
     pthread_mutex_unlock(&mu);
     if (!im)
       return;
