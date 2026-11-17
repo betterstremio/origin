@@ -775,10 +775,13 @@ static Img *request_as(const char *key, const char *src, int w, int h, int fit, 
   unsigned hs = fnv(key);
   Img *im = find(key, hs);
   if (im) {
+    int onScreen = !im->pfOnly && frameNo - im->lastUse <= 2;
     im->lastUse = frameNo;
     im->row = ctxRow;
     if (!pfMode)
       im->pfOnly = 0;
+    else if (!im->tex && !onScreen)
+      im->pfOnly = 1; /* (a look-ahead for a picture not on screen: not the class of what is) */
     if (im->state == 5)
       enqueue(im);
     if (im->state == 3 && !im->gone && im->fails > 0 && im->fails < 6 && mono_s() - im->failAt > 1.5 * (1 << (im->fails - 1))) {
