@@ -217,7 +217,7 @@ typedef struct Img {
 static unsigned phEv[5], phUps, phUpFrames, phUpHist[130];
 static long frUp, phPeak;
 static Img *upCur;
-static long upBudget = 320L * 1024; /* per frame upload bytes (img_init: more on a device over 2 GB) */
+static const long upBudget = 320L * 1024; /* per frame upload bytes (1 MB was tried: whole crops in one frame cost the frame 5 ms and the scroll test's p95 and late % rose) */
 static unsigned stEvict, stReturn, stRetFade; /* development: pictures evicted, shown again, and of those faded in */
 static int ctxRow = -1, focusRow = -1; /* the row being drawn; the focused row (set by the board each frame) */
 static unsigned focusAt, hgen = 1;
@@ -681,8 +681,6 @@ int img_init(const char *dir) {
   long nc = sysconf(_SC_NPROCESSORS_ONLN);
   if (nc >= 4 && (mb <= 0 || mb >= 1500))
     decMax = nc > 5 ? 4 : (int)nc - 1;
-  if (mb > 2000)
-    upBudget = 1024L * 1024;
   int n = mb > 0 && mb < 1200 ? 6 : WORKERS_MAX;
   fprintf(stderr, "[img] %d workers, %d decoding at once\n", n, decMax);
   for (int i = 0; i < n; i++) {
@@ -1150,11 +1148,12 @@ void img_pump(void) {
       upCur->state = 0;
       upCur = NULL;
     } else {
-      sent += up_band(upCur, upCur->urgent ? UP_URGENT : UP_BUDGET / 2);
-      if (upCur && (upCur->urgent || sent >= UP_BUDGET))
-        return; /* (a banded box leaves room for the small ones: logos, crops) */
+      sent += up_band(upCur, upCur->urgent ? UP_URGENT : UP_BUDGET);
+      if (upCur)
+        return;
     }
   }
+  t0 = SDL_GetPerformanceCounter();
   double hz = (double)SDL_GetPerformanceFrequency();
   for (int n = 0; n < 6 && sent < UP_BUDGET; n++) {
     if (sent && (double)(SDL_GetPerformanceCounter() - t0) * 1000.0 / hz > 3.0)
