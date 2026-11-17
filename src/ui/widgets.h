@@ -41,7 +41,6 @@ typedef struct {
   char art[512], pre[512], lbl[300], left[64];
   float leftW;
   unsigned lg;
-  int bgw; /* the wide picture is final (TMDB's, or TMDB has none): no more asking */
   int crop; /* a poster card cut from a wide picture (img fit 3): pre the small one (quick, first), art the sharp one
               (asked only while no picture waits); the poster if neither can be had */
 } CardPrep;

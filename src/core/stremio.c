@@ -9,7 +9,6 @@
 #include "core/addons.h"
 #include "core/nuvio.h"
 #include "core/best.h"
-#include "core/tmdb.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -901,11 +900,6 @@ const char *sb_bg_card(const Item *it, char *buf, size_t cap) {
   sb_bg_mid(it, buf, cap);
   if (find_in(buf, "image.tmdb.org/t/p/"))
     replace_in(buf, cap, "/t/p/w1280/", "/t/p/w780/");
-  else if (sb_is_imdb(it->id) && find_in(buf, "images.metahub.space/background/")) { /* only an IMDb id: TMDB's path */
-    const char *p = tmdb_backdrop(it->id);
-    if (p && *p)
-      snprintf(buf, cap, "https://image.tmdb.org/t/p/w780%s", p);
-  }
   return buf;
 }
 const char *sb_bg_large(const Item *it, char *buf, size_t cap) {
