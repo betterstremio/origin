@@ -1487,14 +1487,18 @@ static void cine_details(Board *b, float x, float y, int rtl) {
 /* a poster card cut from its wide picture: the title's logo at its foot (as Netflix's), over a soft shade; the name
    when there is no logo. Only over the cut picture (a card that fell back to its poster has its own words) */
 static void crop_logo(const Item *it, const CardPrep *cp, float x, float y, float w, float h, float a) {
-  if (!cp || !cp->crop || a <= 0.01f ||
-      !(img_shaped_loaded(cp->art, (int)w, (int)h, CARD_R, 3) || img_shaped_loaded(cp->pre, (int)w, (int)h, CARD_R, 3)))
+  if (!cp || !cp->crop || a <= 0.01f)
     return;
-  int rtl = app_rtl();
   char lu[512];
+  logo_src(it, lu, sizeof lu);
+  if (!(img_shaped_loaded(cp->art, (int)w, (int)h, CARD_R, 3) || img_shaped_loaded(cp->pre, (int)w, (int)h, CARD_R, 3))) {
+    if (lu[0] && img_back_shaped(cp->art, (int)w, (int)h, CARD_R, 3) && img_back_shaped(lu, CROP_LOGO_W, CROP_LOGO_H, 0, -1))
+      img_ahead_shaped(lu, CROP_LOGO_W, CROP_LOGO_H, 0, -1); /* a return: the logo is asked with its picture, not after it */
+    return;
+  }
+  int rtl = app_rtl();
   float lw, lh;
   GLuint lt;
-  logo_src(it, lu, sizeof lu);
   gfx_rrect_v(x, y + h * 0.5f, w, h * 0.5f, CARD_R, RGBA(0, 0, 0, 0), RGBA(0, 0, 0, (int)(175 * a)));
   float asp = 0;
   if (lu[0] && !img_shaped_loaded(lu, CROP_LOGO_W, CROP_LOGO_H, 0, -1) &&

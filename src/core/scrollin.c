@@ -168,6 +168,14 @@ static int build(const char *p) {
     ph("RT-deep-slow-up", X_START);
     add(S_TAPS, K_UP, 40, 250, 0);
     add(S_END, 0, 0, 0, 1500);
+  } else if (!strcmp(p, "RT-deep-slow500")) { /* a reader's pace both ways: 700 ms a row down, 500 ms back up */
+    nPh = 40;
+    ph("RT-deep-slow500-down", X_DOWN);
+    add(S_TAPS, K_DOWN, 40, 700, 0);
+    add(S_END, 0, 0, 0, 1000);
+    ph("RT-deep-slow500-up", X_START);
+    add(S_TAPS, K_UP, 40, 500, 0);
+    add(S_END, 0, 0, 0, 1500);
   } else if (!strcmp(p, "RT-deep-hold")) { /* the same with the arrow held (500 ms, then 50 ms repeats) */
     ph("RT-deep-hold-down", X_LAST);
     add(S_HOLD, K_DOWN, 0, 0, HC_LASTROW);
