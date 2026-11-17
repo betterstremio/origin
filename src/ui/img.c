@@ -205,6 +205,7 @@ typedef struct Img {
   int row;       /* the Home row that asked for it last (-1: none): eviction goes by distance from the focus */
   unsigned hpin; /* = hgen: kept while the first screen is pinned (see img_pin_begin) */
   int shown;  /* it has had a texture before (a return: no fade, no wait) */
+  int lost;   /* why its texture is gone (1 budget, 2 guard, 3 dropped from the queue, 4 upload skipped; 0 none): development counters */
   int smOk;   /* its small copy is known to be on disk */
   int fromSm; /* its pixels came from the small copy */
   double askAt;
@@ -212,6 +213,10 @@ typedef struct Img {
   double failAt; /* failed loads so far, and when the last one failed: asked again, it tries once more after a wait */
   struct Img *next;
 } Img;
+/* development: per fill-test phase (img_phase_*): evictions by cause, uploads, bytes uploaded per frame, picture memory peak */
+static unsigned phEv[5], phUps, phUpFrames, phUpHist[130];
+static long frUp, phPeak;
+static Img *upCur;
 static unsigned stEvict, stReturn, stRetFade; /* development: pictures evicted, shown again, and of those faded in */
 static int ctxRow = -1, focusRow = -1; /* the row being drawn; the focused row (set by the board each frame) */
 static unsigned focusAt, hgen = 1;
@@ -634,6 +639,10 @@ static void *worker(void *a) {
     } /* queued twice (urgent and in a queue): another worker has it already */
     /* asked for, then nobody asked again for 1.5 s (scrolled past): not loaded now; the next ask queues it again */
     if (!im->pin && !im->wantPal && frameNo - im->lastUse > 90) {
+      if (im->shown) {
+        im->lost = 3;
+        phEv[3]++;
+      }
       im->state = 2;
       im->wantTex = 0;
       pthread_mutex_unlock(&mu);
@@ -699,6 +708,34 @@ int img_used_mb(void) {
 }
 void img_frame(void) {
   frameNo++;
+  if (frUp) {
+    long kb = frUp / 1024;
+    phUpHist[kb > 128 ? 129 : (kb + 15) / 16 > 128 ? 128 : (kb + 15) / 16]++;
+    phUpFrames++;
+    frUp = 0;
+  }
+}
+void img_phase_reset(void) {
+  memset(phEv, 0, sizeof phEv);
+  memset(phUpHist, 0, sizeof phUpHist);
+  phUps = phUpFrames = 0;
+  phPeak = usedBytes;
+}
+void img_phase_get(ImgPhase *o) {
+  for (int i = 0; i < 5; i++)
+    o->ev[i] = phEv[i];
+  o->ups = phUps;
+  o->upFrames = phUpFrames;
+  unsigned want = (unsigned)(phUpFrames * 0.95), acc = 0;
+  o->upP95KB = 0;
+  for (int i = 0; i < 130; i++) {
+    acc += phUpHist[i];
+    if (acc > want) {
+      o->upP95KB = i * 16;
+      break;
+    }
+  }
+  o->picPeakMB = (int)(phPeak / 1048576);
 }
 
 /* a full queue leaves the picture waiting (state 5), asked again on its next request, never failed for good */
@@ -867,6 +904,19 @@ int img_shaped_failed(const char *url, int w, int h, float radius, int fit) {
   Img *im = find(k, fnv(k));
   return im && im->state == 3;
 }
+/* why a picture is not on screen now, for the fill test: low 4 bits the stage (0 never asked, 1 queued or decoding, 2 decoded and
+   waiting to upload, 3 not asked now, 4 failed, 5 texture there), the rest the cause of a lost texture */
+int img_why_shaped(const char *url, int w, int h, float radius, int fit) {
+  if (!url || !*url)
+    return 0;
+  char k[2300];
+  shaped_key(k, sizeof k, url, w, h, radius, fit);
+  Img *im = find(k, fnv(k));
+  if (!im)
+    return 0;
+  int st = im->tex ? 5 : im->state == 3 ? 4 : (im->px || im->inDone || im == upCur || im->upTex) ? 2 : (im->state == 2 && !im->wantTex) ? 3 : 1;
+  return st | (im->lost << 4);
+}
 GLuint img_get(const char *url, int w, int h, float *aspect) {
   if (!url || !*url)
     return 0;
@@ -1017,7 +1067,6 @@ static void up_log(const char *what, long bytes, Uint64 t0) {
   double ms = (double)(SDL_GetPerformanceCounter() - t0) * 1000.0 / SDL_GetPerformanceFrequency();
   fprintf(stderr, "[up] %s %ld KB %.1f ms\n", what, bytes / 1024, ms);
 }
-static Img *upCur;
 static void up_done(Img *im) {
   im->tex = im->upTex;
   im->upTex = 0;
@@ -1030,10 +1079,15 @@ static void up_done(Img *im) {
       stRetFade++;
   }
   im->shown = 1;
+  im->lost = 0;
   if (fade)
     gfx_tex_fade_in(im->tex);
   im->bytes = im->pw * im->ph * im->pch;
   usedBytes += im->bytes;
+  phUps++;
+  frUp += im->bytes;
+  if (usedBytes > phPeak)
+    phPeak = usedBytes;
   free(im->px);
   im->px = NULL;
   im->lastUse = frameNo;
@@ -1058,6 +1112,10 @@ void img_pump(void) {
   long sent = 0;
   if (upCur) {
     if (!upCur->wantTex) {
+      if (upCur->shown) {
+        upCur->lost = 4;
+        phEv[4]++;
+      }
       gfx_tex_recycle(upCur->upTex, upCur->pw, upCur->ph, upCur->pch, 1);
       upCur->upTex = 0;
       free(upCur->px);
@@ -1081,6 +1139,10 @@ void img_pump(void) {
     if (!im)
       return;
     if (im->px && (im->tex || !im->wantTex)) {
+      if (!im->tex && im->shown) {
+        im->lost = 4;
+        phEv[4]++;
+      }
       free(im->px);
       im->px = NULL;
       continue;
@@ -1188,6 +1250,8 @@ void img_release_unused(int keepMb) {
     usedBytes -= vic->bytes;
     vic->bytes = 0;
     stEvict++;
+    vic->lost = keepMb > 0 ? 2 : 1;
+    phEv[vic->lost]++;
     /* loaded again (from its small copy) only when it is asked for again: queueing it at once made a loop under memory
        pressure (decode, upload, evict, decode...) that filled the queue, and a new backdrop could not get in */
     vic->state = 2;

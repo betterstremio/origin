@@ -2561,7 +2561,11 @@ static void card_wide(Board *b, const Row *r, const Item *it, const CardPrep *cp
               ? clampf((float)((wn - b->wideBt) / 0.18), 0, 1)
               : 1; /* the sharp one: over the stand-in, softly; there before the card opened: nothing to see change */
       if (ek >= 0.999f && focused)
+      {
         fill_art(bt && sk >= 1 && gfx_tex_fade(bt) >= 1);
+        if (fill_on() && (!bt || gfx_tex_fade(bt) < 1))
+          fill_why(img_why_shaped(bu, fw, (int)ch, CARD_R, 1));
+      }
       if (fc >= 0) { /* the stand-in at the sides, the crop where it was, the sharp picture over both once in */
         GLuint ct = img_get_shaped(cu, (int)cw, (int)ch, CARD_R, 3);
         gfx_clip_push(ox, cy, ow, ch);
@@ -2685,8 +2689,10 @@ static void row_draw(Board *b, Row *r, int ri, float y, int near, float rowA) {
     const CardPrep *cp = row_prep(r, i, load, &hold, NULL);
     unsigned long long lk = lift_key(r, i);
     lift_begin(lk, 0, 0, x, cy, cw, ch, CARD_R); /* (the one the focus just left settles back) */
-    fill_begin();
+    fill_begin(r->items.items[i].id, r->wide ? 2 : 0);
     card_draw_prep(&r->items.items[i], cp, x, cy, cw, ch, r->wide, r->label, !hold && (load || near));
+    if (hold || !cp)
+      fill_why_prep();
     crop_logo(&r->items.items[i], cp, x, cy, cw, ch, 1);
     fill_card(r, i, x, cy, cw, ch, cp && cp->crop, 0);
     lift_end(lk, x, cy, cw, ch, CARD_R);
@@ -2748,7 +2754,9 @@ static void row_draw(Board *b, Row *r, int ri, float y, int near, float rowA) {
       gfx_opacity_push(1 - sd);
     } else
       sd = 0;
-    fill_begin();
+    fill_begin(r->items.items[r->col].id, (r->wide ? 2 : 0) + (ek >= 0.999f));
+    if (hold || !cp)
+      fill_why_prep();
     card_wide(b, r, &r->items.items[r->col], cp, x, ox, ow, cy, cw, ch, ek, rtl, 1);
     fill_card(r, r->col, ox, cy, ow, ch, cp && cp->crop && ek <= 0.001f, ek > 0.001f && ek < 0.999f); /* (the open box: its picture, no crop logo) */
     if (sd > 0)
@@ -3133,6 +3141,7 @@ void board_rebuild(void) {
   Board *b = cur();
   if (!b)
     return;
+  fill_rebuild();
   static char titles[MAXROWS][96];
   int cols[MAXROWS], n = b->n, ri = b->rowIdx;
   for (int i = 0; i < n; i++) {

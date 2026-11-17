@@ -53,6 +53,14 @@ void img_set_draw_scale(
     float s); /* surface pixels per layout unit when below 1: pictures are decoded at the size really drawn */
 void img_set_draw_scale_up(float s); /* the same above 1 too (a phone's dp canvas): pictures as sharp as its pixels */
 int img_used_mb(void);
+typedef struct {
+  unsigned ev[5]; /* development, per fill-test phase: textures evicted by cause (1 budget, 2 guard, 3 queue drop, 4 upload skipped) */
+  unsigned ups, upFrames;
+  int upP95KB, picPeakMB;
+} ImgPhase;
+void img_phase_reset(void);
+void img_phase_get(ImgPhase *o);
+int img_why_shaped(const char *url, int w, int h, float radius, int fit); /* development: stage | lost<<4 (see img.c) */
 void img_stats(char *out, size_t cap); /* development: evictions and returns so far, for the memory line */
 /* computes cover-crop uv for drawing a texture of aspect `ta` into a box of aspect `ba`, anchored at the top (posters)
  * or centre */

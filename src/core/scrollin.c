@@ -152,6 +152,21 @@ static int build(const char *p) {
     ph("RT-down2", X_DOWN);
     add(S_TAPS, K_DOWN, N, 150, 0);
     add(S_END, 0, 0, 0, 1500);
+  } else if (!strcmp(p, "RT-deep")) { /* Home far down (the last row, 40 at most) at 250 ms, rest 1 s, back up to the top */
+    nPh = 40;
+    ph("RT-deep-down", X_DOWN);
+    add(S_TAPS, K_DOWN, 40, 250, 0);
+    add(S_END, 0, 0, 0, 1000);
+    ph("RT-deep-up", X_START);
+    add(S_TAPS, K_UP, 40, 250, 0);
+    add(S_END, 0, 0, 0, 1500);
+  } else if (!strcmp(p, "RT-deep-hold")) { /* the same with the arrow held (500 ms, then 50 ms repeats) */
+    ph("RT-deep-hold-down", X_LAST);
+    add(S_HOLD, K_DOWN, 0, 0, HC_LASTROW);
+    add(S_END, 0, 0, 0, 1000);
+    ph("RT-deep-hold-up", X_START);
+    add(S_HOLD, K_UP, 0, 0, HC_ROW_START);
+    add(S_END, 0, 0, 0, 1500);
   } else
     return 0;
   add(S_QUIT, 0, 0, 0, 0);
