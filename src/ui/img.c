@@ -625,17 +625,13 @@ static void decode_part(Img *im, unsigned char *data, size_t len, int fromNet, c
   im->pch = 4;
   im->aspect = (float)w / h;
 }
-static long dn_cap(void) { /* a tenth of the budget, 6..24 MB */
-  long c = budgetBytes / 10;
-  return c < 6L << 20 ? 6L << 20 : c > 24L << 20 ? 24L << 20 : c;
-}
 static void *worker(void *a) {
   plat_thread_background(10);
   int wid = (int)(intptr_t)a;
   net_keep_this_thread();
   for (;;) {
     pthread_mutex_lock(&mu);
-    while ((!qn && !urg) || (!urg && dnBytes > dn_cap()))
+    while (!qn && !urg)
       pthread_cond_wait(&cv, &mu);
     Img *im;
     if (urg) {
@@ -1157,8 +1153,6 @@ void img_pump(void) {
       return; /* first uploads also allocate: time counts too */
     pthread_mutex_lock(&mu);
     Img *im = done_pop();
-    if (im && dnBytes <= dn_cap())
-      pthread_cond_signal(&cv);
     pthread_mutex_unlock(&mu);
     if (!im)
       return;
