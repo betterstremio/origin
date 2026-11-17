@@ -461,6 +461,7 @@ static struct {
     double playAt;
     char bad[4][16];
     int nbad, said, gaveUp, switches, hidSw;
+    int told, ownTried; /* the file's tracks logged; its own track tried converting (your language nowhere in it) */
     /* the sound converted on this device (hproxy): 0 no, 1 opening, 2 playing it; the file's audio track converted, the
        moment to come back to, since when, the picture is HEVC; a first load held back until the file's tracks are read
      */
@@ -2024,28 +2025,64 @@ static void dts_tick(void) {
   int kind = aud_kind(t->codec), unsup = video_audio_unsupported();
   /* the TV hides tracks it can't decode (TrueHD) from its list yet starts on one: an error 200 then belongs to the
    * hidden track, not to the listed one; the listed tracks all play */
-  int hid = 0, hidWant = -1;
+  int hid = 0, hidWant = -1, own = -1, anyWant = 0, hk = 1; /* hk: 2 when a TrueHD track is among the hidden */
   MkvAudio hma[16];
   int hm = mkv_listed(mkv) ? mkv_audio_tracks(mkv, hma, 16) : 0;
   const char *wl =
       !strcmp(store_get("enableDefaultAudioTrack", "true"), "true") ? store_get("defaultAudioTrack", "eng") : "";
+  for (int i = 0; i < n; i++)
+    if (*wl && lang_match(ts[i].lang, wl))
+      anyWant = 1;
   if (hm) {
-    int nb = 0, tvb = 0, tvWant = 0;
-    for (int i = 0; i < hm; i++)
+    int nb = 0, tvb = 0, tvWant = anyWant, d = -1;
+    for (int i = 0; i < hm; i++) {
       if (aud_kind(hma[i].codec))
         nb++;
-    for (int i = 0; i < n; i++) {
+      if (aud_kind(hma[i].codec) == 2)
+        hk = 2;
+      if (*wl && lang_match(hma[i].lang, wl))
+        anyWant = 1;
+      if (d < 0 && hma[i].def)
+        d = i;
+    }
+    for (int i = 0; i < n; i++)
       if (aud_kind(ts[i].codec))
         tvb++;
-      if (*wl && lang_match(ts[i].lang, wl))
-        tvWant = 1;
-    }
     hid = hm > n && nb >= hm - n && !tvb;
     if (hid && *wl && !tvWant)
       for (int i = 0; i < hm && hidWant < 0; i++)
         if (aud_kind(hma[i].codec) && lang_match(hma[i].lang, wl))
           hidWant = i;
+    if (d < 0)
+      d = 0; /* the track the file starts on: its first default one */
+    /* your language nowhere in the file (or none set): a DTS / TrueHD track in a language no track the TV plays has is
+       the film's own sound in a dubbed release (Talaash: Hindi DTS beside two Russian AC3 dubs). That one is converted
+       rather than a dub played; the file's default first, then the most channels */
+    for (int i = 0; hid && !anyWant && i < hm; i++) {
+      if (!aud_kind(hma[i].codec) || !hma[i].lang[0] || !strcasecmp(hma[i].lang, "und"))
+        continue;
+      int dub = 0;
+      for (int j = 0; j < n && !dub; j++)
+        dub = lang_match(ts[j].lang, hma[i].lang);
+      if (!dub && (own < 0 || (hma[i].def && !hma[own].def) ||
+                   (hma[i].def == hma[own].def && hma[i].channels > hma[own].channels)))
+        own = i;
+    }
+    if (!P.dts.told) {
+      P.dts.told = 1;
+      char l[400];
+      size_t k = 0;
+      for (int i = 0; i < hm && k < sizeof l - 80; i++)
+        k += (size_t)snprintf(l + k, sizeof l - k, "%s track %d %s %s %d ch%s", i ? "," : "", i, hma[i].codec,
+                              hma[i].lang[0] ? hma[i].lang : "und", hma[i].channels, i == d ? " (starts here)" : "");
+      fprintf(stderr, "[dts] the file's sound:%s; the TV lists %d\n", l, n);
+    }
   } /* the default-audio language only in a hidden track: that one is converted */
+  if (unsup && own >= 0 && !P.dts.ownTried) {
+    P.dts.ownTried = 1;
+    if (dts_convert(own, "error 200, your language isn't in the file: the only track in its language, not a dub"))
+      return;
+  } /* (the converter can't take it: a track the TV lists, below) */
   if (unsup && hid && hidWant < 0 && P.dts.hidSw < 2) {
     int pk = -1, ps = -1;
     for (int i = 0; i < n; i++) {
@@ -2058,7 +2095,9 @@ static void dts_tick(void) {
     if (pk >= 0) {
       char lb[32], msg[160];
       aud_label(&ts[pk], lb, sizeof lb);
-      snprintf(msg, sizeof msg, "%s", T1("Playing the {t} track: this TV can’t play TrueHD", "t", lb));
+      snprintf(msg, sizeof msg, "%s",
+               hk == 2 ? T1("Playing the {t} track: this TV can’t play TrueHD", "t", lb)
+                       : T1("Playing the {t} track: this TV can’t play DTS", "t", lb));
       fprintf(
           stderr,
           "[dts] path b: the TV hides the file's TrueHD/DTS track and refused it (error 200), track %d (%s %s, %d ch) instead\n",
@@ -2115,6 +2154,13 @@ static void dts_tick(void) {
     }
   }
   const char *what = kind == 2 ? "TrueHD" : "DTS";
+  if (pick >= 0 && score == 0 && !anyWant && kind && !P.dts.ownTried) {
+    P.dts.ownTried =
+        1; /* only another language's track plays here, and yours is nowhere in the file: this one converted */
+    if (dts_convert(ci, unsup ? "error 200, your language isn't in the file: this track, not a dub"
+                              : "your language isn't in the file: this track, not a dub"))
+      return;
+  }
   if (pick >= 0) {
     char lb[32], msg[160];
     aud_label(&ts[pick], lb, sizeof lb);
