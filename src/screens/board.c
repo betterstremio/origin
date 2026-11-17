@@ -2727,7 +2727,7 @@ static void row_draw(Board *b, Row *r, int ri, float y, int near, float rowA) {
     const CardPrep *cp = row_prep(r, i, load, &hold, NULL);
     unsigned long long lk = lift_key(r, i);
     lift_begin(lk, 0, 0, x, cy, cw, ch, CARD_R); /* (the one the focus just left settles back) */
-    fill_begin(r->items.items[i].id, r->wide ? 2 : 0);
+    fill_begin(r->items.items[i].id, r->wide ? 2 : 0, ri - b->rowIdx);
     card_draw_prep(&r->items.items[i], cp, x, cy, cw, ch, r->wide, r->label, !hold && (load || near));
     if (hold || !cp)
       fill_why_prep();
@@ -2792,7 +2792,7 @@ static void row_draw(Board *b, Row *r, int ri, float y, int near, float rowA) {
       gfx_opacity_push(1 - sd);
     } else
       sd = 0;
-    fill_begin(r->items.items[r->col].id, (r->wide ? 2 : 0) + (ek >= 0.999f));
+    fill_begin(r->items.items[r->col].id, (r->wide ? 2 : 0) + (ek >= 0.999f), ri - b->rowIdx);
     if (hold || !cp)
       fill_why_prep();
     card_wide(b, r, &r->items.items[r->col], cp, x, ox, ow, cy, cw, ch, ek, rtl, 1);

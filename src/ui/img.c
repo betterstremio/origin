@@ -1246,7 +1246,7 @@ void img_release_unused(int keepMb) {
   int useFocus = focusRow >= 0 && frameNo - focusAt < 4; /* (the board was drawn just now) */
   /* what was on screen in the last 2 s stays (a step back never reloads it); only a real overflow takes more */
   unsigned minAge = usedBytes > keep + keep / 8 ? 3u : 120u;
-  for (int n = 0; n < 64 && usedBytes > keep; n++) {
+  for (int n = 0; n < (keepMb > 0 ? 64 : 6) && usedBytes > keep; n++) { /* (a few a frame: a burst of deletions made the TV's memory spike) */
     Img *vic = NULL;
     unsigned best = 0;
     for (int b = 0; b < BUCKETS; b++)

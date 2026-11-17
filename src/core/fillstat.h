@@ -5,7 +5,7 @@
 #define SB_FILLSTAT_H
 int fill_on(void);
 void fill_screen_ref(void); /* board_draw start, before any offset: the screen's corners in surface pixels */
-void fill_begin(const char *id, int kind); /* before a card is drawn: the title's id, kind (bit 0: the open box; bit 1: a wide row) */
+void fill_begin(const char *id, int kind, int rowDist); /* before a card is drawn: the title's id, kind (bit 0: the open box; bit 1: a wide row), the row's distance from the focus */
 void fill_why(int imgCode); /* the card's picture is not final: img_why_shaped of the picture it waits on */
 void fill_why_prep(void); /* the card has no prep or holds it */
 void fill_rebuild(void); /* the board rebuilt its rows */
