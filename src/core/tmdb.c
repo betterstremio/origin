@@ -981,3 +981,210 @@ unsigned tmdb_request(const char *path, NetCb cb, void *ud) {
   call_url(path, key, url, sizeof url, hdr, sizeof hdr);
   return net_get_hdr(url, hdr[0] ? hdr : NULL, cb, ud);
 }
+
+/* ---- wide pictures for IMDb-only titles ------------------------------------------------------------------------
+   Addon catalogs give an IMDb id and nothing else, so the card's wide picture was metahub's 1920x1080 (~880 KB). TMDB
+   has the same backdrop at 780 px (~64 KB): /find gives its path. Main thread only (drawing asks, callbacks answer).
+   The answers (a path, or none) live in memory and, appended one line at a time, in bgmap.txt, for good. */
+typedef struct {
+  char id[16], path[44];
+  unsigned char st; /* 0 unknown, 1 asked, 2 have a path, 3 TMDB has none */
+  unsigned char inq;
+  unsigned frame, ord, retry; /* the last ask (frame, order within it); the frame a failed ask may be repeated */
+} BgE;
+#define BG_Q 64
+#define BG_PAR 3
+static BgE *bgT; /* the entries, appended (an index stays), and the hash table of indices + 1 */
+static int *bgH, bgCap, bgN, bgLoaded, bgFly, bgQn, bgQ[BG_Q]; /* (bgCap: the table's size) asks in flight, the queue */
+static unsigned bgGen, bgOrd, bgHave, bgNone;
+static char bgPath[1200];
+static unsigned bg_hash(const char *s) {
+  unsigned h = 2166136261u;
+  for (; *s; s++)
+    h = (h ^ (unsigned char)*s) * 16777619u;
+  return h;
+}
+static int bg_slot(const char *id) {
+  unsigned h = bg_hash(id) & (unsigned)(bgCap - 1);
+  while (bgH[h] && strcmp(bgT[bgH[h] - 1].id, id))
+    h = (h + 1) & (unsigned)(bgCap - 1);
+  return (int)h;
+}
+static BgE *bg_find(const char *id, int add) {
+  if (!bgH) {
+    bgCap = 2048;
+    bgH = calloc((size_t)bgCap, sizeof *bgH);
+    bgT = malloc((size_t)bgCap / 2 * sizeof *bgT);
+  }
+  int h = bg_slot(id);
+  if (bgH[h])
+    return &bgT[bgH[h] - 1];
+  if (!add)
+    return NULL;
+  if (bgN * 2 >= bgCap) { /* the table doubles, the entries' room with it */
+    BgE *t = realloc(bgT, (size_t)bgCap * sizeof *bgT);
+    if (!t)
+      return NULL;
+    bgT = t;
+    int *old = bgH, oc = bgCap;
+    bgCap *= 2;
+    bgH = calloc((size_t)bgCap, sizeof *bgH);
+    for (int i = 0; i < oc; i++)
+      if (old[i])
+        bgH[bg_slot(bgT[old[i] - 1].id)] = old[i];
+    free(old);
+    h = bg_slot(id);
+  }
+  BgE *e = &bgT[bgN];
+  memset(e, 0, sizeof *e);
+  snprintf(e->id, sizeof e->id, "%s", id);
+  bgH[h] = ++bgN;
+  return e;
+}
+static void bg_load(void) {
+  bgLoaded = 1;
+  snprintf(bgPath, sizeof bgPath, "%s/bgmap.txt", store_data_dir());
+  char *t = read_file(bgPath, NULL);
+  if (!t)
+    return;
+  for (char *p = strtok(t, "\n"); p; p = strtok(NULL, "\n")) {
+    char id[16], pa[44];
+    if (sscanf(p, "%15s %43s", id, pa) != 2 || id[0] != 't')
+      continue;
+    BgE *e = bg_find(id, 1);
+    if (pa[0] == '/') {
+      snprintf(e->path, sizeof e->path, "%s", pa);
+      e->st = 2;
+      bgHave++;
+    } else {
+      e->st = 3;
+      bgNone++;
+    }
+  }
+  free(t);
+  fprintf(stderr, "[bgmap] %u backdrops, %u none on disk\n", bgHave, bgNone);
+}
+static void bg_save(const BgE *e) {
+  FILE *f = fopen(bgPath, "ab");
+  if (!f)
+    return;
+  fprintf(f, "%s %s\n", e->id, e->st == 2 ? e->path : "-");
+  fclose(f);
+}
+static void bg_pump(void);
+static void on_bg(int st, const unsigned char *body, size_t len, void *ud) {
+  (void)len;
+  char *id = ud;
+  BgE *e = bg_find(id, 0);
+  free(id);
+  if (st == -1) {
+    bgFly--;
+    if (e)
+      e->st = 0;
+    return;
+  }
+  bgFly--;
+  if (e) {
+    cJSON *j = st == 200 ? net_json(body) : NULL;
+    if (j) {
+      const cJSON *a = js_arr(j, "movie_results"), *b = js_arr(j, "tv_results");
+      const char *p = "";
+      for (int k = 0; k < 2 && !*p; k++) {
+        const cJSON *r = cJSON_GetArrayItem(k ? b : a, 0);
+        p = r ? js_str(r, "backdrop_path", "") : "";
+      }
+      if (*p == '/' && strlen(p) < sizeof e->path && strspn(p + 1, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-") == strlen(p + 1)) {
+        snprintf(e->path, sizeof e->path, "%s", p);
+        e->st = 2;
+        bgHave++;
+      } else {
+        e->st = 3;
+        bgNone++;
+      }
+      bg_save(e);
+      bgGen++;
+      net_json_free(j);
+    } else {
+      e->st = 0;
+      e->retry = app_frame() + 1800; /* an answer that did not come: not for a while */
+    }
+  }
+  bg_pump();
+}
+/* a few at a time, the newest frame's asks first and in the order they were made (the order the cards are drawn) */
+static void bg_pump(void) {
+  while (bgFly < BG_PAR && bgQn) {
+    unsigned nf = 0;
+    for (int i = 0; i < bgQn; i++)
+      if (bgT[bgQ[i]].frame > nf)
+        nf = bgT[bgQ[i]].frame;
+    int best = -1;
+    for (int i = 0; i < bgQn; i++) {
+      BgE *e = &bgT[bgQ[i]];
+      if (e->frame + 2 >= nf && (best < 0 || e->ord < bgT[bgQ[best]].ord))
+        best = i;
+    }
+    BgE *e = &bgT[bgQ[best]];
+    bgQ[best] = bgQ[--bgQn];
+    e->inq = 0;
+    char p[64];
+    snprintf(p, sizeof p, "/find/%s?external_source=imdb_id", e->id);
+    char *ud = strdup(e->id);
+    e->st = 1;
+    bgFly++;
+    if (!tmdb_request(p, on_bg, ud)) {
+      bgFly--;
+      e->st = 0;
+      e->retry = app_frame() + 1800;
+      free(ud);
+      return;
+    }
+  }
+}
+const char *tmdb_backdrop(const char *imdb) {
+  if (!imdb || imdb[0] != 't' || imdb[1] != 't')
+    return NULL;
+  char id[16];
+  size_t n = strcspn(imdb, ":");
+  if (n >= sizeof id)
+    return NULL;
+  memcpy(id, imdb, n);
+  id[n] = 0;
+  if (!tmdb_has_key())
+    return NULL;
+  if (!bgLoaded)
+    bg_load();
+  BgE *e = bg_find(id, 1);
+  if (e->st == 2)
+    return e->path;
+  if (e->st == 3)
+    return "";
+  if (e->st == 0) {
+    unsigned f = app_frame();
+    if (e->retry && f < e->retry)
+      return NULL;
+    e->frame = f;
+    e->ord = ++bgOrd;
+    if (!e->inq) {
+      if (bgQn == BG_Q) { /* full: the stalest ask goes */
+        int w = 0;
+        for (int i = 1; i < bgQn; i++)
+          if (bgT[bgQ[i]].frame < bgT[bgQ[w]].frame)
+            w = i;
+        bgT[bgQ[w]].inq = 0;
+        bgQ[w] = bgQ[--bgQn];
+      }
+      e->inq = 1;
+      bgQ[bgQn++] = (int)(e - bgT);
+    }
+    bg_pump();
+  }
+  return NULL;
+}
+unsigned tmdb_backdrop_gen(void) {
+  return bgGen;
+}
+void tmdb_backdrop_stats(unsigned *have, unsigned *none) {
+  *have = bgHave;
+  *none = bgNone;
+}

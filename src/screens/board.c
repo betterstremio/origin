@@ -2237,8 +2237,25 @@ static const CardPrep *row_prep(Row *r, int i, int near, int *hold, int *changed
   if (!r->cp || i < 0 || i >= r->ncp)
     return NULL;
   CardPrep *cp = &r->cp[i];
-  if (r->cpSt[i] == 1)
-    return cp;
+  if (r->cpSt[i] == 1 || r->cpSt[i] == 2) {
+    if (cp->crop && !cp->bgw && !r->wide && !r->ntiles) { /* a title with only an IMDb id: TMDB's picture when it comes */
+      char bu[512];
+      const Item *it = &r->items.items[i];
+      if (sb_bg_card(it, bu, sizeof bu)[0] && strcmp(bu, cp->art)) {
+        snprintf(cp->art, sizeof cp->art, "%s", bu);
+        cp->bgw = 1;
+        if (changed)
+          *changed = 1;
+      } else if (!sb_is_imdb(it->id) || (it->background[0] && !strstr(it->background, "metahub"))) {
+        cp->bgw = 1;
+      } else {
+        const char *tp = tmdb_backdrop(it->id);
+        cp->bgw = tp && !*tp; /* TMDB has none: the metahub one stays, no asking */
+      }
+    }
+    if (r->cpSt[i] == 1)
+      return cp;
+  }
   char lb[512];
   int fin;
   const char *art = card_art(r, &r->items.items[i], near, lb, sizeof lb, hold, &fin);

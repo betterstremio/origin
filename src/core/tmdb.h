@@ -76,5 +76,10 @@ void tmdb_apply_meta(cJSON *meta, const TmdbLoc *L);
 /* for the other TMDB users (the age rating): a GET with the user's key, the answer on the main thread.
    0 when there is no key. path: "/movie/123/release_dates" */
 #include "core/net.h"
+/* an IMDb title's TMDB backdrop path ("/abc.jpg"): "" when TMDB has none, NULL while unknown (or no key); an unknown one
+   is asked for in the background (a few at a time, the newest frame's asks first), never waited for. Main thread. */
+const char *tmdb_backdrop(const char *imdb);
+unsigned tmdb_backdrop_gen(void); /* changes whenever an answer arrives */
+void tmdb_backdrop_stats(unsigned *have, unsigned *none);
 unsigned tmdb_request(const char *path, NetCb cb, void *ud);
 #endif
