@@ -100,5 +100,11 @@
 "Shows": "Сериалы",
 "My List": "Мой список",
 "Exit": "Выход",
-"Switch profiles": "Сменить профиль"
+"Switch profiles": "Сменить профиль",
+"Catalogue": "Каталог",
+"Catalogue tab": "Вкладка «Каталог»",
+"Collections and your addons’ catalogues in their own tab": "Коллекции и каталоги ваших аддонов на отдельной вкладке",
+"Accent colour, Catalogue tab": "Цвет акцента, вкладка «Каталог»",
+"No catalogues yet": "Каталогов пока нет",
+"Addons you install in Stremio or Nuvio show their catalogues here. Collections imported from your phone show here too.": "Каталоги аддонов, установленных в Stremio или Nuvio, показываются здесь. Коллекции, импортированные с телефона, тоже появляются здесь."
 }

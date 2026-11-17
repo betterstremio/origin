@@ -100,5 +100,11 @@
 "Shows": "مسلسلات",
 "My List": "قائمتي",
 "Exit": "خروج",
-"Switch profiles": "تبديل الملف الشخصي"
+"Switch profiles": "تبديل الملف الشخصي",
+"Catalogue": "الكتالوج",
+"Catalogue tab": "تبويب الكتالوج",
+"Collections and your addons’ catalogues in their own tab": "المجموعات وكتالوجات إضافاتك في تبويب خاص بها",
+"Accent colour, Catalogue tab": "لون التمييز، تبويب الكتالوج",
+"No catalogues yet": "لا توجد كتالوجات بعد",
+"Addons you install in Stremio or Nuvio show their catalogues here. Collections imported from your phone show here too.": "تظهر هنا كتالوجات الإضافات التي تثبّتها في Stremio أو Nuvio. وتظهر هنا أيضًا المجموعات المستوردة من هاتفك."
 }

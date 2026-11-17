@@ -100,5 +100,11 @@
 "Shows": "Séries",
 "My List": "Minha lista",
 "Exit": "Sair",
-"Switch profiles": "Trocar de perfil"
+"Switch profiles": "Trocar de perfil",
+"Catalogue": "Catálogo",
+"Catalogue tab": "Separador Catálogo",
+"Collections and your addons’ catalogues in their own tab": "As coleções e os catálogos dos seus addons num separador próprio",
+"Accent colour, Catalogue tab": "Cor de destaque, separador Catálogo",
+"No catalogues yet": "Ainda não há catálogos",
+"Addons you install in Stremio or Nuvio show their catalogues here. Collections imported from your phone show here too.": "Os addons que instalar no Stremio ou no Nuvio mostram aqui os seus catálogos. As coleções importadas do telemóvel também aparecem aqui."
 }

@@ -132,9 +132,10 @@ float app_hold_k(double since); /* 0..1 of a hold begun then, on the same clock 
 #define NAV_HOME 1
 #define NAV_SHOWS 2 /* Shows and Movies: Discover's board, its titles of that kind (board_disc_type) */
 #define NAV_MOVIES 3
-#define NAV_LIB 4 /* My List */
-#define NAV_SET 5 /* not an item: Settings (opened from the profile panel or the red key); its box is the picture's */
-#define NAV_N 6
+#define NAV_CATALOGUE 4 /* the collections and every addon catalogue (board_disc_type 3); a setting hides it */
+#define NAV_LIB 5 /* My List */
+#define NAV_SET 6 /* not an item: Settings (opened from the profile panel or the red key); its box is the picture's */
+#define NAV_N 7
 typedef struct {
   int idx, active;
   int want;
@@ -146,6 +147,8 @@ typedef struct {
   int laidOut;
 } TopNav;
 extern TopNav topNav;
+int app_catalogue_on(void); /* the Catalogue tab is shown (Settings > Appearance) */
+void topnav_relayout(void); /* the bar's words changed (the Catalogue switch): laid out again */
 void topnav_focus(void);
 void topnav_leave(void); /* the content takes the focus (the pointer): the bar unlit */
 void topnav_draw(void);

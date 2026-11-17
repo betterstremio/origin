@@ -118,7 +118,7 @@ static const Opt ACCENT_OPTS[] = { { "logo", "From the logo" },
 #define NCAT 11
 #define MAXROWS 48
 static Setting recsS[12];
-static Setting playBase[8], playS[8], subsS[7], audS[6], lookS[2], langS[2], keyS[5], addonS[40], acctS[1], supS[7],
+static Setting playBase[8], playS[8], subsS[7], audS[6], lookS[3], langS[2], keyS[5], addonS[40], acctS[1], supS[7],
     profS[4];
 static Cat cats[NCAT];
 static int ncat; /* (Keys leaves when this build carries every key) */
@@ -586,7 +586,9 @@ static void build(void) {
           "true");
   set_s(&lookS[0], "accent", "Accent colour", "Dynamic: the colours of the title you open", ACCENT_OPTS, 20,
         "logo"); /* first, right under its picture */
-  set_s(&lookS[1], "ssDelay", "Screensaver", "After a while without a key, the titles of the moment fill the screen",
+  set_s(&lookS[1], "catalogueTab", "Catalogue tab",
+        "Collections and your addons\xe2\x80\x99 catalogues in their own tab", OO, 2, "true");
+  set_s(&lookS[2], "ssDelay", "Screensaver", "After a while without a key, the titles of the moment fill the screen",
         SS_OPTS, 5, "5");
   /* language names are shown in their own language, never translated */
   set_s(&langS[0], "uiLang", "Language", "The app restarts in the new language", NULL, 0, "auto");
@@ -645,7 +647,7 @@ static void build(void) {
     { "Watch", "Subtitles", "set_subs", "Language, size, colour, opacity, background", "subs", subsS, 7, 0 },
     { "Watch", "Audio", "set_aud", "Default audio language, DTS, interface sounds", NULL, audS, naud, 0 },
     { "Watch", "For You", "g_spark", "Recommendations on Home, region, languages", NULL, recsS, nr, 0 },
-    { "Screens", "Appearance", "set_look", "Accent colour", "look", lookS, 2, 0 },
+    { "Screens", "Appearance", "set_look", "Accent colour, Catalogue tab", "look", lookS, 3, 0 },
     { "Screens", "Language", "set_lang", "The language of the app", NULL, langS, nl, 0 },
     { "Account and system", "Account", "set_acct", "Stremio or Nuvio, and your profiles", NULL, profS, nprof, 0 },
     { "Account and system", "Addons", "set_addon", "", NULL, addonS, na, 0 },
@@ -796,6 +798,12 @@ static void on_speed(int ok, double mbps, void *ud) {
   store_set("autoBest", "true");
   toast(T1("Your connection: {n} Mbps. Play now starts the best stream", "n", store_get("netMbps", "0")), 3800, NULL);
 }
+/* the bar's words change; the tab's page, were it the one to go back to, becomes Shows */
+static void catalogue_tab_changed(void) {
+  topnav_relayout();
+  if (!app_catalogue_on() && board_disc_type() == 3)
+    board_disc_type_set(1);
+}
 int settings_apply_pref(const char *k, const char *v) {
   if (!strcmp(store_get(k, ""), v))
     return 0;
@@ -825,6 +833,8 @@ int settings_apply_pref(const char *k, const char *v) {
   }
   store_set(k, v);
   S.dirty = 1;
+  if (!strcmp(k, "catalogueTab"))
+    catalogue_tab_changed();
   if (!strcmp(k, "netLogs"))
     net_logs_set(v);
   if (!strcmp(k, "recsLang1")) {
@@ -923,6 +933,8 @@ static void set_val(Setting *o, const char *v, int dir) {
   } /* the same place, in the new language */
   store_set(o->k, v);
   S.dirty = 1;
+  if (!strcmp(o->k, "catalogueTab"))
+    catalogue_tab_changed();
   if (!strcmp(o->k, "netLogs"))
     net_logs_set(v);
   if (!strcmp(o->k, "recsLang1")) {

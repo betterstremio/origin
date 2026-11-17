@@ -723,27 +723,41 @@ static float lg_drift_at(float ph) {
 TopNav topNav = { .idx = NAV_HOME };
 static int tabPx = 28; /* the words' size (24 when a language's words would crowd the bar) */
 static const char *chipLabel(int i) {
-  return i == NAV_HOME ? T("Home") : i == NAV_SHOWS ? T("Shows") : i == NAV_MOVIES ? T("Movies") : T("My List");
+  return i == NAV_HOME        ? T("Home")
+         : i == NAV_SHOWS     ? T("Shows")
+         : i == NAV_MOVIES    ? T("Movies")
+         : i == NAV_CATALOGUE ? T("Catalogue")
+                              : T("My List");
 }
-/* the tab a page belongs to: a collection tile's page is the Shows / Movies board's, the other pages under a tab are
-   counted as Home's */
+static int catVis = 1; /* the Catalogue word is on the bar (read once per layout and frame, not per use) */
+int app_catalogue_on(void) {
+  return strcmp(store_get("catalogueTab", "true"), "false") != 0;
+}
+static int chipOn(int i) {
+  return i != NAV_CATALOGUE || catVis;
+}
+/* the tab a page belongs to: a collection tile's page is the Catalogue's, the other pages under a tab are counted as
+   Home's */
 static Scr tab_scr(void) {
-  return SCR == SCR_COL ? SCR_DISC : SCR == SCR_DETAIL || SCR == SCR_SIM || SCR == SCR_CAT ? SCR_HOME : SCR;
+  return SCR == SCR_DETAIL || SCR == SCR_SIM || SCR == SCR_CAT ? SCR_HOME : SCR;
 }
 static int tab_of(Scr s) { /* the bar's item for a page, -1 none */
   return s == SCR_SEARCH ? NAV_SEARCH
          : s == SCR_HOME ? NAV_HOME
-         : s == SCR_DISC ? (board_disc_type() == 2 ? NAV_MOVIES : NAV_SHOWS)
+         : s == SCR_DISC ? (board_disc_type() == 2   ? NAV_MOVIES
+                            : board_disc_type() == 3 ? NAV_CATALOGUE
+                                                     : NAV_SHOWS)
+         : s == SCR_COL  ? NAV_CATALOGUE
          : s == SCR_LIB  ? NAV_LIB
          : s == SCR_SET  ? NAV_SET
                          : -1;
 }
 static Scr chipScr(int i) {
-  return i == NAV_SEARCH                     ? SCR_SEARCH
-         : i == NAV_HOME                     ? SCR_HOME
-         : i == NAV_SHOWS || i == NAV_MOVIES ? SCR_DISC
-         : i == NAV_LIB                      ? SCR_LIB
-                                             : SCR_SET;
+  return i == NAV_SEARCH                                           ? SCR_SEARCH
+         : i == NAV_HOME                                           ? SCR_HOME
+         : i == NAV_SHOWS || i == NAV_MOVIES || i == NAV_CATALOGUE ? SCR_DISC
+         : i == NAV_LIB                                            ? SCR_LIB
+                                                                   : SCR_SET;
 }
 static int chipCur(int i) {
   return tab_of(tab_scr()) == i;
@@ -753,10 +767,13 @@ static int chipFocused(int i) {
 } /* the notice holds the highlight while it has it */
 static void topnav_layout(void) {
   float pad = 36, w[NAV_N] = { 0 }, tot = 0;
+  catVis = app_catalogue_on();
   for (int pass = 0; pass < 3; pass++) {
     tot = BAR_H;
     w[NAV_SEARCH] = BAR_H;
     for (int i = NAV_HOME; i <= NAV_LIB; i++) {
+      if (!chipOn(i))
+        continue; /* (no word, no gap) */
       w[i] = text_width(chipLabel(i), tabPx, 500, 0) + 2 * pad;
       tot += 8 + w[i];
     }
@@ -773,11 +790,15 @@ static void topnav_layout(void) {
     int i = rtl ? NAV_LIB - k : k; /* mirrored: Search at the right end */
     topNav.chipX[i] = x;
     topNav.chipW[i] = w[i];
-    x += w[i] + 8;
+    if (chipOn(i))
+      x += w[i] + 8;
   }
   topNav.chipX[NAV_SET] = rtl ? SB_W - PIC_X - PIC_D : PIC_X; /* the picture: Settings opens out of it */
   topNav.chipW[NAV_SET] = PIC_D;
   topNav.laidOut = 1;
+}
+void topnav_relayout(void) {
+  topNav.laidOut = 0;
 }
 static void topnav_paint(void) {
   topnav_layout();
@@ -803,7 +824,7 @@ static void topnav_paint(void) {
 }
 void topnav_focus(void) {
   topNav.active = 1;
-  if (topNav.idx < 0 || topNav.idx > NAV_LIB)
+  if (topNav.idx < 0 || topNav.idx > NAV_LIB || !chipOn(topNav.idx))
     topNav.idx = NAV_HOME; /* Settings has no item: up from it lands on Home */
   topnav_paint();
 }
@@ -815,8 +836,8 @@ void topnav_leave(void) {
 } /* the pointer went into the page: the bar's pill lets go too */
 void topnav_switch(int i) {
   i = i < 0 ? 0 : i > NAV_SET ? NAV_SET : i;
-  if (i == NAV_SHOWS || i == NAV_MOVIES)
-    board_disc_type_set(i == NAV_SHOWS ? 1 : 2); /* one board, the kind of title it holds set by the tab */
+  if (i == NAV_SHOWS || i == NAV_MOVIES || i == NAV_CATALOGUE)
+    board_disc_type_set(i == NAV_SHOWS ? 1 : i == NAV_MOVIES ? 2 : 3); /* a board per tab, picked here */
   if (i == topNav.idx && (app_is_board(SCR) || SCR == SCR_SEARCH || SCR == SCR_SET) && tab_of(tab_scr()) == i)
     return;
   {
@@ -875,6 +896,8 @@ static int topnav_key(int k) {
   } /* past Search: the profiles and the app's own items, out of the left edge */
   if (k == K_LEFT || k == K_RIGHT) {
     int i = topNav.idx + (k == K_RIGHT ? 1 : -1);
+    if (i == NAV_CATALOGUE && !chipOn(i))
+      i += k == K_RIGHT ? 1 : -1; /* (a hidden Catalogue is stepped over) */
     if (i < 0)
       i = 0;
     if (i > NAV_LIB)
@@ -988,6 +1011,7 @@ static void caret_draw(float x, float cy, uint32_t c) {
   gfx_quad_pts(px, py, cc);
 } /* a small down caret beside the picture */
 void topnav_draw(void) {
+  catVis = app_catalogue_on();
   if (!topNav.laidOut)
     topnav_paint();
   int signin = SCR == SCR_LOGIN;
@@ -997,7 +1021,8 @@ void topnav_draw(void) {
   int rtl = app_rtl();
   if (!signin && pg < 0.3f) {
     for (int i = 0; i <= NAV_LIB; i++)
-      hit_add_nav(topNav.chipX[i], BAR_Y - BAR_H / 2, topNav.chipW[i], BAR_H, chip_focus, chip_act, i, 0);
+      if (chipOn(i))
+        hit_add_nav(topNav.chipX[i], BAR_Y - BAR_H / 2, topNav.chipW[i], BAR_H, chip_focus, chip_act, i, 0);
     hit_add_nav(rtl ? topNav.chipX[NAV_SET] - 34 : topNav.chipX[NAV_SET], BAR_Y - 30, PIC_D + 34, BAR_H, chip_focus,
                 chip_act, NAV_SET, 0); /* the picture and its caret: one target */
   }
@@ -1019,6 +1044,8 @@ void topnav_draw(void) {
     /* the page you are on, the focus elsewhere: a dark grey pill */
     static Tween mk[NAV_LIB + 1], em[NAV_LIB + 1];
     for (int i = 0; i <= NAV_LIB; i++) {
+      if (!chipOn(i))
+        continue;
       tween_to(&mk[i], chipCur(i) && !topNav.active ? 1 : 0, 0.2f, EASE_CSS_EASE);
       tween_tick(&mk[i], DT);
       if (mk[i].v > 0.01f)
@@ -1032,6 +1059,8 @@ void topnav_draw(void) {
       gfx_offset_pop();
     }
     for (int i = 0; i <= NAV_LIB; i++) {
+      if (!chipOn(i))
+        continue;
       int f = chipFocused(i);
       tween_to(&em[i], f ? 1 : 0, 0.2f, EASE_CSS_EASE);
       tween_tick(&em[i], DT); /* the words go dark as the pill arrives under them */
@@ -1527,7 +1556,7 @@ static void color_back(int t) {
   navf.kind = NAV_BACKZ;
   navf.x = topNav.chipX[t] + topNav.chipW[t] / 2;
   navf.y = BAR_Y;
-  topNav.idx = ci >= 0 && ci <= NAV_LIB ? ci : NAV_HOME;
+  topNav.idx = ci >= 0 && ci <= NAV_LIB && chipOn(ci) ? ci : NAV_HOME;
   app_go(p, NULL, 1);
   topNav.active = 0;
   topnav_paint();

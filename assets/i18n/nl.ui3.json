@@ -100,5 +100,11 @@
 "Shows": "Series",
 "My List": "Mijn lijst",
 "Exit": "Afsluiten",
-"Switch profiles": "Profiel wisselen"
+"Switch profiles": "Profiel wisselen",
+"Catalogue": "Catalogus",
+"Catalogue tab": "Tabblad Catalogus",
+"Collections and your addons’ catalogues in their own tab": "Collecties en de catalogi van je addons in een eigen tabblad",
+"Accent colour, Catalogue tab": "Accentkleur, tabblad Catalogus",
+"No catalogues yet": "Nog geen catalogi",
+"Addons you install in Stremio or Nuvio show their catalogues here. Collections imported from your phone show here too.": "Addons die je installeert in Stremio of Nuvio tonen hier hun catalogi. Collecties die je vanaf je telefoon importeert verschijnen hier ook."
 }

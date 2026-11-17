@@ -100,5 +100,11 @@
 "Shows": "Diziler",
 "My List": "Listem",
 "Exit": "Çıkış",
-"Switch profiles": "Profil değiştir"
+"Switch profiles": "Profil değiştir",
+"Catalogue": "Katalog",
+"Catalogue tab": "Katalog sekmesi",
+"Collections and your addons’ catalogues in their own tab": "Koleksiyonlar ve eklentilerinin katalogları kendi sekmesinde",
+"Accent colour, Catalogue tab": "Vurgu rengi, Katalog sekmesi",
+"No catalogues yet": "Henüz katalog yok",
+"Addons you install in Stremio or Nuvio show their catalogues here. Collections imported from your phone show here too.": "Stremio veya Nuvio’ya kurduğun eklentilerin katalogları burada görünür. Telefondan içe aktarılan koleksiyonlar da burada görünür."
 }
