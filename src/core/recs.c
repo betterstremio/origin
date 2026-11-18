@@ -539,8 +539,9 @@ typedef struct {
 enum { CF_LOVE = 1, CF_HIDE = 2, CF_NOID = 4 };
 #define PG_MAGIC 0x31475052u /* "RPG1" */
 #define PG_CARDS (BILL + RECS_PAGE_MAX * RECS_PAGE_CARDS)
-#define NPG 4 /* pages: 0 Home, 1 Shows ('t'), 2 Movies ('m'), 3 Anime (reserved: empty until the Anime tab feeds it) \
-               */
+#define NPG                                                                                                 \
+  4 /* pages: 0 Home, 1 Shows ('t'), 2 Movies ('m'), 3 Anime (reserved: empty until the Anime tab feeds it) \
+     */
 #define NPG_SAVED 3
 static Page *pgs[NPG];
 static int shown = 1;
@@ -1387,7 +1388,7 @@ static int kind_page(const KIn *K, int pg) {
   const unsigned G = c->gen;
   const long long t0 = us_now();
   const int req0 = st.requests, maxDefs = c->lowMem ? 26 : 44;
-  int ok = 0, nd = 0, nh = 0, np = 0, nb = 0, nex2 = 0, rows = 0, overlap = 0;
+  int lists = 0, ok = 0, nd = 0, nh = 0, np = 0, nb = 0, nex2 = 0, rows = 0, overlap = 0;
   const char *why = "cancelled";
   RecRowDef *sd = rs.defs, *defs = calloc((size_t)maxDefs, sizeof *defs), *hd = calloc(RECS_PAGE_MAX, sizeof *hd);
   RecCand **src = rs.rc, **rc = calloc((size_t)maxDefs, sizeof *rc), **fin = calloc((size_t)maxDefs, sizeof *fin);
@@ -1452,6 +1453,7 @@ static int kind_page(const KIn *K, int pg) {
         rs.slot[nr++] = d;
       }
     f = fetch(G, rq, nr, got_row, NULL, 0);
+    lists = st.requests - req0;
     free(rq);
     if (!f)
       goto out;
@@ -1577,7 +1579,7 @@ static int kind_page(const KIn *K, int pg) {
   page_save_pg(pg);
   why = "";
 out:
-  fprintf(stderr, "[recs] page %c: %d rows, %d lists asked, built in %lld ms%s%s\n", kind, rows, st.requests - req0,
+  fprintf(stderr, "[recs] page %c: %d rows, %d lists asked, built in %lld ms%s%s\n", kind, rows, lists,
           (us_now() - t0) / 1000, why[0] ? ": " : "", why);
   if (ok && dumpOn()) {
     page_dump(pg);
