@@ -1093,19 +1093,19 @@ int img_back_shaped(const char *url, int w, int h, float radius, int fit) {
     sw = (int)(w * drawScale + 0.999f);
     sh = (int)(h * drawScale + 0.999f);
   } /* (as request_as sizes it: the small copy's name has the size) */
-  char sk[2400], p[600];
-  int ok = 0;
+  char sk[2400];
+  int ok = 0; /* (cache_known: the index in memory, never the disk: this runs while drawing, and a stat of a missing file waited seconds on the TV) */
   if (gfx_etc_caps()) { /* (the compressed copy first: it is what is written when ETC is in use) */
     snprintf(sk, sizeof sk, "etc:%dx%d:%s", sw, sh, k);
-    ok = cache_file(sk, 14 * 86400, p, sizeof p);
+    ok = cache_known(sk, 14 * 86400);
   }
   if (!ok) {
     snprintf(sk, sizeof sk, "sm:%dx%d:%s", sw, sh, k);
-    ok = cache_file(sk, 14 * 86400, p, sizeof p);
+    ok = cache_known(sk, 14 * 86400);
   }
   if (ok && fit == 3) {
     snprintf(sk, sizeof sk, "fx:%s", url);
-    ok = cache_file(sk, 14 * 86400, p, sizeof p);
+    ok = cache_known(sk, 14 * 86400);
   }
   if (!ok) {
     no[hs % 128].h = hs;
