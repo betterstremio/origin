@@ -186,6 +186,11 @@ typedef struct Img {
   int pw, ph, pch; /* decoded pixels waiting for upload */
   int fmt; /* what px holds: 0 RGBA, 1 ETC RGB blocks, 2 ETC2 RGBA (EAC) blocks (encoded on the device, ui/etc.c) */
   long pbytes; /* the size of the pending data (set when it is queued for upload) */
+  int texFmt; /* what its texture is: 0 RGBA, 1/2 ETC */
+  int encTried; /* queued for the background encoder (once; cleared when the queue drops it) */
+  unsigned char *eb; /* its encoded blocks, waiting for the main thread to swap the texture */
+  int ef;
+  struct Img *enext;
   GLuint tex;
   float aspect;
   int bytes;
@@ -440,9 +445,11 @@ static double mono_s(void) {
   clock_gettime(CLOCK_MONOTONIC, &t);
   return t.tv_sec + t.tv_nsec / 1e9;
 }
-/* ---- compressed pictures: where the GPU takes ETC1 / ETC2 the picture is encoded once after its decode (a poster is
-   0.5 byte a pixel, 1 with corners, against 4 as RGBA: the same budget holds 4-8 times more pictures), uploaded as blocks,
-   and the blocks are what the disk copy keeps ("etc:" key; the next visit skips the JPEG decode and this encode) ---- */
+/* ---- compressed pictures: where the GPU takes ETC1 / ETC2 a picture is kept as blocks (a poster is 0.5 byte a pixel, 1
+   with alpha, against 4 as RGBA: the same budget holds 4-8 times more of them). The first show never waits for an encode
+   (on the TV it is ~1 us a pixel): the picture loads as RGBA as before, and ONE encoder thread, at the lowest priority
+   and only while the loader has no on-screen work, turns its small copy into blocks, writes them to disk ("etc:" key:
+   the next visit loads them with no decode at all) and hands them to the main thread, which swaps the texture ---- */
 #define ETC_MAGIC "SBETC1"
 #define ETC_HDR 24 /* magic(6) fmt(1) 0(1) pw(4) ph(4) aspect(4) focal(4), then the blocks */
 static unsigned etcN;
@@ -454,53 +461,19 @@ static int etc_alpha(const unsigned char *px, int w, int h) {
       return 1;
   return 0;
 }
-/* the format a picture is kept in (0: RGBA as before). pre: its corners are still to be put on (fit >= 0) */
-static int etc_pick(const Img *im, int pre) {
-  int caps = gfx_etc_caps();
-  if (!caps || !im->px || im->pw < 4 || im->ph < 4 || im->pw * im->ph < 64 * 64)
-    return 0; /* (small ones are cheap as they are) */
-  int a = (pre && im->fit >= 0 && im->radius > 0) || etc_alpha(im->px, im->pw, im->ph);
-  return a ? ((caps & 1) ? 2 : 0) : 1; /* (alpha needs ETC2's EAC) */
-}
-static void etc_pack(Img *im, int fmt) {
-  size_t sz = etc_size(im->pw, im->ph, fmt == 2);
-  unsigned char *b = malloc(sz);
-  if (!b)
-    return;
-  dec_enter(); /* (as many encodes at once as decodes: the cores are the decoding's) */
-  double t0 = mono_s();
-  if (fmt == 2)
-    etc2_eac_encode(im->px, im->pw, im->ph, b);
-  else
-    etc1_encode(im->px, im->pw, im->ph, b);
-  double ms = (mono_s() - t0) * 1000;
-  dec_leave();
-  free(im->px);
-  im->px = b;
-  im->fmt = fmt;
-  im->pch = fmt == 2 ? 4 : 3;
-  __atomic_fetch_add(&etcN, 1, __ATOMIC_RELAXED);
-  __atomic_fetch_add(&etcUs, (long)(ms * 1000), __ATOMIC_RELAXED);
-  if (etcLog < 0)
-    etcLog = getenv("SB_UPLOG") != NULL;
-  if (etcLog)
-    fprintf(stderr, "[etc] %dx%d fmt%d %.1f ms\n", im->pw, im->ph, fmt, ms);
-}
-static void etc_save(const Img *im) {
-  if (!strncmp(im->src, "file://", 7) || im->pw * im->ph > 1280 * 720)
-    return;
-  size_t sz = (size_t)pic_bytes(im);
+static void etc_write(const Img *im, int fmt, int w, int h, const unsigned char *blocks) {
+  size_t sz = etc_size(w, h, fmt == 2);
   unsigned char *b = malloc(ETC_HDR + sz);
   if (!b)
     return;
   memcpy(b, ETC_MAGIC, 6);
-  b[6] = (unsigned char)im->fmt;
+  b[6] = (unsigned char)fmt;
   b[7] = 0;
-  memcpy(b + 8, &im->pw, 4);
-  memcpy(b + 12, &im->ph, 4);
+  memcpy(b + 8, &w, 4);
+  memcpy(b + 12, &h, 4);
   memcpy(b + 16, &im->aspect, 4);
   memcpy(b + 20, &im->focal, 4);
-  memcpy(b + ETC_HDR, im->px, sz);
+  memcpy(b + ETC_HDR, blocks, sz);
   char key[2400];
   snprintf(key, sizeof key, "etc:%dx%d:%s", im->w, im->h, im->url);
   cache_write(key, b, ETC_HDR + sz);
@@ -520,7 +493,7 @@ static int etc_load(Img *im) {
   if (!d)
     return 0;
   int fmt = len > ETC_HDR ? d[6] : 0, pw = 0, ph = 0;
-  float aspect, hf;
+  float aspect = 0, hf = -1;
   if (len > ETC_HDR) {
     memcpy(&pw, d + 8, 4);
     memcpy(&ph, d + 12, 4);
@@ -549,17 +522,115 @@ static void load(Img *im) {
   dec_enter();
   int ok = etc_load(im) || small_load(im);
   dec_leave();
-  if (ok) {
-    if (!im->fmt) { /* a small copy from before: kept compressed from now on */
-      int f = etc_pick(im, 0);
-      if (f) {
-        etc_pack(im, f);
-        etc_save(im);
-      }
-    }
+  if (!ok)
+    load_(im);
+}
+/* the encoder: a bounded list of pictures (the Img, not pixels; the oldest dropped when full), taken newest first */
+#define ENC_JOBS 256
+static Img *ejob[ENC_JOBS];
+static int ejn;
+static Img *edone; /* encoded, waiting for the main thread to swap the texture */
+static pthread_cond_t ecv = PTHREAD_COND_INITIALIZER;
+static int etc_eligible(const Img *im) { /* a raw picture, up to 1280x720, not a backdrop, that has a small copy */
+  return gfx_etc_caps() && !im->fmt && !im->encTried && !im->urgent && im->pw >= 4 && im->ph >= 4 &&
+         im->pw * im->ph >= 64 * 64 && im->pw * im->ph <= 1280 * 720 && strncmp(im->src, "file://", 7);
+}
+static void enc_queue(Img *im) { /* main thread */
+  pthread_mutex_lock(&mu);
+  im->encTried = 1;
+  if (ejn == ENC_JOBS) {
+    ejob[0]->encTried = 0;
+    memmove(ejob, ejob + 1, (ENC_JOBS - 1) * sizeof *ejob);
+    ejn--;
+  }
+  ejob[ejn++] = im;
+  pthread_cond_signal(&ecv);
+  pthread_mutex_unlock(&mu);
+}
+static int loader_busy(void) { /* under mu: something on screen is loading or waits to go up */
+  if (urg)
+    return 1;
+  for (int i = 0; i < qn; i++)
+    if (q_class(pend[i]) >= 3)
+      return 1;
+  for (int i = 0; i < 8; i++)
+    if (busy[i] && q_class(busy[i]) >= 3)
+      return 1;
+  for (const Img *d = doneHead; d; d = d->dnext)
+    if (q_class(d) >= 3)
+      return 1;
+  return 0;
+}
+static void enc_run(Img *im) {
+  int w = im->pw, h = im->ph, caps = gfx_etc_caps();
+  char key[2400];
+  snprintf(key, sizeof key, "sm:%dx%d:%s", im->w, im->h, im->url);
+  size_t len = 0;
+  unsigned char *data = cache_read(key, 14 * 86400, &len);
+  if (!data)
+    return; /* (no small copy: left as it is) */
+  int sw, sh, ch;
+  unsigned char *px = stbi_load_from_memory(data, (int)len, &sw, &sh, &ch, 4);
+  free(data);
+  if (!px || sw != w || sh != h) {
+    free(px);
     return;
   }
-  load_(im);
+  int fmt = (im->fit >= 0 && im->radius > 0) || etc_alpha(px, w, h) ? 2 : 1;
+  if (fmt == 2 && !(caps & 1)) {
+    free(px);
+    return;
+  }
+  if (im->fit >= 0)
+    round_corners(px, w, h, im->radius);
+  size_t sz = etc_size(w, h, fmt == 2);
+  unsigned char *b = malloc(sz);
+  if (!b) {
+    free(px);
+    return;
+  }
+  double t0 = mono_s();
+  if (fmt == 2)
+    etc2_eac_encode(px, w, h, b);
+  else
+    etc1_encode(px, w, h, b);
+  double ms = (mono_s() - t0) * 1000;
+  free(px);
+  __atomic_fetch_add(&etcN, 1, __ATOMIC_RELAXED);
+  __atomic_fetch_add(&etcUs, (long)(ms * 1000), __ATOMIC_RELAXED);
+  if (etcLog < 0)
+    etcLog = getenv("SB_UPLOG") != NULL;
+  if (etcLog)
+    fprintf(stderr, "[etc] %dx%d fmt%d %.1f ms\n", w, h, fmt, ms);
+  etc_write(im, fmt, w, h, b);
+  pthread_mutex_lock(&mu); /* still shown (as RGBA)? then the main thread swaps it; else the disk copy is all that is kept */
+  if (im->tex && !im->texFmt && !im->eb) {
+    im->eb = b;
+    im->ef = fmt;
+    im->enext = edone;
+    edone = im;
+    b = NULL;
+  }
+  pthread_mutex_unlock(&mu);
+  free(b);
+}
+static void *encoder(void *a) {
+  (void)a;
+  plat_thread_background(15); /* the lowest the app uses */
+  for (;;) {
+    pthread_mutex_lock(&mu);
+    while (!ejn)
+      pthread_cond_wait(&ecv, &mu);
+    if (loader_busy()) {
+      pthread_mutex_unlock(&mu);
+      usleep(60000);
+      continue;
+    }
+    Img *im = ejob[--ejn];
+    pthread_mutex_unlock(&mu);
+    enc_run(im);
+  }
+  return NULL;
 }
 static void load_(Img *im) {
   char key[2048];
@@ -612,15 +683,9 @@ static void load_(Img *im) {
   if (im->saveLater) { /* the small copy's encoding (tens of ms on the TV) no longer holds a decode slot */
     im->saveLater = 0;
     if (im->px) {
-      int f = etc_pick(im, 1); /* (compressed: its blocks are the disk copy; the colours' request keeps the RGBA one too) */
-      if (!f || im->wantPal)
-        small_save(im, im->px, im->pw, im->ph);
+      small_save(im, im->px, im->pw, im->ph);
       if (im->fit >= 0)
         round_corners(im->px, im->pw, im->ph, im->radius);
-      if (f) {
-        etc_pack(im, f);
-        etc_save(im);
-      }
     }
   }
 }
@@ -818,6 +883,9 @@ int img_init(const char *dir) {
     pthread_create(&t, NULL, worker, (void *)(intptr_t)i);
     pthread_detach(t);
   }
+  pthread_t et; /* the one encoder (compressed copies of what was shown) */
+  if (!pthread_create(&et, NULL, encoder, NULL))
+    pthread_detach(et);
   return 1;
 }
 static float drawScale = 1.0f;
@@ -1244,6 +1312,7 @@ static void up_done(Img *im) {
   if (fade)
     gfx_tex_fade_in(im->tex);
   im->bytes = (int)pic_bytes(im);
+  im->texFmt = im->fmt;
   usedBytes += im->bytes;
   phUps++;
   if (usedBytes > phPeak)
@@ -1251,6 +1320,8 @@ static void up_done(Img *im) {
   free(im->px);
   im->px = NULL;
   im->lastUse = frameNo;
+  if (etc_eligible(im)) /* (shown as RGBA: compressed in the background, swapped in when ready) */
+    enc_queue(im);
 }
 static long up_band(Img *im, long budget) { /* rows up to the budget, in whole 16-row blocks; what was sent */
   long row = im->fmt ? (long)((im->pw + 3) / 4) * (im->fmt == 2 ? 16 : 8) : (long)im->pw * im->pch; /* (compressed: a row of blocks, 4 pixel rows) */
@@ -1273,7 +1344,40 @@ static long up_band(Img *im, long budget) { /* rows up to the budget, in whole 1
   }
   return sent;
 }
+/* an encoded picture still shown as RGBA: its texture is swapped for the compressed one (the same picture: no fade), within
+   what this frame's uploads have left */
+static void enc_apply(void) {
+  if (frUp >= upBudget || upCur)
+    return;
+  pthread_mutex_lock(&mu);
+  Img *im = edone;
+  if (im)
+    edone = im->enext;
+  int ok = im && im->tex && !im->texFmt && im->state == 2 && !im->px && !im->inDone && !im->upTex;
+  unsigned char *b = im ? im->eb : NULL;
+  if (im)
+    im->eb = NULL;
+  pthread_mutex_unlock(&mu);
+  if (!im)
+    return;
+  GLuint t = ok ? gfx_ctex_create(im->ef, b, im->pw, im->ph) : 0;
+  free(b);
+  if (!t)
+    return;
+  long nb = (long)etc_size(im->pw, im->ph, im->ef == 2);
+  gfx_tex_recycle(im->tex, im->pw, im->ph, im->pch, 1);
+  im->tex = t;
+  usedBytes += nb - im->bytes;
+  im->bytes = (int)nb;
+  im->texFmt = im->ef;
+  frUp += nb;
+}
+static void pump_loads(void);
 void img_pump(void) {
+  pump_loads();
+  enc_apply();
+}
+static void pump_loads(void) {
   long sent = 0;
   Uint64 t0 = SDL_GetPerformanceCounter();
   if (upCur) {
