@@ -3043,6 +3043,10 @@ int board_home_ready(void) {
     return 1; /* (no full-screen backdrop to wait for) */
   return bg_current()[0] && img_loaded(bg_current());
 }
+/* the scroll test, signed out: Home has rows but no billboard, so its first two rows with their cards are enough */
+int board_home_rows_ready(void) {
+  return first_cards(&boards[0], 2);
+}
 /* a tab not on screen made ready in the background: its rows (and Discover's spotlight) asked for, then what its
    first screen shows: the first title's details, translation, logo and backdrop, the first cards. 1 when all is in */
 static int board_warm(Board *b) {
