@@ -104,7 +104,12 @@ cJSON *lib_all(void); /* the whole library (an object keyed by id; belongs to th
 cJSON *lib_get(const char *id); /* the account's item or NULL (belongs to the store) */
 int lib_has(const char *id); /* in the Library (not removed) */
 void lib_toggle(const Item *it);
-int lib_cw_items(ItemList *out); /* Continue Watching, newest first */
+/* Continue Watching kinds; LIB_CW_NO_ANIME (or-ed with SERIES, MOVIES or ALL) leaves anime out */
+enum { LIB_CW_ALL = 0, LIB_CW_SERIES = 1, LIB_CW_MOVIES = 2, LIB_CW_ANIME = 3, LIB_CW_NO_ANIME = 8 };
+int lib_id_is_anime(const char *type,
+                    const char *id); /* type "anime", or an anime id (kitsu:, anilist:, mal:, anidb:) */
+int lib_cw_items_k(ItemList *out, int kind); /* Continue Watching of one kind, newest first: every one there is */
+int lib_cw_items(ItemList *out); /* Continue Watching, newest first (all kinds) */
 typedef struct {
   char vid[80];
   float pct, leftMin;
