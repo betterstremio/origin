@@ -302,6 +302,11 @@ void plat_post_window(SDL_Window *w) {
     fprintf(stderr, "[window] as left: %d,%d %dx%d%s%s\n", G.x, G.y, G.w, G.h, G.max ? ", maximised" : "",
             G.full ? ", fullscreen" : "");
   }
+  if (top && getenv("SB_HIDE")) { /* tests: off the screens, at the back, never activated: the user keeps working (it
+                                      still draws, so SB_SHOT works; a minimised window would not draw) */
+    SetWindowPos(top, HWND_BOTTOM, -32000, -32000, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    return;
+  }
   SDL_ShowWindow(w);
   if (G.have && G.full)
     SDL_SetWindowFullscreen(w, SDL_WINDOW_FULLSCREEN_DESKTOP);
