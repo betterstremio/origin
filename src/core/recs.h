@@ -23,6 +23,14 @@ int recs_row_info(int i, char *title, size_t cap, int *rank,
 int recs_row_items(
     int i, ItemList *out); /* row i's cards inflated into Items (free with itemlist_clear); the count. Only the cards
                               whose IMDb id is known now: a row grows by itself the next time it is asked for */
+/* one page per tab: 0 Home, 1 Shows, 2 Movies, 3 Anime (accepted, empty until the Anime tab feeds it). The calls above
+ * are page 0. Same rules: copies, free with itemlist_clear, changes only with recs_version() */
+enum { RECS_PG_HOME, RECS_PG_SHOWS, RECS_PG_MOVIES, RECS_PG_ANIME };
+int recs_page_ready(int pg); /* 1 when the page has been built or loaded (and For You is on) */
+int recs_billboard_k(int pg, ItemList *out);
+int recs_rows_k(int pg);
+int recs_row_info_k(int pg, int i, char *title, size_t cap, int *rank, int *count);
+int recs_row_items_k(int pg, int i, ItemList *out);
 int recs_rank_of(const Item *it); /* 1-10 in a Top 10 row (for its numeral), else 0 */
 int recs_badges(const Item *it); /* RECS_NEW | RECS_LOVE: the wide card's badges */
 enum { RECS_NEW = 1, RECS_LOVE = 2 };
@@ -36,6 +44,9 @@ void recs_set_paused(int on);
 int recs_hide_cinema(void); /* "Hide films still in cinemas": films out less than 30 days ago are left out (off by
                                default: many go straight to streaming) */
 void recs_set_hide_cinema(int on);
+int recs_no_anime(
+    void); /* the Anime tab is on: titles that are Animation + Japanese are left out of Shows and Movies */
+void recs_set_no_anime(int on); /* default 0; rebuilds pages 1 and 2 */
 const char *recs_region(void); /* "IN": the TV's country unless chosen */
 void recs_set_region(const char *cc);
 const char *recs_langs(void); /* "hi,en": Main and Second language as chosen, else the region's usual ones */

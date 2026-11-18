@@ -92,6 +92,17 @@ void recs_set_paused(int on) {
 int recs_hide_cinema(void) {
   return !strcmp(store_get("recsHideCinema", "false"), "true");
 }
+int recs_no_anime(void) {
+  return !strcmp(store_get("recsNoAnime", "false"), "true");
+}
+/* the Anime tab's switch: anime is left out of Shows and Movies. The two pages are rebuilt (Home's page is made again
+   from the cached lists on the way: no request) */
+void recs_set_no_anime(int on) {
+  if (!on == !recs_no_anime())
+    return;
+  store_set("recsNoAnime", on ? "true" : "false");
+  recs_refresh();
+}
 void recs_set_hide_cinema(int on) {
   store_set("recsHideCinema", on ? "true" : "false");
   recs_refresh();
@@ -414,10 +425,14 @@ static int id_tmdb_of(unsigned num, int tv) {
   return 0;
 } /* (a seed: a scan of a few thousand at most, once per seed) */
 static char pageName[220] = "recspage.bin"; /* (under mu: W reads it) */
-static void page_file(char *out, size_t cap) {
+/* page 0 is pageName; Shows and Movies keep "-t" / "-m" before the ".bin" */
+static void page_file(int pg, char *out, size_t cap) {
   pthread_mutex_lock(&mu);
   snprintf(out, cap, "%s", pageName);
   pthread_mutex_unlock(&mu);
+  size_t l = strlen(out);
+  if (pg > 0 && l > 4 && !strcmp(out + l - 4, ".bin"))
+    snprintf(out + l - 4, cap - (l - 4), "-%c.bin", pg == 1 ? 't' : pg == 2 ? 'm' : 'a');
 }
 static void page_file_set(void) {
   char n[220] = "recspage.bin";
@@ -524,10 +539,14 @@ typedef struct {
 enum { CF_LOVE = 1, CF_HIDE = 2, CF_NOID = 4 };
 #define PG_MAGIC 0x31475052u /* "RPG1" */
 #define PG_CARDS (BILL + RECS_PAGE_MAX * RECS_PAGE_CARDS)
-static Page *cur;
+#define NPG 4 /* pages: 0 Home, 1 Shows ('t'), 2 Movies ('m'), 3 Anime (reserved: empty until the Anime tab feeds it) \
+               */
+#define NPG_SAVED 3
+static Page *pgs[NPG];
 static int shown = 1;
 static unsigned ver;
-static long pageAt; /* cur, shown, pageAt: under mu */
+static long pgAt[NPG]; /* pgs, shown, pgAt: under mu */
+static const char PG_KIND[NPG] = { 0, 't', 'm', 'a' };
 static Page *page_alloc(int R, int N, unsigned blob) {
   unsigned ixn = 64;
   while (ixn < (unsigned)N * 2)
@@ -575,9 +594,9 @@ static size_t page_bytes(const Page *p) {
   return sizeof(PHdr) + sizeof(PRow) * (size_t)p->h.nrows + sizeof(PCard) * (size_t)p->h.ncards + p->h.blobLen;
 }
 /* a copy of the live page's file image, taken under the mutex (a memcpy), written outside it */
-static void page_save_cur(void) {
+static void page_save_pg(int pg) {
   pthread_mutex_lock(&mu);
-  Page *p = cur;
+  Page *p = pgs[pg];
   size_t n = p ? page_bytes(p) : 0;
   unsigned char *b = n ? malloc(n) : NULL;
   if (b) {
@@ -593,14 +612,22 @@ static void page_save_cur(void) {
   pthread_mutex_unlock(&mu);
   if (b) {
     char path[1300], name[220];
-    page_file(name, sizeof name);
+    page_file(pg, name, sizeof name);
     file_put(dpath(name, path, sizeof path), b, n, NULL, 0, NULL, 0);
     free(b);
   }
 }
-static Page *page_load(unsigned sig, long maxAge) {
+static void page_save_cur(void) {
+  for (int i = 0; i < NPG_SAVED; i++)
+    page_save_pg(i);
+}
+/* a Shows / Movies page also depends on the "Anime tab" switch (anime is left out of them) */
+static unsigned kind_sig(unsigned sig, int pg, int noAnime) {
+  return sig ^ ((unsigned)pg * 0x9e3779b1u) ^ (noAnime ? 0x85ebca6bu : 0);
+}
+static Page *page_load(int pg, unsigned sig, long maxAge) {
   char path[1300], name[220];
-  page_file(name, sizeof name);
+  page_file(pg, name, sizeof name);
   FILE *f = fopen(dpath(name, path, sizeof path), "rb");
   if (!f)
     return NULL;
@@ -813,13 +840,13 @@ static void inflate(Item *it, const Page *p, const PCard *c) {
   if (strlen(c->date) >= 4)
     snprintf(it->metaLine, sizeof it->metaLine, "%.4s", c->date); /* (epName stays empty on a card) */
 }
-static Page *pg_lock(void) {
+static Page *pg_lock(int pg) {
   pthread_mutex_lock(&mu);
-  if (!cur || !shown) {
+  if (pg < 0 || pg >= NPG || !pgs[pg] || !shown) {
     pthread_mutex_unlock(&mu);
     return NULL;
   }
-  return cur;
+  return pgs[pg];
 }
 static void pg_unlock(void) {
   pthread_mutex_unlock(&mu);
@@ -840,9 +867,9 @@ static int items_of(const Page *p, int first, int n, ItemList *l) {
   l->total = l->n;
   return l->n;
 }
-int recs_billboard(ItemList *l) {
+int recs_billboard_k(int pg, ItemList *l) {
   memset(l, 0, sizeof *l);
-  Page *p = pg_lock();
+  Page *p = pg_lock(pg);
   if (!p)
     return 0;
   int n = items_of(p, 0, p->h.nbill, l);
@@ -875,16 +902,29 @@ static const PCard *fake_card(const Page *p, int k) {
       return &p->cards[i];
   return NULL;
 }
-int recs_rows(void) {
-  Page *p = pg_lock();
+int recs_billboard(ItemList *l) {
+  return recs_billboard_k(0, l);
+}
+int recs_page_ready(int pg) {
+  Page *p = pg_lock(pg);
+  if (!p)
+    return 0;
+  pg_unlock();
+  return 1;
+}
+int recs_rows_k(int pg) {
+  Page *p = pg_lock(pg);
   if (!p)
     return 0;
   int n = fake_rows() ? (fake_total(p) ? fake_rows() : 0) : p->h.nrows;
   pg_unlock();
   return n;
 }
-int recs_row_info(int i, char *t, size_t cap, int *rank, int *count) {
-  Page *p = pg_lock();
+int recs_rows(void) {
+  return recs_rows_k(0);
+}
+int recs_row_info_k(int pg, int i, char *t, size_t cap, int *rank, int *count) {
+  Page *p = pg_lock(pg);
   if (!p)
     return 0;
   int ok = 0;
@@ -909,9 +949,12 @@ int recs_row_info(int i, char *t, size_t cap, int *rank, int *count) {
   pg_unlock();
   return ok;
 }
-int recs_row_items(int i, ItemList *l) {
+int recs_row_info(int i, char *t, size_t cap, int *rank, int *count) {
+  return recs_row_info_k(0, i, t, cap, rank, count);
+}
+int recs_row_items_k(int pg, int i, ItemList *l) {
   memset(l, 0, sizeof *l);
-  Page *p = pg_lock();
+  Page *p = pg_lock(pg);
   if (!p)
     return 0;
   int n = 0;
@@ -927,6 +970,9 @@ int recs_row_items(int i, ItemList *l) {
   pg_unlock();
   return n;
 }
+int recs_row_items(int i, ItemList *l) {
+  return recs_row_items_k(0, i, l);
+}
 static const PCard *card_of(const Page *p, const Item *it) {
   unsigned num;
   int dig;
@@ -936,23 +982,32 @@ static const PCard *card_of(const Page *p, const Item *it) {
   return i >= 0 ? &p->cards[i] : NULL;
 }
 int recs_rank_of(const Item *it) {
-  Page *p = pg_lock();
-  if (!p)
-    return 0;
-  const PCard *c = card_of(p, it);
-  int r = c ? c->rank : 0;
-  pg_unlock();
+  int r = 0;
+  for (int pg = 0; pg < NPG && !r; pg++) {
+    Page *p = pg_lock(pg);
+    if (!p)
+      continue;
+    const PCard *c = card_of(p, it);
+    r = c ? c->rank : 0;
+    pg_unlock();
+  }
   return r;
 }
 int recs_badges(const Item *it) {
   if (it->id[0] != 't' || it->id[1] != 't')
     return 0;
-  Page *p = pg_lock();
-  if (!p)
+  Page *p = NULL;
+  const PCard *c = NULL;
+  for (int pg = 0; pg < NPG && !c; pg++) {
+    if (!(p = pg_lock(pg)))
+      continue;
+    if (!(c = card_of(p, it)))
+      pg_unlock();
+  }
+  if (!c)
     return 0;
-  const PCard *c = card_of(p, it);
   int b = 0;
-  if (c) {
+  {
     if (c->flags & CF_LOVE)
       b |= RECS_LOVE;
     /* "Recently added": out in the last 60 days (the year alone says too little) */
@@ -969,16 +1024,21 @@ void recs_dismiss(const Item *it) {
   if (!tt_parse(it->id, &num, &dig))
     return;
   pthread_mutex_lock(&mu);
-  if (cur) {
-    int i = page_find(cur, num, dig);
-    if (i >= 0) {
-      int tm = cur->cards[i].tmdb, k = cur->cards[i].kind;
-      key = recs_key(tm, k ? 't' : 'm');
-      for (int j = 0; j < cur->h.ncards; j++)
-        if (cur->cards[j].tmdb == tm && cur->cards[j].kind == k)
-          cur->cards[j].flags |= CF_HIDE;
+  for (int pg = 0; pg < NPG && !key; pg++) /* the title is found on any page, then hidden on all of them */
+    if (pgs[pg]) {
+      int i = page_find(pgs[pg], num, dig);
+      if (i >= 0) {
+        int k = pgs[pg]->cards[i].kind;
+        key = recs_key(pgs[pg]->cards[i].tmdb, k ? 't' : 'm');
+      }
     }
-  }
+  if (key)
+    for (int pg = 0; pg < NPG; pg++)
+      for (int j = 0; pgs[pg] && j < pgs[pg]->h.ncards; j++) {
+        PCard *c = &pgs[pg]->cards[j];
+        if (recs_key(c->tmdb, c->kind ? 't' : 'm') == key)
+          c->flags |= CF_HIDE;
+      }
   pthread_mutex_unlock(&mu);
   if (!key)
     return;
@@ -1008,7 +1068,7 @@ typedef struct {
   unsigned gen, sig;
   long today;
   char region[8], explicitL[48], regionL[48], audio[4], secondL[4];
-  int hideCinema, lowMem, nseeds, ndis, *dis;
+  int hideCinema, lowMem, noAnime, nseeds, ndis, *dis;
   GSeed seeds[RECS_MAX_SEEDS];
 } RunCfg;
 static struct {
@@ -1164,17 +1224,19 @@ static void got_row(int i, int status, const unsigned char *b, size_t n, void *u
 static void ids_apply(unsigned key, unsigned num, int dig, int noid) {
   if (rs.pageMode) {
     pthread_mutex_lock(&mu);
-    Page *p = cur;
-    for (int k = 0; p && k < p->h.ncards; k++) {
-      PCard *c = &p->cards[k];
-      if (c->imdb || ckey(c->kind ? 't' : 'm', c->tmdb) != key)
-        continue;
-      if (noid)
-        c->flags |= CF_NOID;
-      else {
-        c->imdb = num;
-        c->dig = (unsigned char)dig;
-        page_ix_add(p, k);
+    for (int pg = 0; pg < NPG; pg++) {
+      Page *p = pgs[pg];
+      for (int k = 0; p && k < p->h.ncards; k++) {
+        PCard *c = &p->cards[k];
+        if (c->imdb || ckey(c->kind ? 't' : 'm', c->tmdb) != key)
+          continue;
+        if (noid)
+          c->flags |= CF_NOID;
+        else {
+          c->imdb = num;
+          c->dig = (unsigned char)dig;
+          page_ix_add(p, k);
+        }
       }
     }
     pthread_mutex_unlock(&mu);
@@ -1260,6 +1322,294 @@ static int pb_known(const PB *b, const BRow *r) {
   for (int q = 0; q < r->n; q++)
     k += b->c[r->first + q].imdb != 0;
   return k;
+}
+
+/* ---- phase 2: the Shows (pg 1) and Movies (pg 2) pages, built after Home's page is out. Everything Home's run made
+   (seeds, taste, languages, exclusions, Home's rows) is read, not changed; the lists are this page's own (same cache
+   and lane, 3 at a time). W only. ---- */
+typedef struct {
+  const RunCfg *c;
+  RecSeedX *D;
+  int nx;
+  const RecTaste *taste;
+  const RecLang *L;
+  int nl;
+  const int *ex;
+  int nex;
+  const RecCand *homePicks; /* Home's billboard: not repeated on a tab's billboard */
+  int homeNb;
+  const RecPrefs *P;
+  const PB *home; /* Home's finished builder: its rows' defs */
+  unsigned sig;
+} KIn;
+static int dumpOn(void) {
+  static int v = -1;
+  if (v < 0) {
+    const char *e = getenv("SB_RECS_DUMP");
+    v = e && atoi(e) > 0;
+  }
+  return v;
+}
+/* DEVELOPMENT AID (SB_RECS_DUMP=1): every row of a page with its first 5 card names */
+static void page_dump(int pg) {
+  pthread_mutex_lock(&mu);
+  const Page *p = pgs[pg];
+  if (!p) {
+    fprintf(stderr, "[recs-dump] page %d: none\n", pg);
+  } else {
+    char line[600];
+    size_t o = 0;
+    for (int i = 0; i < p->h.nbill && i < 5; i++)
+      o += (size_t)snprintf(line + o, sizeof line - o, "%s%s", i ? " | " : "", p->blob + p->cards[i].title);
+    fprintf(stderr, "[recs-dump] page %d: %d rows, billboard %d: %s\n", pg, p->h.nrows, p->h.nbill, line);
+    for (int r = 0; r < p->h.nrows; r++) {
+      const PRow *w = &p->rows[r];
+      o = 0;
+      line[0] = 0;
+      for (int q = 0; q < w->n && q < 5; q++)
+        o +=
+            (size_t)snprintf(line + o, sizeof line - o, "%s%s", q ? " | " : "", p->blob + p->cards[w->first + q].title);
+      fprintf(stderr, "[recs-dump] p%d r%02d \"%s\" (%d): %s\n", pg, r + 1, p->blob + w->title, w->n, line);
+    }
+  }
+  pthread_mutex_unlock(&mu);
+}
+static int row_on_home(const RecRowDef *d, const RecRowDef *home, int nh) {
+  for (int i = 0; i < nh; i++)
+    if (!strcmp(home[i].key, d->key) || (d->path[0] && !strcmp(home[i].path, d->path)))
+      return 1;
+  return 0;
+}
+/* returns 1 when the page went out */
+static int kind_page(const KIn *K, int pg) {
+  const char kind = PG_KIND[pg];
+  const RunCfg *c = K->c;
+  const unsigned G = c->gen;
+  const long long t0 = us_now();
+  const int req0 = st.requests, maxDefs = c->lowMem ? 26 : 44;
+  int ok = 0, nd = 0, nh = 0, np = 0, nb = 0, nex2 = 0, rows = 0, overlap = 0;
+  const char *why = "cancelled";
+  RecRowDef *sd = rs.defs, *defs = calloc((size_t)maxDefs, sizeof *defs), *hd = calloc(RECS_PAGE_MAX, sizeof *hd);
+  RecCand **src = rs.rc, **rc = calloc((size_t)maxDefs, sizeof *rc), **fin = calloc((size_t)maxDefs, sizeof *fin);
+  int *srn = rs.rn, *rn = calloc((size_t)maxDefs, sizeof *rn), sl = rs.listsOK;
+  PB *spb = rs.pb, *pb = calloc(1, sizeof *pb);
+  RecRowIn *in = calloc((size_t)maxDefs, sizeof *in);
+  RecCand *picks = calloc(60, sizeof *picks);
+  RecPage *pgb = calloc(1, sizeof *pgb);
+  int *ex2 = malloc(sizeof(int) * (size_t)(K->nex + BILL + 1));
+  const RecCand *ownP[RECS_MAX_SEEDS];
+  int ownN[RECS_MAX_SEEDS], nseed = K->nx < RECS_MAX_SEEDS ? K->nx : RECS_MAX_SEEDS;
+  for (int i = 0; i < nseed; i++) {
+    ownP[i] = K->D[i].own;
+    ownN[i] = K->D[i].nown;
+  }
+  if (!defs || !hd || !rc || !fin || !rn || !pb || !in || !picks || !pgb || !ex2) {
+    why = "out of memory";
+    goto out;
+  }
+  for (int r = 0; r < K->home->nr && nh < RECS_PAGE_MAX; r++)
+    hd[nh++] = *K->home->r[r].def;
+  RecPrefs P2 = *K->P;
+  P2.kind = kind;
+  P2.noAnime = c->noAnime;
+  memcpy(ex2, K->ex, sizeof(int) * (size_t)K->nex);
+  nex2 = K->nex;
+  for (int i = 0; i < K->homeNb; i++)
+    ex2[nex2++] = recs_key(K->homePicks[i].tmdb, K->homePicks[i].kind);
+  P2.exclude = ex2;
+  P2.nexclude = nex2;
+  {
+    RecRowCtx cx = { .region = c->region,
+                     .today = c->today,
+                     .langs = K->L,
+                     .nlangs = K->nl,
+                     .taste = K->taste,
+                     .seeds = K->D,
+                     .nseeds = K->nx,
+                     .lowMem = c->lowMem,
+                     .tr = tr_cb,
+                     .regionName = recs_region_name(c->region) };
+    i18n_lock();
+    nd = recs_rows_build_kind(&cx, kind, hd, nh, defs, maxDefs);
+    i18n_unlock();
+  }
+  rs.defs = defs;
+  rs.rc = rc;
+  rs.rn = rn;
+  rs.listsOK = 0;
+  {
+    Req *rq = calloc((size_t)(nd ? nd : 1), sizeof *rq);
+    int nr = 0, f;
+    if (!rq) {
+      why = "out of memory";
+      goto out;
+    }
+    for (int d = 0; d < nd; d++)
+      if (defs[d].path[0]) {
+        rq[nr].path = defs[d].path;
+        rq[nr].key = defs[d].key;
+        rq[nr].maxAge = defs[d].maxAge;
+        rs.slot[nr++] = d;
+      }
+    f = fetch(G, rq, nr, got_row, NULL, 0);
+    free(rq);
+    if (!f)
+      goto out;
+    if (nr && !rs.listsOK) {
+      why = "no list answered";
+      goto out;
+    }
+  }
+  /* the lists of this kind's Because-you-watched rows feed Top picks; a thin history asks a taste list instead */
+  int tpd = -1;
+  for (int d = 0; d < nd; d++) {
+    if (defs[d].family == RF_BYW && defs[d].seed >= 0 && defs[d].seed < K->nx) {
+      K->D[defs[d].seed].own = rc[d];
+      K->D[defs[d].seed].nown = rn[d];
+    }
+    if (defs[d].family == RF_PERSONAL && defs[d].path[0])
+      tpd = d;
+  }
+  if (tpd >= 0)
+    np = rc[tpd] ? recs_filter(rc[tpd], rn[tpd], &P2, picks, 60) : 0;
+  else if (K->nx)
+    np = recs_top_picks(K->D, K->nx, K->taste, &P2, 28, picks, 60);
+  for (int d = 0; d < nd; d++) {
+    RecRowIn *r = &in[d];
+    r->def = &defs[d];
+    if (defs[d].family == RF_PERSONAL) {
+      r->cards = picks + BILL;
+      r->n = np > BILL ? (np - BILL < RECS_ROW_CARDS ? np - BILL : RECS_ROW_CARDS) : 0;
+    } else if (defs[d].family == RF_BYW) {
+      r->n = 0;
+      r->cards = NULL;
+      if (defs[d].seed >= 0 && defs[d].seed < K->nx && (fin[d] = malloc(sizeof(RecCand) * RECS_ROW_CARDS))) {
+        r->cards = fin[d];
+        r->n = recs_byw_rank(&K->D[defs[d].seed], &P2, rc[d], rn[d], fin[d], RECS_ROW_CARDS);
+      }
+    } else {
+      r->cards = rc[d];
+      r->n = rn[d] < RECS_ROW_CARDS ? rn[d] : RECS_ROW_CARDS;
+    }
+  }
+  {
+    int bill[BILL];
+    nb = np < BILL ? np : BILL;
+    for (int i = 0; i < nb; i++)
+      bill[i] = recs_key(picks[i].tmdb, picks[i].kind);
+    RecPageCtx pc = { .taste = K->taste,
+                      .today = c->today,
+                      .maxRows = c->lowMem ? 20 : 36,
+                      .bill = bill,
+                      .nbill = nb,
+                      .exclude = K->ex,
+                      .nexclude = K->nex,
+                      .allowAdult = 0,
+                      .minMovieAge = K->P->minMovieAge,
+                      .langs = K->L,
+                      .nlangs = K->nl,
+                      .kind = kind,
+                      .noAnime = c->noAnime };
+    recs_page_build(&pc, in, nd, pgb);
+  }
+  rs.pb = pb;
+  for (int i = 0; i < nb; i++)
+    pb->c[pb->nc++].c = &picks[i];
+  pb->nbill = nb;
+  for (int r = 0; r < pgb->n && pb->nr < RECS_PAGE_MAX; r++) {
+    const RecPageRow *pr = &pgb->rows[r];
+    BRow *br = &pb->r[pb->nr++];
+    br->def = in[pr->in].def;
+    br->first = pb->nc;
+    br->n = pr->n;
+    for (int q = 0; q < pr->n; q++)
+      pb->c[pb->nc++].c = &in[pr->in].cards[pr->idx[q]];
+  }
+  for (int k = 0; k < pb->nc; k++) {
+    const IdRec *rec = id_find(ckey(pb->c[k].c->kind, pb->c[k].c->tmdb));
+    if (rec) {
+      pb->c[k].imdb = rec->num;
+      pb->c[k].dig = (unsigned char)rec->dig;
+    }
+  }
+  for (int wave = 0; wave < 4; wave++) {
+    pb_wave();
+    if (!rs.nneed)
+      break;
+    if (!ext_fetch(G, 0))
+      goto out;
+  }
+  {
+    int k = 0, bk = 0;
+    for (int r = 0; r < pb->nr; r++)
+      if (pb_known(pb, &pb->r[r]) >= SHOWN_MIN)
+        pb->r[k++] = pb->r[r];
+    pb->nr = k;
+    for (int i = 0; i < pb->nbill; i++)
+      bk += pb->c[i].imdb != 0;
+    if (!pb->nr && !bk) {
+      why = "no row with enough known titles";
+      goto out;
+    }
+  }
+  for (int r = 0; r < pb->nr; r++)
+    overlap += row_on_home(pb->r[r].def, hd, nh);
+  {
+    Page *p = page_make(pb, kind_sig(K->sig, pg, c->noAnime));
+    if (!p) {
+      why = "out of memory";
+      goto out;
+    }
+    if (gen_now() != G) {
+      free(p);
+      goto out;
+    }
+    rows = p->h.nrows;
+    pthread_mutex_lock(&mu);
+    Page *old = pgs[pg];
+    pgs[pg] = p;
+    pgAt[pg] = (long)time(NULL);
+    pthread_mutex_unlock(&mu);
+    free(old);
+    ver_bump();
+    ok = 1;
+  }
+  page_save_pg(pg);
+  why = "";
+out:
+  fprintf(stderr, "[recs] page %c: %d rows, %d lists asked, built in %lld ms%s%s\n", kind, rows, st.requests - req0,
+          (us_now() - t0) / 1000, why[0] ? ": " : "", why);
+  if (ok && dumpOn()) {
+    page_dump(pg);
+    fprintf(stderr, "[recs-dump] page %c overlap with Home's rows: %d\n", kind, overlap);
+  }
+  for (int d = 0; d < maxDefs; d++) {
+    if (rc)
+      free(rc[d]);
+    if (fin)
+      free(fin[d]);
+  }
+  for (int i = 0; i < nseed; i++) {
+    K->D[i].own = ownP[i];
+    K->D[i].nown = ownN[i];
+  }
+  rs.defs = sd;
+  rs.rc = src;
+  rs.rn = srn;
+  rs.pb = spb;
+  rs.listsOK = sl;
+  rs.nneed = 0;
+  free(defs);
+  free(hd);
+  free(rc);
+  free(fin);
+  free(rn);
+  free(pb);
+  free(in);
+  free(picks);
+  free(pgb);
+  free(ex2);
+  return ok;
 }
 
 /* returns 1 when a page went out; the stats and the reason are logged once */
@@ -1502,33 +1852,45 @@ static int run(RunCfg *c) {
     kb = (int)((sizeof(Page) + page_bytes(pg) + 2 * (size_t)pg->ixn + 1023) / 1024);
     rows = pg->h.nrows;
     pthread_mutex_lock(&mu);
-    Page *old = cur;
-    cur = pg;
-    pageAt = (long)time(NULL);
+    Page *old = pgs[0];
+    pgs[0] = pg;
+    pgAt[0] = (long)time(NULL);
     pthread_mutex_unlock(&mu);
     free(old);
     ver_bump();
     ok = 1;
   }
   id_save();
-  page_save_cur();
+  page_save_pg(0);
+  if (dumpOn())
+    page_dump(0);
+  /* phase 2: the Shows and Movies pages (own lists, same 3-at-a-time lane, mostly cached) */
+  {
+    KIn ki = { c, D, nx, taste, L, nl, ex, nex, picks, nb, &P, rs.pb, c->sig };
+    for (int pg = 1; pg <= 2 && gen_now() == G; pg++)
+      kind_page(&ki, pg);
+    if (gen_now() != G)
+      goto out;
+  }
   /* 8. pass 2, quietly and without a version bump: the rest of the ids, 2 at a time and only while nobody is pressing
    * keys */
   rs.pageMode = 1;
   rs.nneed = 0;
   __atomic_store_n(&wquiet, 1, __ATOMIC_RELEASE);
   pthread_mutex_lock(&mu);
-  for (int k = 0; cur && k < cur->h.ncards; k++) {
-    const PCard *pc = &cur->cards[k];
-    if (!pc->imdb && !(pc->flags & CF_NOID) && rs.nneed < PG_CARDS)
-      need_add(pc->kind ? 't' : 'm', pc->tmdb);
-  }
+  for (int pg = 0; pg < NPG; pg++)
+    for (int k = 0; pgs[pg] && k < pgs[pg]->h.ncards; k++) {
+      const PCard *pc = &pgs[pg]->cards[k];
+      if (!pc->imdb && !(pc->flags & CF_NOID) && rs.nneed < PG_CARDS)
+        need_add(pc->kind ? 't' : 'm', pc->tmdb);
+    }
   pthread_mutex_unlock(&mu);
   if (rs.nneed)
     ext_fetch(G, 1);
   pthread_mutex_lock(&mu);
-  for (int k = 0; cur && k < cur->h.ncards; k++)
-    missing += cur->cards[k].imdb == 0 && !(cur->cards[k].flags & CF_NOID);
+  for (int pg = 0; pg < NPG; pg++)
+    for (int k = 0; pgs[pg] && k < pgs[pg]->h.ncards; k++)
+      missing += pgs[pg]->cards[k].imdb == 0 && !(pgs[pg]->cards[k].flags & CF_NOID);
   pthread_mutex_unlock(&mu);
   page_save_cur();
   id_save();
@@ -1574,13 +1936,26 @@ typedef struct {
   IdRec *r;
   int n;
 } Mig;
+static void page_loaded(Page *p, int pg);
 static void do_load(const Msg *m) {
-  Page *p = page_load(m->gen, m->tag);
+  Page *kp[NPG] = { 0 };
+  for (int pg = 1; pg < NPG_SAVED; pg++)
+    kp[pg] = page_load(pg, kind_sig(m->gen, pg, m->status), m->tag);
+  Page *p = page_load(0, m->gen, m->tag);
   if (m->gen != __atomic_load_n(&loadWant, __ATOMIC_ACQUIRE)) {
     free(p);
+    for (int pg = 1; pg < NPG_SAVED; pg++)
+      free(kp[pg]);
     return;
   }
-  if (p) {
+  kp[0] = p;
+  for (int pg = 0; pg < NPG_SAVED; pg++)
+    if (kp[pg])
+      page_loaded(kp[pg], pg);
+  __atomic_store_n(&loadState, p ? 2 : 1, __ATOMIC_RELEASE);
+}
+static void page_loaded(Page *p, int pg) {
+  {
     id_load();
     for (int k = 0; k < p->h.ncards; k++) {
       PCard *c = &p->cards[k];
@@ -1596,14 +1971,13 @@ static void do_load(const Msg *m) {
     }
     id_free();
     pthread_mutex_lock(&mu);
-    Page *old = cur;
-    cur = p;
-    pageAt = (long)p->h.at;
+    Page *old = pgs[pg];
+    pgs[pg] = p;
+    pgAt[pg] = (long)p->h.at;
     pthread_mutex_unlock(&mu);
     free(old);
     ver_bump();
   }
-  __atomic_store_n(&loadState, p ? 2 : 1, __ATOMIC_RELEASE);
 }
 static void do_mig(Mig *g) {
   id_load();
@@ -1625,11 +1999,15 @@ static void *worker_main(void *a) {
       break;
     case MG_DROP: {
       pthread_mutex_lock(&mu);
-      Page *old = cur;
-      cur = NULL;
-      pageAt = 0;
+      Page *old[NPG];
+      for (int i = 0; i < NPG; i++) {
+        old[i] = pgs[i];
+        pgs[i] = NULL;
+        pgAt[i] = 0;
+      }
       pthread_mutex_unlock(&mu);
-      free(old);
+      for (int i = 0; i < NPG; i++)
+        free(old[i]);
       ver_bump();
       break;
     }
@@ -1760,6 +2138,7 @@ static void run_post(void) {
   snprintf(c->regionL, sizeof c->regionL, "%.47s", region_langs(c->region));
   audio_code(c->audio);
   c->hideCinema = recs_hide_cinema();
+  c->noAnime = recs_no_anime();
   {
     int mb = plat_mem_total_mb();
     c->lowMem = mb > 0 && mb < 1200;
@@ -1930,8 +2309,9 @@ void recs_status(char *out, size_t cap) {
   int picks = 0;
   long at = 0;
   pthread_mutex_lock(&mu);
-  if (cur) {
-    at = pageAt;
+  if (pgs[0]) {
+    Page *cur = pgs[0];
+    at = pgAt[0];
     for (int i = 0; i < cur->h.nbill; i++)
       picks += vis(&cur->cards[i]);
     if (cur->h.nrows) {
@@ -2000,7 +2380,7 @@ void recs_tick(void) {
   int on = recs_on() && tmdb_has_key();
   {
     pthread_mutex_lock(&mu);
-    int was = shown, has = cur != NULL;
+    int was = shown, has = pgs[0] || pgs[1] || pgs[2];
     shown = on;
     pthread_mutex_unlock(&mu);
     if (was != on && has)
@@ -2031,6 +2411,7 @@ void recs_tick(void) {
       m->type = MG_LOAD;
       m->gen = curSig;
       m->tag = RESULT_AGE * 4;
+      m->status = recs_no_anime();
       page_file_set();
       __atomic_store_n(&loadWant, curSig, __ATOMIC_RELEASE);
       msg_post(m);
@@ -2059,9 +2440,12 @@ void recs_tick(void) {
     if (now < startAt || !app_splash_done || app_idle() < 0.5f || loaded < 2 || migState != 2)
       return;
     pthread_mutex_lock(&mu);
-    long at = pageAt;
+    long at = pgAt[0];
+    int kindsFresh = 1;
+    for (int pg = 1; pg < NPG_SAVED; pg++)
+      kindsFresh &= pgs[pg] && time(NULL) - pgAt[pg] < RESULT_AGE;
     pthread_mutex_unlock(&mu);
-    if (!force && at && time(NULL) - at < RESULT_AGE) {
+    if (!force && at && time(NULL) - at < RESULT_AGE && kindsFresh) {
       startAt = now + 600;
       return;
     } /* fresh enough */
