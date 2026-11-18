@@ -10,7 +10,7 @@
 #define SB_GL_ES 1
 #define SB_POINTER 1 /* the Magic Remote's pointer: rows hold still under it (board.c) */
 #define SB_TV_PACER 1 /* the loop paces itself and finds the panel's refresh rate */
-#define SB_CACHE_MB 40 /* the app partition is small and shared with every app's install */
+#define SB_CACHE_MB 80 /* the partition is shared with every app's install, but has ~465 MB free; the cache was already at 66 MB of 40 because pruning runs only at start, and the compressed copies are bigger than JPEG */
 #define SB_SYS_JPEG 1 /* the TV has libjpeg.so.62 (libjpeg-turbo): JPEGs decoded scaled (ui/jpegscale.c) */
 #define SB_IMG_BUDGET_MB 40 /* the TVs have little memory to spare */
 #define SB_TEX_COMPRESS 1 /* pictures kept as ETC1/ETC2 textures where the GPU takes them (ui/etc.c) */
