@@ -48,6 +48,7 @@ void img_ctx_row(int row); /* the Home row being drawn (-1 none): what it asks f
 void img_focus_row(int row); /* the focused row, each frame the board draws */
 void img_pin_begin(void); /* the first screen's pictures are pinned afresh: begin, then img_pin_shaped each; the rest is let go */
 void img_pin_shaped(const char *url, int w, int h, float radius, int fit); /* (a loaded one only; with the budget's third) */
+void img_background(void); /* the app is hidden or sent to the back: every picture texture and the spare pool let go (main thread) */
 void img_release_unused(int keepMb); /* evicts least recently drawn textures over the budget */
 void img_set_budget_mb(int mb);
 void img_set_draw_scale(

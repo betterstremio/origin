@@ -4,6 +4,7 @@
 #include "ui/jpegscale.h"
 #include <SDL2/SDL.h>
 #include "ui/gfx.h"
+#include "ui/etc.h"
 #include "core/net.h"
 #include "core/store.h"
 #include <stdio.h>
@@ -183,6 +184,8 @@ typedef struct Img {
   int state; /* 0 queued, 1 loading, 2 ready, 3 failed */
   unsigned char *px;
   int pw, ph, pch; /* decoded pixels waiting for upload */
+  int fmt; /* what px holds: 0 RGBA, 1 ETC RGB blocks, 2 ETC2 RGBA (EAC) blocks (encoded on the device, ui/etc.c) */
+  long pbytes; /* the size of the pending data (set when it is queued for upload) */
   GLuint tex;
   float aspect;
   int bytes;
@@ -234,6 +237,10 @@ static pthread_cond_t cv = PTHREAD_COND_INITIALIZER;
 static Img *pend[1024];
 static int qn;
 static unsigned qSeq, frameNo;
+/* the bytes of a picture's data, raw or compressed */
+static long pic_bytes(const Img *im) {
+  return im->fmt ? (long)etc_size(im->pw, im->ph, im->fmt == 2) : (long)im->pw * im->ph * im->pch;
+}
 static Img *urg; /* the one picture the screen waits on (the backdrop): taken before the list (not counted in qn) */
 static void q_push(Img *im, int pri) {
   im->seq = ++qSeq;
@@ -276,7 +283,8 @@ static void done_push(Img *im) {
   im->dnext = doneHead;
   doneHead = im;
   dn++;
-  dnBytes += (long)im->pw * im->ph * im->pch;
+  im->pbytes = pic_bytes(im);
+  dnBytes += im->pbytes;
   if (dnBytes > dnPeak)
     dnPeak = dnBytes;
 } /* under mu; never twice (it would point to itself and the list never end) */
@@ -306,7 +314,7 @@ static Img *done_pop(void) { /* the order of the loading: a backdrop, what is on
     im->dnext = NULL;
     im->inDone = 0;
     dn--;
-    dnBytes -= (long)im->pw * im->ph * im->pch;
+    dnBytes -= im->pbytes;
   }
   return im;
 }
@@ -432,13 +440,126 @@ static double mono_s(void) {
   clock_gettime(CLOCK_MONOTONIC, &t);
   return t.tv_sec + t.tv_nsec / 1e9;
 }
+/* ---- compressed pictures: where the GPU takes ETC1 / ETC2 the picture is encoded once after its decode (a poster is
+   0.5 byte a pixel, 1 with corners, against 4 as RGBA: the same budget holds 4-8 times more pictures), uploaded as blocks,
+   and the blocks are what the disk copy keeps ("etc:" key; the next visit skips the JPEG decode and this encode) ---- */
+#define ETC_MAGIC "SBETC1"
+#define ETC_HDR 24 /* magic(6) fmt(1) 0(1) pw(4) ph(4) aspect(4) focal(4), then the blocks */
+static unsigned etcN;
+static long etcUs; /* pictures encoded so far and the time it took (microseconds) */
+static int etcLog = -1; /* SB_UPLOG: each encode logged */
+static int etc_alpha(const unsigned char *px, int w, int h) {
+  for (long i = 3, n = (long)w * h * 4; i < n; i += 4)
+    if (px[i] != 255)
+      return 1;
+  return 0;
+}
+/* the format a picture is kept in (0: RGBA as before). pre: its corners are still to be put on (fit >= 0) */
+static int etc_pick(const Img *im, int pre) {
+  int caps = gfx_etc_caps();
+  if (!caps || !im->px || im->pw < 4 || im->ph < 4 || im->pw * im->ph < 64 * 64)
+    return 0; /* (small ones are cheap as they are) */
+  int a = (pre && im->fit >= 0 && im->radius > 0) || etc_alpha(im->px, im->pw, im->ph);
+  return a ? ((caps & 1) ? 2 : 0) : 1; /* (alpha needs ETC2's EAC) */
+}
+static void etc_pack(Img *im, int fmt) {
+  size_t sz = etc_size(im->pw, im->ph, fmt == 2);
+  unsigned char *b = malloc(sz);
+  if (!b)
+    return;
+  dec_enter(); /* (as many encodes at once as decodes: the cores are the decoding's) */
+  double t0 = mono_s();
+  if (fmt == 2)
+    etc2_eac_encode(im->px, im->pw, im->ph, b);
+  else
+    etc1_encode(im->px, im->pw, im->ph, b);
+  double ms = (mono_s() - t0) * 1000;
+  dec_leave();
+  free(im->px);
+  im->px = b;
+  im->fmt = fmt;
+  im->pch = fmt == 2 ? 4 : 3;
+  __atomic_fetch_add(&etcN, 1, __ATOMIC_RELAXED);
+  __atomic_fetch_add(&etcUs, (long)(ms * 1000), __ATOMIC_RELAXED);
+  if (etcLog < 0)
+    etcLog = getenv("SB_UPLOG") != NULL;
+  if (etcLog)
+    fprintf(stderr, "[etc] %dx%d fmt%d %.1f ms\n", im->pw, im->ph, fmt, ms);
+}
+static void etc_save(const Img *im) {
+  if (!strncmp(im->src, "file://", 7) || im->pw * im->ph > 1280 * 720)
+    return;
+  size_t sz = (size_t)pic_bytes(im);
+  unsigned char *b = malloc(ETC_HDR + sz);
+  if (!b)
+    return;
+  memcpy(b, ETC_MAGIC, 6);
+  b[6] = (unsigned char)im->fmt;
+  b[7] = 0;
+  memcpy(b + 8, &im->pw, 4);
+  memcpy(b + 12, &im->ph, 4);
+  memcpy(b + 16, &im->aspect, 4);
+  memcpy(b + 20, &im->focal, 4);
+  memcpy(b + ETC_HDR, im->px, sz);
+  char key[2400];
+  snprintf(key, sizeof key, "etc:%dx%d:%s", im->w, im->h, im->url);
+  cache_write(key, b, ETC_HDR + sz);
+  free(b);
+}
+static int etc_load(Img *im) {
+  int caps = gfx_etc_caps();
+  if (!caps || (im->wantPal && !im->palReady))
+    return 0; /* (the colours are made from RGBA: the old way) */
+  float focal = -1;
+  if (im->fit == 3 && (focal = focal_read(im->src)) < 0)
+    return 0; /* (a crop without its subject's place: made again from the picture) */
+  char key[2400];
+  snprintf(key, sizeof key, "etc:%dx%d:%s", im->w, im->h, im->url);
+  size_t len = 0;
+  unsigned char *d = cache_read(key, 14 * 86400, &len);
+  if (!d)
+    return 0;
+  int fmt = len > ETC_HDR ? d[6] : 0, pw = 0, ph = 0;
+  float aspect, hf;
+  if (len > ETC_HDR) {
+    memcpy(&pw, d + 8, 4);
+    memcpy(&ph, d + 12, 4);
+    memcpy(&aspect, d + 16, 4);
+    memcpy(&hf, d + 20, 4);
+  }
+  if (len <= ETC_HDR || memcmp(d, ETC_MAGIC, 6) || (fmt != 1 && fmt != 2) || (fmt == 2 && !(caps & 1)) || pw < 4 ||
+      ph < 4 || pw > 4096 || ph > 4096 || len != ETC_HDR + etc_size(pw, ph, fmt == 2) || !(aspect > 0)) {
+    free(d);
+    return 0;
+  }
+  memmove(d, d + ETC_HDR, len - ETC_HDR); /* (the blocks are the picture's pixels now) */
+  im->px = d;
+  im->fmt = fmt;
+  im->pw = pw;
+  im->ph = ph;
+  im->pch = fmt == 2 ? 4 : 3;
+  im->aspect = aspect;
+  im->focal = im->fit == 3 ? focal : hf;
+  im->fromSm = 1;
+  return 1;
+}
 static void load(Img *im) {
   im->fromSm = 0;
+  im->fmt = 0;
   dec_enter();
-  int ok = small_load(im);
+  int ok = etc_load(im) || small_load(im);
   dec_leave();
-  if (!ok)
-    load_(im);
+  if (ok) {
+    if (!im->fmt) { /* a small copy from before: kept compressed from now on */
+      int f = etc_pick(im, 0);
+      if (f) {
+        etc_pack(im, f);
+        etc_save(im);
+      }
+    }
+    return;
+  }
+  load_(im);
 }
 static void load_(Img *im) {
   char key[2048];
@@ -491,9 +612,15 @@ static void load_(Img *im) {
   if (im->saveLater) { /* the small copy's encoding (tens of ms on the TV) no longer holds a decode slot */
     im->saveLater = 0;
     if (im->px) {
-      small_save(im, im->px, im->pw, im->ph);
+      int f = etc_pick(im, 1); /* (compressed: its blocks are the disk copy; the colours' request keeps the RGBA one too) */
+      if (!f || im->wantPal)
+        small_save(im, im->px, im->pw, im->ph);
       if (im->fit >= 0)
         round_corners(im->px, im->pw, im->ph, im->radius);
+      if (f) {
+        etc_pack(im, f);
+        etc_save(im);
+      }
     }
   }
 }
@@ -625,6 +752,13 @@ static void decode_part(Img *im, unsigned char *data, size_t len, int fromNet, c
   im->pch = 4;
   im->aspect = (float)w / h;
 }
+/* a picture of a Home row the focus reaches in under a second (the eviction's own test): loaded though nobody asked for it
+   a while, so the row is there when the focus gets to it. The focus is read atomically (the board sets it each frame) */
+static int near_focus(const Img *im) {
+  int fr = __atomic_load_n(&focusRow, __ATOMIC_RELAXED);
+  unsigned fa = __atomic_load_n(&focusAt, __ATOMIC_RELAXED);
+  return fr >= 0 && frameNo - fa < 4 && im->row >= 0 && abs(im->row - fr) <= 3;
+}
 static void *worker(void *a) {
   plat_thread_background(10);
   int wid = (int)(intptr_t)a;
@@ -644,7 +778,7 @@ static void *worker(void *a) {
       continue;
     } /* queued twice (urgent and in a queue): another worker has it already */
     /* asked for, then nobody asked again for 1.5 s (scrolled past): not loaded now; the next ask queues it again */
-    if (!im->pin && !im->wantPal && frameNo - im->lastUse > 90) {
+    if (!im->pin && !im->wantPal && frameNo - im->lastUse > 90 && !near_focus(im)) {
       if (im->shown) {
         im->lost = 3;
         phEv[3]++;
@@ -707,7 +841,10 @@ void img_queue_stats(int *queued, int *waiting) {
   pthread_mutex_unlock(&mu);
 }
 void img_stats(char *o, size_t cap) {
-  snprintf(o, cap, "evicted %u · shown again %u (faded %u)", stEvict, stReturn, stRetFade);
+  unsigned n = __atomic_load_n(&etcN, __ATOMIC_RELAXED);
+  long us = __atomic_load_n(&etcUs, __ATOMIC_RELAXED);
+  snprintf(o, cap, "evicted %u · shown again %u (faded %u) · etc %u pictures, avg %.1f ms", stEvict, stReturn, stRetFade, n,
+           n ? us / 1000.0 / n : 0.0);
 }
 int img_used_mb(void) {
   return (int)(usedBytes / 1048576);
@@ -879,8 +1016,15 @@ int img_back_shaped(const char *url, int w, int h, float radius, int fit) {
     sh = (int)(h * drawScale + 0.999f);
   } /* (as request_as sizes it: the small copy's name has the size) */
   char sk[2400], p[600];
-  snprintf(sk, sizeof sk, "sm:%dx%d:%s", sw, sh, k);
-  int ok = cache_file(sk, 14 * 86400, p, sizeof p);
+  int ok = 0;
+  if (gfx_etc_caps()) { /* (the compressed copy first: it is what is written when ETC is in use) */
+    snprintf(sk, sizeof sk, "etc:%dx%d:%s", sw, sh, k);
+    ok = cache_file(sk, 14 * 86400, p, sizeof p);
+  }
+  if (!ok) {
+    snprintf(sk, sizeof sk, "sm:%dx%d:%s", sw, sh, k);
+    ok = cache_file(sk, 14 * 86400, p, sizeof p);
+  }
   if (ok && fit == 3) {
     snprintf(sk, sizeof sk, "fx:%s", url);
     ok = cache_file(sk, 14 * 86400, p, sizeof p);
@@ -1099,7 +1243,7 @@ static void up_done(Img *im) {
   im->lost = 0;
   if (fade)
     gfx_tex_fade_in(im->tex);
-  im->bytes = im->pw * im->ph * im->pch;
+  im->bytes = (int)pic_bytes(im);
   usedBytes += im->bytes;
   phUps++;
   if (usedBytes > phPeak)
@@ -1109,21 +1253,25 @@ static void up_done(Img *im) {
   im->lastUse = frameNo;
 }
 static long up_band(Img *im, long budget) { /* rows up to the budget, in whole 16-row blocks; what was sent */
-  long row = (long)im->pw * im->pch;
-  int rows = (int)(budget / row);
+  long row = im->fmt ? (long)((im->pw + 3) / 4) * (im->fmt == 2 ? 16 : 8) : (long)im->pw * im->pch; /* (compressed: a row of blocks, 4 pixel rows) */
+  int step = im->fmt ? 4 : 1, rows = (int)(budget / row) * step;
   rows = rows < 16 ? 16 : rows & ~15;
   if (im->upRow + rows > im->ph)
     rows = im->ph - im->upRow;
+  long sent = im->fmt ? ((rows + 3) / 4) * row : (long)rows * row;
   Uint64 u0 = SDL_GetPerformanceCounter();
-  gfx_tex_update(im->upTex, im->px + (size_t)im->upRow * row, 0, im->upRow, im->pw, rows, im->pch);
-  up_log("band", (long)rows * row, u0);
-  frUp += (long)rows * row;
+  if (im->fmt)
+    gfx_ctex_update(im->upTex, im->fmt, im->px + (size_t)(im->upRow / 4) * row, im->upRow, im->pw, rows);
+  else
+    gfx_tex_update(im->upTex, im->px + (size_t)im->upRow * row, 0, im->upRow, im->pw, rows, im->pch);
+  up_log("band", sent, u0);
+  frUp += sent;
   im->upRow += rows;
   if (im->upRow >= im->ph) {
     up_done(im);
     upCur = NULL;
   }
-  return rows * row;
+  return sent;
 }
 void img_pump(void) {
   long sent = 0;
@@ -1167,12 +1315,20 @@ void img_pump(void) {
     } /* a reload for the colours only, or nobody draws it */
     if (!im->px)
       continue;
-    long bytes = (long)im->pw * im->ph * im->pch;
+    long bytes = pic_bytes(im);
     long cap = im->urgent ? UP_URGENT : UP_BUDGET;
-    if (bytes <= cap - sent || (!sent && bytes <= cap + cap / 4)) {
+    int wholeOnly = im->fmt == 1 && !(gfx_etc_caps() & 1); /* (ETC1 by the extension has no part upload) */
+    if (bytes <= cap - sent || (!sent && (bytes <= cap + cap / 4 || wholeOnly))) {
       sent += bytes;
       Uint64 u0 = SDL_GetPerformanceCounter();
-      im->upTex = gfx_tex_create(im->px, im->pw, im->ph, im->pch, 1);
+      im->upTex = im->fmt ? gfx_ctex_create(im->fmt, im->px, im->pw, im->ph) : gfx_tex_create(im->px, im->pw, im->ph, im->pch, 1);
+      if (!im->upTex) { /* (cannot be made: asked for again when drawn) */
+        free(im->px);
+        im->px = NULL;
+        im->state = 2;
+        im->wantTex = 0;
+        continue;
+      }
       up_log("whole", bytes, u0);
       frUp += bytes;
       up_done(im);
@@ -1186,8 +1342,15 @@ void img_pump(void) {
     } /* next frame, first */
     {
       Uint64 u0 = SDL_GetPerformanceCounter();
-      im->upTex = gfx_tex_create(NULL, im->pw, im->ph, im->pch, 1);
+      im->upTex = im->fmt ? gfx_ctex_create(im->fmt, NULL, im->pw, im->ph) : gfx_tex_create(NULL, im->pw, im->ph, im->pch, 1);
       up_log("alloc", bytes, u0);
+    }
+    if (!im->upTex) {
+      free(im->px);
+      im->px = NULL;
+      im->state = 2;
+      im->wantTex = 0;
+      return;
     }
     im->upRow = 0;
     upCur = im;
@@ -1215,8 +1378,8 @@ void img_ctx_row(int row) {
   ctxRow = row;
 }
 void img_focus_row(int row) {
-  focusRow = row;
-  focusAt = frameNo;
+  __atomic_store_n(&focusRow, row, __ATOMIC_RELAXED);
+  __atomic_store_n(&focusAt, frameNo, __ATOMIC_RELAXED);
 }
 /* the first screen kept (rows 0-1 of Home, the billboard): begin, then pin what is loaded; whatever is not pinned again
    in a pass is let go. Never more than a third of the budget, and nothing is kept when the memory guard asks */
@@ -1238,6 +1401,26 @@ void img_pin_shaped(const char *url, int w, int h, float radius, int fit) {
 }
 /* over the budget: the picture farthest from the focus goes first (rows 0-1 and the first screen's pins last), then the
    oldest. keepMb > 0 is the memory guard or a film: then nothing is kept */
+/* the app is sent to the back or hidden: every picture texture (the title art kept for the next screen excepted) and the
+   pool of spare ones go, so the system finds the memory free (they come back as they are drawn, from the disk copies).
+   Main thread, once per leaving */
+void img_background(void) {
+  long before = usedBytes;
+  for (int b = 0; b < BUCKETS; b++)
+    for (Img *i = table[b]; i; i = i->next) {
+      if (!i->tex || i->pin)
+        continue;
+      gfx_tex_recycle(i->tex, i->pw, i->ph, i->pch, 1);
+      i->tex = 0;
+      usedBytes -= i->bytes;
+      i->bytes = 0;
+      i->lost = 2;
+      i->state = 2;
+      i->wantTex = 0;
+    }
+  gfx_pool_clear();
+  fprintf(stderr, "[img] background: freed %ld MB\n", (before - usedBytes) / 1048576);
+}
 void img_release_unused(int keepMb) {
   long keep = keepMb > 0 ? (long)keepMb * 1024 * 1024 : budgetBytes;
   if (usedBytes <= keep)
