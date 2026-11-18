@@ -13,6 +13,8 @@ static int libBoot, addonBoot, away;
 static volatile int resumed; /* set from SDL's event watch, read once a frame */
 static volatile int purgeWanted; /* sent away on another thread: the pictures are let go on the next frame */
 static SDL_threadID mainTid;
+static double awayAt; /* when it left (main-thread time) */
+#define PURGE_AFTER_S 10.0
 static int rebuildWanted;
 static double rebuildSince;
 
@@ -24,12 +26,16 @@ static int SDLCALL on_event(void *ud, SDL_Event *e) {
     away = 0;
     resumed = 1;
   } else if (l < 0) {
-    if (!away) { /* once per leaving: the picture textures go (GL on the thread that owns it; the Android main thread
-                    is held in the event pump while away, so it must be done here, before it stops) */
+    if (!away) { /* once per leaving: the picture textures go. Android: here, at once (its main thread is held in the
+                    event pump while away, and it only leaves for real). Elsewhere a lost focus can be a system pop-up
+                    over the app (the TV's volume or quick settings): the frame loop lets them go after 10 s away */
+#ifdef __ANDROID__
       if (SDL_ThreadID() == mainTid)
         img_background();
       else
+#endif
         purgeWanted = 1;
+      awayAt = app_now();
     }
     away = 1;
   }
@@ -102,7 +108,7 @@ void sync_tick(void) {
     addonBoot = 1;
     sb_sync_addons(on_addons, NULL);
   }
-  if (purgeWanted) {
+  if (purgeWanted && (!away || app_now() - awayAt >= PURGE_AFTER_S)) {
     purgeWanted = 0;
     if (away) /* (not when it is back already: that would empty the screen it just came back to) */
       img_background();
