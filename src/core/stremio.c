@@ -431,6 +431,142 @@ int sb_disc_defs(CatalogDef *out, int max, const char *type, int own) {
   }
   return n;
 }
+/* Shows / Movies without For You: Cinemeta's own catalogues by genre. Each genre has its row names (films, series) and
+   a "Top rated" one; they are literal so the string tables can find them */
+typedef struct {
+  const char *g, *f, *s, *tf, *ts;
+} KGenre;
+static const KGenre KG[] = {
+  { "Action", "Action films", "Action series", "Top rated action films", "Top rated action series" },
+  { "Adventure", "Adventure films", "Adventure series", "Top rated adventure films", "Top rated adventure series" },
+  { "Animation", "Animated films", "Animated series", "Top rated animated films", "Top rated animated series" },
+  { "Biography", "Biographical films", "Biographical series", "Top rated biographical films",
+    "Top rated biographical series" },
+  { "Comedy", "Comedy films", "Comedy series", "Top rated comedy films", "Top rated comedy series" },
+  { "Crime", "Crime films", "Crime series", "Top rated crime films", "Top rated crime series" },
+  { "Documentary", "Documentaries", "Docuseries", "Top rated documentaries", "Top rated docuseries" },
+  { "Drama", "Drama films", "Drama series", "Top rated drama films", "Top rated drama series" },
+  { "Family", "Family films", "Family series", "Top rated family films", "Top rated family series" },
+  { "Fantasy", "Fantasy films", "Fantasy series", "Top rated fantasy films", "Top rated fantasy series" },
+  { "History", "Historical films", "Historical series", "Top rated historical films", "Top rated historical series" },
+  { "Horror", "Horror films", "Horror series", "Top rated horror films", "Top rated horror series" },
+  { "Mystery", "Mystery films", "Mystery series", "Top rated mystery films", "Top rated mystery series" },
+  { "Romance", "Romance films", "Romance series", "Top rated romance films", "Top rated romance series" },
+  { "Sci-Fi", "Sci-fi films", "Sci-fi series", "Top rated sci-fi films", "Top rated sci-fi series" },
+  { "Sport", "Sports films", "Sports series", "Top rated sports films", "Top rated sports series" },
+  { "Thriller", "Thrillers", "Thriller series", "Top rated thrillers", "Top rated thriller series" },
+  { "War", "War films", "War series", "Top rated war films", "Top rated war series" },
+  { "Western", "Westerns", "Western series", "Top rated westerns", "Top rated western series" },
+  { "Reality-TV", "Reality TV", "Reality TV", "Top rated reality TV", "Top rated reality TV" },
+  { "Talk-Show", "Talk shows", "Talk shows", "Top rated talk shows", "Top rated talk shows" },
+  { "Game-Show", "Game shows", "Game shows", "Top rated game shows", "Top rated game shows" },
+};
+#define NKG ((int)(sizeof KG / sizeof KG[0]))
+#define KMAXG 40
+/* the genres Cinemeta's manifest offers for its "top" catalogue of a type (as the addon spells them) */
+static int kind_genres(const char *type, char g[][32]) {
+  int n = 0;
+  cJSON *a = sb_addons();
+  const cJSON *ad, *cat, *ex, *o;
+  if (a)
+    cJSON_ArrayForEach(ad, a) {
+      const cJSON *m = js_obj(ad, "manifest");
+      if (!sb_addon_on(ad) || strcmp(js_str(m, "id", ""), "com.linvo.cinemeta"))
+        continue;
+      cJSON_ArrayForEach(cat, js_arr(m, "catalogs")) {
+        if (strcmp(js_str(cat, "type", ""), type) || strcmp(js_str(cat, "id", ""), "top"))
+          continue;
+        const cJSON *opts = js_arr(cat, "genres");
+        cJSON_ArrayForEach(ex, js_arr(cat, "extra"))
+          if (!strcmp(js_str(ex, "name", ""), "genre") && js_arr(ex, "options"))
+            opts = js_arr(ex, "options");
+        cJSON_ArrayForEach(o, opts)
+          if (cJSON_IsString(o) && n < KMAXG)
+            copy_str(g[n++], 32, o->valuestring);
+        if (n)
+          return n;
+      }
+    }
+  for (int i = 0; i < NKG && n < KMAXG; i++) /* no manifest in the account: what Cinemeta has offered */
+    if (i < NKG - 3 || !strcmp(type, "series"))
+      copy_str(g[n++], 32, KG[i].g);
+  return n;
+}
+static int kind_push(CatalogDef *out, int *n, int cap, const CatalogDef *home, int nh, const char *title,
+                     const char *type, const char *what, const char *genre, const char *key) {
+  char ex[64] = "", path[ADDON_URL_MAX];
+  CatalogDef d;
+  if (*n >= cap)
+    return 0;
+  if (genre)
+    addon_extra_add(ex, sizeof ex, "genre", genre);
+  snprintf(path, sizeof path, CINEMETA "/catalog/%s/%s", type, what);
+  def_set(&d, title, type, path, ex, 1, key);
+  for (int h = 0; h < nh; h++)
+    if (!strcmp(home[h].url, d.url))
+      return 0; /* Home has this row: not twice */
+  out[(*n)++] = d;
+  return 1;
+}
+static void kind_genre_row(CatalogDef *out, int *n, int cap, const CatalogDef *home, int nh, const char *type,
+                           const char *g, int gi, int top) {
+  const KGenre *kg = NULL;
+  char title[96], key[48];
+  int ser = !strcmp(type, "series");
+  for (int i = 0; i < NKG && !kg; i++)
+    if (!strcmp(KG[i].g, g))
+      kg = &KG[i];
+  if (kg)
+    copy_str(title, sizeof title, T(top ? (ser ? kg->ts : kg->tf) : (ser ? kg->s : kg->f)));
+  else
+    snprintf(title, sizeof title, top ? "Top rated %s" : "%s", g);
+  snprintf(key, sizeof key, "k_%c_%c%d", type[0], top ? 'r' : 'g', gi);
+  kind_push(out, n, cap, home, nh, title, type, top ? "imdbRating" : "top", g, key);
+}
+/* Shows ("series") or Movies ("movie") of Cinemeta: Trending, New in {year}, Top rated, then a row per genre (Drama,
+   Comedy, Action, Crime, Sci-Fi first) with its "Top rated" row four places later. 36 rows, 20 when lowMem. A row whose
+   address Home already has is left out */
+int sb_kind_defs(CatalogDef *out, int max, const char *type, int lowMem) {
+  int ser = !strcmp(type, "series"), cap = lowMem ? 20 : 36, n = 0, nh;
+  static CatalogDef home[12]; /* (the main thread only) */
+  char title[96], key[48], gl[KMAXG][32], gx[16];
+  static const char *const first[5] = { "Drama", "Comedy", "Action", "Crime", "Sci-Fi" };
+  time_t t = time(NULL);
+  struct tm tm;
+  if (max < cap)
+    cap = max;
+  nh = sb_home_defs(home, 12);
+  localtime_r(&t, &tm);
+  snprintf(key, sizeof key, "k_%c_top", type[0]);
+  kind_push(out, &n, cap, home, nh, ser ? T("Trending series") : T("Trending films"), type, "top", NULL, key);
+  snprintf(title, sizeof title, "%s %d", T("New in"), tm.tm_year + 1900);
+  snprintf(gx, sizeof gx, "%d", tm.tm_year + 1900);
+  snprintf(key, sizeof key, "k_%c_year", type[0]);
+  kind_push(out, &n, cap, home, nh, title, type, "year", gx, key);
+  snprintf(key, sizeof key, "k_%c_ir", type[0]);
+  kind_push(out, &n, cap, home, nh, ser ? T("Top rated series") : T("Top rated films"), type, "imdbRating", NULL, key);
+  int ng = kind_genres(type, gl), order[KMAXG], no = 0;
+  for (int f = 0; f < 5; f++)
+    for (int i = 0; i < ng; i++)
+      if (!strcmp(gl[i], first[f]))
+        order[no++] = i;
+  for (int i = 0; i < ng; i++) {
+    int in = 0;
+    for (int j = 0; j < no && !in; j++)
+      in = order[j] == i;
+    if (!in)
+      order[no++] = i;
+  }
+  /* G1 G2 G3, then each further genre followed by the Top rated row of the one three before it; the rest at the end */
+  for (int i = 0; i < no && n < cap; i++) {
+    kind_genre_row(out, &n, cap, home, nh, type, gl[order[i]], order[i], 0);
+    if (i >= 3)
+      kind_genre_row(out, &n, cap, home, nh, type, gl[order[i - 3]], order[i - 3], 1);
+  }
+  for (int i = no > 3 ? no - 3 : 0; i < no && n < cap; i++)
+    kind_genre_row(out, &n, cap, home, nh, type, gl[order[i]], order[i], 1);
+  return n;
+}
 /* the Catalogue tab: every installed catalogue of every addon, in addon order (Home's first rows too) */
 int sb_all_defs(CatalogDef *out, int max) {
   return board_defs(out, max, 0);

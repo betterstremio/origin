@@ -25,6 +25,7 @@
 #include "core/colstore.h"
 #include "core/httpd.h"
 #include "core/recs.h"
+#include "core/json.h"
 #include "core/pace.h"
 #include "platform/plat.h"
 #include "core/bgtrailer.h"
@@ -80,7 +81,8 @@ typedef struct {
   int pfOpen; /* pfOpen: col + 1 when the open card's wide pictures around it were last asked for */
   /* a catalog that pages: where its next page starts (the items its addon sent so far), one page asked at a time */
   CatalogDef def;
-  int hasDef, skipAt, more, paging;
+  int hasDef, skipAt, more, paging,
+      asked; /* asked: a Shows / Movies row whose catalogue has been asked (near the focus only) */
   double pageAt;
   /* a collection's row: tiles, not titles (no Item, so no details, trailer or hold menu come near them) */
   const ColFolder *tiles;
@@ -408,6 +410,76 @@ static void board_cw_row(Board *b) {
   } else
     itemlist_clear(&cw);
 }
+/* Shows / Movies: Continue Watching of one kind ("series" or "movie"), every title in progress, no count limit (the
+   library only; 0 requests). Kept apart so it can be swapped for lib_cw_items with a kind filter */
+static double mtime_ms(const cJSON *v) {
+  if (cJSON_IsNumber(v))
+    return v->valuedouble;
+  if (cJSON_IsString(v) && v->valuestring) {
+    struct tm tm;
+    int ms = 0;
+    memset(&tm, 0, sizeof tm);
+    if (sscanf(v->valuestring, "%d-%d-%dT%d:%d:%d.%d", &tm.tm_year, &tm.tm_mon, &tm.tm_mday, &tm.tm_hour, &tm.tm_min,
+               &tm.tm_sec, &ms) >= 6) {
+      tm.tm_year -= 1900;
+      tm.tm_mon -= 1;
+      return (double)timegm(&tm) * 1000 + ms;
+    }
+  }
+  return 0;
+}
+typedef struct {
+  const cJSON *it;
+  double at;
+} CwPick;
+static int cw_cmp(const void *a, const void *b) {
+  double x = ((const CwPick *)a)->at, y = ((const CwPick *)b)->at;
+  return x < y ? 1 : x > y ? -1 : 0;
+}
+static void board_cw_row_kind(Board *b, const char *type) {
+  cJSON *lib = lib_all();
+  const cJSON *it;
+  int cnt = cJSON_GetArraySize(lib), n = 0;
+  CwPick *pk = cnt > 0 ? malloc(sizeof(CwPick) * (size_t)cnt) : NULL;
+  if (!pk)
+    return;
+  cJSON_ArrayForEach(it, lib) {
+    const cJSON *s = js_obj(it, "state");
+    if (strcmp(js_str(it, "type", ""), type) || (js_bool(it, "removed", 0) && !js_bool(it, "temp", 0)))
+      continue;
+    double to = js_num(s, "timeOffset", 0), d = js_num(s, "duration", 0);
+    if (to <= 0 || (d > 0 && to > d * 0.96) || !js_str(it, "name", "")[0])
+      continue;
+    pk[n].it = it;
+    pk[n++].at = mtime_ms(cJSON_GetObjectItemCaseSensitive(it, "_mtime"));
+  }
+  if (n) {
+    qsort(pk, (size_t)n, sizeof pk[0], cw_cmp);
+    ItemList cw = { calloc((size_t)n, sizeof(Item)), 0, 0 };
+    for (int i = 0; i < n && cw.items; i++) {
+      Item *o = &cw.items[cw.n++];
+      const cJSON *l = pk[i].it, *s = js_obj(l, "state");
+      snprintf(o->id, sizeof o->id, "%s", js_str(l, "_id", ""));
+      snprintf(o->type, sizeof o->type, "%s", js_str(l, "type", "movie"));
+      snprintf(o->name, sizeof o->name, "%s", js_str(l, "name", ""));
+      snprintf(o->poster, sizeof o->poster, "%s", js_str(l, "poster", ""));
+      snprintf(o->background, sizeof o->background, "%s", js_str(l, "background", ""));
+      snprintf(o->logo, sizeof o->logo, "%s", js_str(l, "logo", ""));
+      snprintf(o->videoId, sizeof o->videoId, "%s", *js_str(s, "video_id", "") ? js_str(s, "video_id", "") : o->id);
+      double d = js_num(s, "duration", 0), t = js_num(s, "timeOffset", 0);
+      o->progress = d > 0 ? (float)(t / d) : 0;
+      o->left = d > 0 ? (float)((d - t) / 60000.0) : 0;
+      o->cw = 1;
+    }
+    Row *r = cw.n ? row_add(b, "Continue Watching", 1, 0) : NULL;
+    if (r) {
+      r->items = cw;
+      r->hidden = 0;
+    } else
+      itemlist_clear(&cw);
+  }
+  free(pk);
+}
 /* a catalog answer finds its row through a packed token (board, row, generation): nothing to free */
 static void *tok(Board *b, int row) {
   return (void *)(uintptr_t)(((uintptr_t)(b - boards) << 28) | ((uintptr_t)(b->gen & 0x3fffff) << 6) | (uintptr_t)row);
@@ -600,8 +672,25 @@ static void row_load(Row *r) {
   if (r->col >= r->items.n)
     r->col = r->items.n ? r->items.n - 1 : 0;
 }
+#define KIND_ASK 4 /* Shows / Movies: a row asks its catalogue within this many rows of the focus (6 at entry) */
+static void kind_ask(Board *b, int ri) {
+  Row *r = &b->rows[ri];
+  if (!r->hasDef || r->asked)
+    return;
+  r->asked = 1;
+  sb_catalog_url(r->def.url, r->def.type, 20, on_catalog, tok(b, ri));
+}
+static int kindb(const Board *b) {
+  return b->kind == 1 && (b->dtype == 1 || b->dtype == 2);
+}
 static void rows_window(Board *b) {
   b->winRow = b->rowIdx;
+  if (kindb(b)) { /* (rows already loaded stay: freed ones could not come back without the network) */
+    for (int i = 0; i < b->n; i++)
+      if (abs(i - b->rowIdx) <= KIND_ASK)
+        kind_ask(b, i);
+    return;
+  }
   if (b->kind != 0)
     return;
   for (int i = 0; i < b->n; i++) {
@@ -712,13 +801,16 @@ static void load_catalog_rows(Board *b, int disc, int keep) {
       col_disc_rows(b, keep, oldCols); /* (the collections live on the Catalogue now; phones' Discover keeps them) */
   }
   static CatalogDef defs[CATDEFS]; /* (the main thread only; too big for a stack) */
-  int nd = !disc           ? sb_home_defs(defs, 12)
-           : b->dtype == 3 ? sb_all_defs(defs, CATDEFS)
-                           : sb_disc_defs(defs, 12,
-                                          b->dtype == 1   ? "series"
-                                          : b->dtype == 2 ? "movie"
-                                                          : NULL,
-                                          b->dtype != 0);
+  int kb = disc && (b->dtype == 1 || b->dtype == 2);
+  if (kb)
+    board_cw_row_kind(b, b->dtype == 1 ? "series" : "movie");
+  int nd;
+  if (kb) {
+    int mem = plat_mem_total_mb();
+    int low = mem > 0 && mem <= 1200;
+    nd = sb_kind_defs(defs, (low ? 20 : 36) - b->n, b->dtype == 1 ? "series" : "movie", low);
+  } else
+    nd = !disc ? sb_home_defs(defs, 12) : b->dtype == 3 ? sb_all_defs(defs, CATDEFS) : sb_disc_defs(defs, 12, NULL, 0);
   for (int d = 0; d < nd; d++) {
     Row *r = row_add(b, defs[d].title, 0, 0);
     if (!r)
@@ -728,7 +820,10 @@ static void load_catalog_rows(Board *b, int disc, int keep) {
       r->col = oldCols[ri];
     r->def = defs[d];
     r->hasDef = 1;
-    sb_catalog(&defs[d], on_catalog, tok(b, ri));
+    if (!kb)
+      sb_catalog(&defs[d], on_catalog, tok(b, ri));
+    else if (ri < 6)
+      kind_ask(b, ri);
   }
   if (keep) {
     b->rowIdx = oldRow < b->n ? oldRow : (b->n ? b->n - 1 : 0);
@@ -747,11 +842,18 @@ static void load_catalog_rows(Board *b, int disc, int keep) {
   if (disc && b->dtype) {
     if (b->dtype == 3)
       catAt = app_now();
-    fprintf(stderr, "[tabs] %s: %d rows in %.0f ms\n",
+    fprintf(stderr, "[tabs] %s: %d rows (%s) in %.0f ms\n",
             b->dtype == 1   ? "Shows"
             : b->dtype == 2 ? "Movies"
                             : "Catalogue",
-            b->n, (app_now() - t0) * 1000);
+            b->n,
+            kb              ? "cinemeta"
+            : b->dtype == 3 ? "addons"
+                            : "mixed",
+            (app_now() - t0) * 1000);
+    if (kb && getenv("SB_ROWLOG"))
+      for (int i = 0; i < b->n; i++)
+        fprintf(stderr, "[tabs]   %2d %s\n", i + 1, b->rows[i].title);
   }
 }
 /* ---- the spotlight's own picks: this year's new films and the trending series, alternating (not the first row again)
@@ -2086,7 +2188,7 @@ static void board_tick(float dt) {
     b->recsVer = recs_version();
     board_rebuild();
   }
-  if (b->kind == 0 && b->winRow != b->rowIdx)
+  if ((b->kind == 0 || kindb(b)) && b->winRow != b->rowIdx)
     rows_window(b); /* (the focused row changed) */
   if (lay0(b)) { /* the focused row's details make room under it; the rows dock under the bar */
     int fo = focusOn(b);

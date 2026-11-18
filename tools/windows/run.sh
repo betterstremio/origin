@@ -20,6 +20,7 @@ PY
 W="$(cygpath -m "$STAGE")"
 export SB_DATA="$(cygpath -m "$DATA")" SB_TOPMOST=1 SB_WINDOW="${SB_WINDOW:-1280x720}"
 [ -z "${NOTOP:-}" ] || unset SB_TOPMOST
+if [ -z "${SHOW:-}" ]; then unset SB_TOPMOST; export SB_HIDE=1; fi
 [ -n "${IDLE:-}" ] || export SB_IDLE_OFF=1   # SB_POST counts frames: the full rate throughout (IDLE=1: the idle rate, as people get it)   # NOTOP=1: a normal window (long runs that capture nothing stay out of the way)
 [ -n "${SB_SOUND:-}" ] || export SB_MUTE=1   # videos silent unless SB_SOUND=1
 if [ -n "$FRAME" ]; then export SB_SHOT="$W/$NAME.png" SB_SHOT_FRAME="$FRAME" SB_SHOT_EXIT=1; fi

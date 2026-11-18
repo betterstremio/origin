@@ -63,6 +63,8 @@ int sb_home_defs(CatalogDef *out, int max);
 int sb_disc_defs(CatalogDef *out, int max, const char *type,
                  int own); /* type NULL, "series" or "movie"; own: Cinemeta's rows only (no installed addon's) */
 int sb_all_defs(CatalogDef *out, int max); /* every installed catalogue (the Catalogue tab) */
+int sb_kind_defs(CatalogDef *out, int max, const char *type,
+                 int lowMem); /* "series" or "movie": Cinemeta by genre, 36 rows (20 lowMem) */
 /* cached copy first (cb with cached=1), then the fresh one if it differs; the list is malloc'd for the callback owner
  */
 void sb_catalog(const CatalogDef *def, void (*cb)(ItemList *list, int cached, void *ud), void *ud);
