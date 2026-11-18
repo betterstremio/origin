@@ -65,7 +65,11 @@ typedef struct {
   long today; /* days since 1970, for "fresh" */
   int allowAdult;
   int minMovieAge; /* days: films out in cinemas more recently than this are left out (0: none) */
+  char kind; /* 'm' or 't': only titles of that kind (a Shows / Movies page), 0 = both (Home) */
+  int noAnime; /* 1: titles with genre 16 (Animation) and original language "ja" are left out (see recs_is_anime) */
 } RecPrefs;
+/* an anime: Animation (genre 16) and original language "ja" */
+int recs_is_anime(const RecCand *c);
 
 /* a seed's weight from what the library says */
 double recs_seed_weight(double ageDays, double fracWatched, int markedWatched, int isSeries, int episodesWatched);
@@ -264,6 +268,8 @@ typedef struct {
   const RecSeedX *seeds;
   int nseeds; /* for the Because-you-watched rows (needs recs/sim filled) */
   int lowMem; /* 1: fewer rows per family, at most 3 Because-you-watched, 12 mood rows */
+  const char
+      *regionName; /* "the US" for the title "Top 10 films in the US today" (recs_rows_build_kind), may be NULL */
   const char *(*tr)(const char *); /* translate callback or NULL */
 } RecRowCtx;
 /* Fills out with the candidate rows, best families first: RF_PERSONAL, RF_BYW (up to 5 most recent seeds with
@@ -272,6 +278,18 @@ typedef struct {
    (never more than max; 110 is enough for everything). Animation / family / kids are excluded from every
    language and keyword row unless the taste includes animation (>= 15% of the history). */
 int recs_rows_build(const RecRowCtx *cx, RecRowDef *out, int max);
+/* The rows of ONE kind ('m' Movies page, 't' Shows page) for the page of that tab. Same families as Home, templates of
+   that kind only, and no row whose key or path is in home[0..nHome) (the rows of Home's finished page). Order of
+   creation = priority (the caller keeps what fits in max; 44 / 26 on a small device is plenty for 36 / 20 rows):
+     Top picks for you (RF_PERSONAL: local, or with a path when the history of the kind is thin = the taste carried over
+     through the film <-> series genre map), Top 10 {films|series} in {region} today (/trending/{movie|tv}/day),
+     Because you watched (the kind's seeds Home did not use, none when the kind has < 2 seeds), Binge-worthy series
+     (series), language rows, one "Popular {genre} {films|series}" row per genre of the kind in taste order, providers,
+     moods of the kind, decades, people (films only: TMDB's discover/tv has no cast filter).
+   Not built: "Watch again" and "My List" (they need the library, which recs_core never sees). */
+int recs_rows_build_kind(const RecRowCtx *cx, char kind, const RecRowDef *home, int nHome, RecRowDef *out, int max);
+/* how many of cx's seeds are of this kind, usable for Because-you-watched (weight > 0, >= 8 recs+similar) */
+int recs_kind_seeds(const RecRowCtx *cx, char kind);
 /* the hand-written mood table, for tests and tools: count, and row i built for this context (0 if not buildable).
    Every keyword-based mood row has a with_genres gate. */
 int recs_mood_count(void);
@@ -322,6 +340,8 @@ typedef struct {
   int minMovieAge; /* as RecPrefs */
   const RecLang *langs;
   int nlangs; /* optional: the languages with pick > 0 lift their cards and keep their rows spread down the page */
+  char kind; /* 'm' / 't': cards of the other kind are dropped (mixed rows); 0 = Home */
+  int noAnime; /* as RecPrefs */
 } RecPageCtx;
 /* Chooses and orders the rows. Rules:
    - cards that are excluded, adult (unless allowed), unreleased or in cinemas too recently are dropped (not

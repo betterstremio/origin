@@ -167,6 +167,19 @@ static int excluded(const RecPrefs *p, int key) {
   return 0;
 }
 
+int recs_is_anime(const RecCand *c) {
+  if (strcmp(c->lang, "ja"))
+    return 0;
+  for (int i = 0; i < c->ng; i++)
+    if (c->genres[i] == 16)
+      return 1;
+  return 0;
+}
+/* a page of one kind / without anime drops the card (RecPrefs.kind, .noAnime; both 0 on Home) */
+static int cand_skip(const RecPrefs *p, const RecCand *c) {
+  return (p->kind && c->kind != p->kind) || (p->noAnime && recs_is_anime(c));
+}
+
 static double part_rest(const Taste *t, const RecPrefs *p, const RecCand *c) {
   double q = c->vote / 10.0 * (c->votes >= 200 ? 1.0 : c->votes / 200.0);
   double fresh = 0, old = 0;
@@ -216,7 +229,7 @@ static int merge(const RecSeed *s, int ns, const RecPrefs *p, const Taste *t, Re
         continue;
       const RecCand *c = fromDisc ? &s[i].disc[r] : &s[i].list[r];
       int key = recs_key(c->tmdb, c->kind);
-      if (excluded(p, key) || (c->adult && !p->allowAdult) || unreleased(p, c))
+      if (excluded(p, key) || (c->adult && !p->allowAdult) || unreleased(p, c) || cand_skip(p, c))
         continue;
       int self = 0;
       for (int k = 0; k < ns && !self; k++)
@@ -314,7 +327,7 @@ int recs_filter(const RecCand *in, int n, const RecPrefs *p, RecCand *out, int m
   int m = 0;
   for (int i = 0; i < n && m < max; i++) {
     const RecCand *c = &in[i];
-    if (excluded(p, recs_key(c->tmdb, c->kind)) || (c->adult && !p->allowAdult) || unreleased(p, c))
+    if (excluded(p, recs_key(c->tmdb, c->kind)) || (c->adult && !p->allowAdult) || unreleased(p, c) || cand_skip(p, c))
       continue;
     out[m++] = *c;
   }
@@ -333,7 +346,7 @@ int recs_interleave(const RecCand *const *lists, const int *n, int nl, const Rec
         int key = recs_key(c->tmdb, c->kind), dup = 0;
         for (int k = 0; k < m && !dup; k++)
           dup = recs_key(out[k].tmdb, out[k].kind) == key;
-        if (dup || excluded(p, key) || (c->adult && !p->allowAdult) || unreleased(p, c))
+        if (dup || excluded(p, key) || (c->adult && !p->allowAdult) || unreleased(p, c) || cand_skip(p, c))
           continue;
         out[m++] = *c;
         more = 1;
@@ -1008,6 +1021,60 @@ static const struct {
   int id;
 } PROVIDERS[4] = { { "Netflix", 8 }, { "Prime Video", 119 }, { "Disney+", 337 }, { "Apple TV+", 350 } };
 
+/* Because-you-watched rows (one request each) for the most recent seeds: kind 0 = any (Home); a kind = that kind's
+   seeds only, and not the ones whose row is already in home[0..nHome) */
+static int byw_on_home(const RecSeedX *s, const RecRowDef *home, int nHome) {
+  char key[96];
+  snprintf(key, sizeof key, "byw|%c%d|%s", s->kind, s->tmdb, s->lang);
+  for (int i = 0; i < nHome; i++)
+    if (!strcmp(home[i].key, key))
+      return 1;
+  return 0;
+}
+static void byw_rows(Bld *b, char kind, const RecRowDef *home, int nHome, int want) {
+  const RecRowCtx *cx = b->cx;
+  RecRowDef *r;
+
+  int pick[RECS_MAX_SEEDS], np = 0;
+  for (int i = 0; i < cx->nseeds && i < 64; i++) {
+    const RecSeedX *s = &cx->seeds[i];
+    if (s->w <= 0 || s->nrecs + s->nsim < 8 || (kind && s->kind != kind))
+      continue;
+    if (home && nHome && byw_on_home(s, home, nHome))
+      continue;
+    int at = np < RECS_MAX_SEEDS ? np : RECS_MAX_SEEDS - 1;
+    if (np < RECS_MAX_SEEDS)
+      np++;
+    while (at > 0 && cx->seeds[pick[at - 1]].ageDays > s->ageDays) {
+      pick[at] = pick[at - 1];
+      at--;
+    }
+    pick[at] = i;
+  }
+  for (int q = 0; q < np && q < want; q++) {
+    const RecSeedX *s = &cx->seeds[pick[q]];
+    char gs[48] = "", lg[40] = "";
+    size_t o = 0;
+    int anim = 0;
+    for (int g = 0; g < s->ng; g++) {
+      if (s->genres[g] == 16 || s->genres[g] == 10751 || s->genres[g] == 10762)
+        anim = 1;
+      if (g < 3)
+        o += (size_t)snprintf(gs + o, sizeof gs - o, "%s%d", g ? "|" : "", s->genres[g]);
+    }
+    if (s->lang[0])
+      snprintf(lg, sizeof lg, "with_original_language=%s&", s->lang);
+    if (!(r = rd_new(b, RF_BYW, s->kind, RECS_F_KEEP, s->lang, 1.0 + s->w, RECS_AGE_LIST)))
+      break;
+    r->seed = pick[q];
+    snprintf(r->path, sizeof r->path, "/discover/%s?%s%s%s%s&sort_by=popularity.desc&vote_count.gte=%d", kname(s->kind),
+             lg, gs[0] ? "with_genres=" : "", gs, anim ? "" : "&without_genres=16,10751,10762",
+             !strcmp(s->lang, "en") ? 200 : 25);
+    snprintf(r->key, sizeof r->key, "byw|%c%d|%s", s->kind, s->tmdb, s->lang);
+    fmt_title(b, r->title, sizeof r->title, "Because you watched %s", s->title);
+  }
+}
+
 int recs_rows_build(const RecRowCtx *cx, RecRowDef *out, int max) {
   Bld B;
   bld_init(&B, cx, out, max);
@@ -1025,44 +1092,7 @@ int recs_rows_build(const RecRowCtx *cx, RecRowDef *out, int max) {
     snprintf(r->title, sizeof r->title, "%s", trs(b, "Top picks for you"));
     snprintf(r->key, sizeof r->key, "personal");
   }
-  {
-    int pick[RECS_MAX_SEEDS], np = 0, want = cx->lowMem ? 3 : 5;
-    for (int i = 0; i < cx->nseeds && i < 64; i++) {
-      const RecSeedX *s = &cx->seeds[i];
-      if (s->w <= 0 || s->nrecs + s->nsim < 8)
-        continue;
-      int at = np < RECS_MAX_SEEDS ? np : RECS_MAX_SEEDS - 1;
-      if (np < RECS_MAX_SEEDS)
-        np++;
-      while (at > 0 && cx->seeds[pick[at - 1]].ageDays > s->ageDays) {
-        pick[at] = pick[at - 1];
-        at--;
-      }
-      pick[at] = i;
-    }
-    for (int q = 0; q < np && q < want; q++) {
-      const RecSeedX *s = &cx->seeds[pick[q]];
-      char gs[48] = "", lg[40] = "";
-      size_t o = 0;
-      int anim = 0;
-      for (int g = 0; g < s->ng; g++) {
-        if (s->genres[g] == 16 || s->genres[g] == 10751 || s->genres[g] == 10762)
-          anim = 1;
-        if (g < 3)
-          o += (size_t)snprintf(gs + o, sizeof gs - o, "%s%d", g ? "|" : "", s->genres[g]);
-      }
-      if (s->lang[0])
-        snprintf(lg, sizeof lg, "with_original_language=%s&", s->lang);
-      if (!(r = rd_new(b, RF_BYW, s->kind, RECS_F_KEEP, s->lang, 1.0 + s->w, RECS_AGE_LIST)))
-        break;
-      r->seed = pick[q];
-      snprintf(r->path, sizeof r->path, "/discover/%s?%s%s%s%s&sort_by=popularity.desc&vote_count.gte=%d",
-               kname(s->kind), lg, gs[0] ? "with_genres=" : "", gs, anim ? "" : "&without_genres=16,10751,10762",
-               !strcmp(s->lang, "en") ? 200 : 25);
-      snprintf(r->key, sizeof r->key, "byw|%c%d|%s", s->kind, s->tmdb, s->lang);
-      fmt_title(b, r->title, sizeof r->title, "Because you watched %s", s->title);
-    }
-  }
+  byw_rows(b, 0, NULL, 0, cx->lowMem ? 3 : 5);
   /* charts and trending */
   if ((r = rd_new(b, RF_CHART, 'm', RECS_F_RANK | RECS_F_KEEP, NULL, 0.8, RECS_AGE_CHART))) {
     snprintf(r->title, sizeof r->title, "%s", trs(b, "Top 10 films this week"));
@@ -1327,6 +1357,354 @@ langs_done:;
   return b->n;
 }
 
+/* ---- H. the rows of one kind (Shows / Movies pages) ---- */
+typedef struct {
+  int id;
+  const char *title;
+} KGenre;
+/* TMDB genres of the kind, in the order used when the taste says nothing; the whole title is one literal (T()) */
+static const KGenre KG_M[] = {
+  { 28, "Popular action films" },     { 35, "Popular comedy films" },   { 18, "Popular drama films" },
+  { 53, "Popular thriller films" },   { 80, "Popular crime films" },    { 878, "Popular sci-fi films" },
+  { 10749, "Popular romance films" }, { 27, "Popular horror films" },   { 12, "Popular adventure films" },
+  { 9648, "Popular mystery films" },  { 14, "Popular fantasy films" },  { 99, "Popular documentaries" },
+  { 36, "Popular history films" },    { 10752, "Popular war films" },   { 10402, "Popular music films" },
+  { 37, "Popular westerns" },         { 16, "Popular animated films" }, { 10751, "Popular family films" }
+};
+static const KGenre KG_T[] = { { 18, "Popular drama series" },
+                               { 35, "Popular comedy series" },
+                               { 80, "Popular crime series" },
+                               { 10759, "Popular action and adventure series" },
+                               { 10765, "Popular sci-fi and fantasy series" },
+                               { 9648, "Popular mystery series" },
+                               { 99, "Popular documentary series" },
+                               { 10764, "Reality TV" },
+                               { 10768, "Popular war and politics series" },
+                               { 37, "Popular westerns" },
+                               { 10767, "Talk shows" },
+                               { 16, "Popular animated series" },
+                               { 10751, "Popular family series" } };
+#define NKG_M ((int)(sizeof KG_M / sizeof KG_M[0]))
+#define NKG_T ((int)(sizeof KG_T / sizeof KG_T[0]))
+
+static int home_has(const RecRowDef *home, int nHome, const char *key, const char *path) {
+  for (int i = 0; i < nHome; i++)
+    if (!strcmp(home[i].key, key) || (path && path[0] && !strcmp(home[i].path, path)))
+      return 1;
+  return 0;
+}
+/* a row of this kind unless Home's page (or an earlier row of ours) has the key / path; NULL when skipped or full */
+static RecRowDef *kind_row(Bld *b, const RecRowDef *home, int nHome, const char *key, const char *path, int fam,
+                           char kind, int flags, const char *lang, double aff, long age) {
+  if (home_has(home, nHome, key, path))
+    return NULL;
+  for (int i = 0; i < b->n; i++)
+    if (!strcmp(b->out[i].key, key))
+      return NULL;
+  RecRowDef *r = rd_new(b, fam, kind, flags, lang, aff, age);
+  if (!r)
+    return NULL;
+  snprintf(r->key, sizeof r->key, "%s", key);
+  snprintf(r->path, sizeof r->path, "%s", path ? path : "");
+  return r;
+}
+/* the kind's genres with the taste's weight, best first (a film genre counts for the series genre that holds it and the
+   other way round: the carry-over of a thin history). Returns the count */
+static int kind_genre_order(const Bld *b, char kind, int *ids, double *w) {
+  const KGenre *tab = kind == 't' ? KG_T : KG_M;
+  int n = kind == 't' ? NKG_T : NKG_M, m = 0;
+  const RecTaste *t = b->cx->taste;
+  for (int i = 0; i < n; i++) {
+    int g = tab[i].id;
+    if (!b->likesAnim && (g == 16 || g == 10751))
+      continue;
+    double acc = 0;
+    for (int k = 0; t && k < t->ng; k++) {
+      int x = kind == 't' ? tv_genre(t->gid[k]) : movie_genre(t->gid[k]);
+      if (x == g)
+        acc += t->gw[k];
+    }
+    int at = m++;
+    while (at > 0 && w[at - 1] < acc) { /* stable: equal weights keep the table's order */
+      w[at] = w[at - 1];
+      ids[at] = ids[at - 1];
+      at--;
+    }
+    w[at] = acc;
+    ids[at] = g;
+  }
+  return m;
+}
+static const char *kind_genre_title(char kind, int g) {
+  const KGenre *tab = kind == 't' ? KG_T : KG_M;
+  int n = kind == 't' ? NKG_T : NKG_M;
+  for (int i = 0; i < n; i++)
+    if (tab[i].id == g)
+      return tab[i].title;
+  return NULL;
+}
+int recs_kind_seeds(const RecRowCtx *cx, char kind) {
+  int n = 0;
+  for (int i = 0; i < cx->nseeds; i++)
+    if (cx->seeds[i].kind == kind && cx->seeds[i].w > 0 && cx->seeds[i].nrecs + cx->seeds[i].nsim >= 8)
+      n++;
+  return n;
+}
+
+int recs_rows_build_kind(const RecRowCtx *cx, char kind, const RecRowDef *home, int nHome, RecRowDef *out, int max) {
+  if (kind != 'm' && kind != 't')
+    return 0;
+  Bld B;
+  bld_init(&B, cx, out, max);
+  Bld *b = &B;
+  const RecTaste *t = cx->taste;
+  const char *kn = kname(kind), *region = cx->region && cx->region[0] ? cx->region : "US";
+  const int tv = kind == 't', low = cx->lowMem;
+  RecRowDef *r;
+  char key[96], path[400], ago120[12], ago200[12], ago365[12];
+  ymd(cx->today - 120, ago120);
+  ymd(cx->today - 200, ago200);
+  ymd(cx->today - 365, ago365);
+  int hist = t && t->wsum > 0, thin = recs_kind_seeds(cx, kind) < 2;
+  int gid[24];
+  double gw[24];
+  int ngn = kind_genre_order(b, kind, gid, gw);
+  const double kfit = kshare(t, kind);
+
+  /* 1. Top picks for you: local when the kind has history of its own, else popular titles in the taste's genres
+     (carried over from the other kind), else nothing (the page has no billboard then) */
+  if (!thin) {
+    snprintf(key, sizeof key, "personal|%c", kind);
+    if ((r = kind_row(b, NULL, 0, key, "", RF_PERSONAL, 0, RECS_F_KEEP, NULL, 2.0, RECS_AGE_LIST)))
+      snprintf(r->title, sizeof r->title, "%s", trs(b, "Top picks for you"));
+  } else if (hist && ngn > 0 && gw[0] > 0) {
+    char gs[48] = "";
+    size_t o = 0;
+    for (int q = 0; q < 3 && q < ngn && gw[q] > 0; q++)
+      o += (size_t)snprintf(gs + o, sizeof gs - o, "%s%d", q ? "|" : "", gid[q]);
+    snprintf(path, sizeof path, "/discover/%s?with_genres=%s%s&sort_by=popularity.desc&vote_count.gte=200", kn, gs,
+             excl(b));
+    snprintf(key, sizeof key, "tp|%c|%s|%d", kind, gs, b->likesAnim);
+    if ((r = kind_row(b, NULL, 0, key, path, RF_PERSONAL, kind, RECS_F_KEEP, NULL, 2.0, RECS_AGE_LIST)))
+      snprintf(r->title, sizeof r->title, "%s", trs(b, "Top picks for you"));
+  }
+
+  /* 2. Top 10 today (Home's is "this week") */
+  snprintf(path, sizeof path, "/trending/%s/day", kn);
+  snprintf(key, sizeof key, "chartd|%c|%s", kind, region);
+  if ((r = kind_row(b, home, nHome, key, path, RF_CHART, kind, RECS_F_RANK | RECS_F_KEEP, NULL, 0.8, RECS_AGE_CHART))) {
+    const char *pat = tv ? "Top 10 series in %s today" : "Top 10 films in %s today";
+    if (cx->regionName && cx->regionName[0])
+      fmt_title(b, r->title, sizeof r->title, pat, cx->regionName);
+    else
+      snprintf(r->title, sizeof r->title, "%s", trs(b, tv ? "Top 10 series today" : "Top 10 films today"));
+  }
+
+  /* 3. Because you watched: this kind's seeds Home did not use (none with a thin history of the kind) */
+  if (!thin)
+    byw_rows(b, kind, home, nHome, low ? 3 : 5);
+
+  /* 4. Binge-worthy series: ended series with many votes, in the taste's genres (one list; a season count is not in
+     the list, so "2+ seasons" is not checked) */
+  if (tv) {
+    char gs[48] = "", lg[16] = "";
+    size_t o = 0;
+    for (int q = 0; q < 3 && q < ngn && gw[q] > 0; q++)
+      o += (size_t)snprintf(gs + o, sizeof gs - o, "%s%d", q ? "|" : "", gid[q]);
+    if (cx->nlangs == 1)
+      snprintf(lg, sizeof lg, "%s", cx->langs[0].code);
+    snprintf(path, sizeof path, "/discover/tv?with_status=3&vote_count.gte=800&sort_by=vote_average.desc%s%s%s%s%s",
+             gs[0] ? "&with_genres=" : "", gs, excl(b), lg[0] ? "&with_original_language=" : "", lg);
+    snprintf(key, sizeof key, "binge|t|%s|%s|%d", gs, lg[0] ? lg : "-", b->likesAnim);
+    if ((r = kind_row(b, home, nHome, key, path, RF_MOOD, 't', 0, NULL, 0.7 + (hist ? 0.2 : 0), RECS_AGE_LIST)))
+      snprintf(r->title, sizeof r->title, "%s", trs(b, "Binge-worthy series"));
+  }
+
+  /* 5. language rows: new, acclaimed, gems, language x genre (the same keys as Home's, so a row Home built is
+     skipped and a cached answer is shared) */
+  for (int li = 0; li < cx->nlangs; li++) {
+    const RecLang *L = &cx->langs[li];
+    const char *ln = recs_lang_name(L->code);
+    if (!ln)
+      continue;
+    char lname[48];
+    snprintf(lname, sizeof lname, "%s", trs(b, ln));
+    int en = !strcmp(L->code, "en");
+    double sh = recs_taste_lang(t, L->code);
+    if (sh < L->pick)
+      sh = L->pick;
+    int second = L->pick > 0 && L->pick < 1;
+    snprintf(key, sizeof key, "nw|%s|%c|%d", L->code, kind, b->likesAnim);
+    if (tv)
+      snprintf(
+          path, sizeof path,
+          "/discover/tv?with_original_language=%s%s&sort_by=popularity.desc&first_air_date.gte=%s&first_air_date.lte=%s",
+          L->code, excl(b), ago200, b->d0);
+    else
+      snprintf(
+          path, sizeof path,
+          "/discover/movie?with_original_language=%s%s&sort_by=popularity.desc&primary_release_date.gte=%s&primary_release_date.lte=%s",
+          L->code, excl(b), ago120, b->d0);
+    if ((r = kind_row(b, home, nHome, key, path, RF_NEW, kind, 0, L->code, sh * 0.6 + 0.25, RECS_AGE_LIST)))
+      fmt_title(b, r->title, sizeof r->title, tv ? "New %s series" : "New %s films", lname);
+    snprintf(key, sizeof key, tv ? "act|%s|%d" : "ac|%s|%d", L->code, b->likesAnim);
+    snprintf(path, sizeof path, "/discover/%s?with_original_language=%s%s&sort_by=vote_average.desc&vote_count.gte=%d",
+             kn, L->code, excl(b), en ? (tv ? 1500 : 3000) : (tv ? 100 : 150));
+    if ((r = kind_row(b, home, nHome, key, path, RF_ACCLAIM, kind, 0, L->code, sh * 0.7 + 0.1, RECS_AGE_LIST)))
+      fmt_title(b, r->title, sizeof r->title, tv ? "The best-rated %s series" : "The best-rated %s films", lname);
+    if (L->strong) {
+      snprintf(key, sizeof key, tv ? "gemt|%s|%d" : "gem|%s|%d", L->code, b->likesAnim);
+      snprintf(path, sizeof path,
+               "/discover/%s?with_original_language=%s%s&sort_by=vote_average.desc&vote_count.gte=%d&vote_count.lte=%d",
+               kn, L->code, excl(b), en ? (tv ? 150 : 300) : (tv ? 20 : 30), en ? (tv ? 1000 : 1500) : 150);
+      if ((r = kind_row(b, home, nHome, key, path, RF_GEMS, kind, 0, L->code, sh * 0.5 + 0.1, RECS_AGE_LIST)))
+        fmt_title(b, r->title, sizeof r->title, tv ? "%s series you may have missed" : "%s films you may have missed",
+                  lname);
+    }
+    int ngen = L->strong ? (second ? (low ? 2 : 3) : (low ? 3 : 4)) : (low ? 1 : 2), done = 0;
+    double gtop = ngn && gw[0] > 0 ? gw[0] : 1;
+    for (int q = 0; q < ngn && done < ngen; q++) {
+      const char *pat = NULL;
+      for (int i = 0; i < NLG && !pat; i++)
+        if ((tv ? LG[i].tv : LG[i].movie) == gid[q])
+          pat = tv ? LG[i].tpat : LG[i].mpat;
+      if (!pat)
+        continue;
+      snprintf(key, sizeof key, "lg|%s|%c|%d|%d", L->code, kind, gid[q], b->likesAnim);
+      snprintf(path, sizeof path,
+               "/discover/%s?with_original_language=%s&with_genres=%d%s&sort_by=popularity.desc&vote_count.gte=%d", kn,
+               L->code, gid[q], excl(b), en ? 200 : 15);
+      done++; /* (a row Home has still counts: the next genre is not pulled in to replace it) */
+      if ((r = kind_row(b, home, nHome, key, path, RF_LANG_GENRE, kind, 0, L->code, sh * (gw[q] / gtop) * kfit + 0.2,
+                        RECS_AGE_LIST)))
+        fmt_title(b, r->title, sizeof r->title, pat, lname);
+    }
+  }
+
+  /* 6. one row per genre of the kind, taste order ("Popular crime series") */
+  {
+    int want = low ? 6 : 10;
+    for (int q = 0, done = 0; q < ngn && done < want; q++) {
+      const char *title = kind_genre_title(kind, gid[q]);
+      if (!title)
+        continue;
+      done++;
+      snprintf(key, sizeof key, "gn|%c|%d|%d", kind, gid[q], b->likesAnim);
+      snprintf(path, sizeof path, "/discover/%s?with_genres=%d%s&sort_by=popularity.desc&vote_count.gte=%d", kn, gid[q],
+               excl(b), tv ? 100 : 200);
+      if ((r = kind_row(b, home, nHome, key, path, RF_LANG_GENRE, kind, 0, NULL,
+                        0.15 + 0.45 * (gw[0] > 0 ? gw[q] / gw[0] : 0) * kfit + 0.02 * (ngn - q), RECS_AGE_LIST)))
+        snprintf(r->title, sizeof r->title, "%s", trs(b, title));
+    }
+  }
+
+  /* 7. providers of the region */
+  {
+    unsigned mask = 0;
+    for (size_t i = 0; i < sizeof PROV_REGION / sizeof PROV_REGION[0]; i++)
+      if (!strcmp(PROV_REGION[i].cc, region))
+        mask = PROV_REGION[i].mask;
+    for (int p = 0; p < 4; p++)
+      if (mask & (1u << p)) {
+        snprintf(key, sizeof key, tv ? "prt|%s|%d" : "pr|%s|%d", region, PROVIDERS[p].id);
+        if (tv)
+          snprintf(
+              path, sizeof path,
+              "/discover/tv?watch_region=%s&with_watch_providers=%d&with_watch_monetization_types=flatrate&sort_by=popularity.desc&vote_count.gte=30&first_air_date.gte=%s&first_air_date.lte=%s",
+              region, PROVIDERS[p].id, ago365, b->d0);
+        else
+          snprintf(
+              path, sizeof path,
+              "/discover/movie?watch_region=%s&with_watch_providers=%d&with_watch_monetization_types=flatrate&sort_by=popularity.desc&vote_count.gte=50&primary_release_date.gte=%s&primary_release_date.lte=%s",
+              region, PROVIDERS[p].id, ago365, b->d0);
+        if ((r = kind_row(b, home, nHome, key, path, RF_PROVIDER, kind, 0, NULL, 0.3, RECS_AGE_LIST)))
+          fmt_title(b, r->title, sizeof r->title, "New on %s", PROVIDERS[p].name);
+      }
+  }
+
+  /* 8. moods of this kind, best fit first */
+  {
+    struct {
+      double a;
+      int i;
+    } mc[NMOOD];
+    int built = 0, want = low ? 5 : 8;
+    for (int i = 0; i < NMOOD; i++) {
+      double a;
+      if (MOODS[i].kind != kind || !mood_aff(b, i, &a))
+        continue;
+      int j = built++;
+      while (j > 0 && mc[j - 1].a < a) {
+        mc[j] = mc[j - 1];
+        j--;
+      }
+      mc[j].a = a;
+      mc[j].i = i;
+    }
+    for (int q = 0, done = 0; q < built && done < want && b->n < b->max; q++) {
+      RecRowDef tmp;
+      if (!mood_build(b, mc[q].i, &tmp))
+        continue;
+      done++;
+      if (home_has(home, nHome, tmp.key, tmp.path))
+        continue;
+      out[b->n++] = tmp;
+    }
+  }
+
+  /* 9. decades of the main language (a strong language only) */
+  if (!low && cx->nlangs > 0 && cx->langs[0].strong) {
+    const RecLang *L = &cx->langs[0];
+    const char *ln = recs_lang_name(L->code);
+    int en = !strcmp(L->code, "en");
+    char lname[48];
+    snprintf(lname, sizeof lname, "%s", ln ? trs(b, ln) : L->code);
+    double sh = recs_taste_lang(t, L->code);
+    if (sh < L->pick)
+      sh = L->pick;
+    const char *df = tv ? "first_air_date" : "primary_release_date";
+    for (int dec = 2000; ln && dec >= 1990; dec -= 10) {
+      snprintf(key, sizeof key, tv ? "dct|%s|%d|%d" : "dc|%s|%d|%d", L->code, dec, b->likesAnim);
+      snprintf(
+          path, sizeof path,
+          "/discover/%s?with_original_language=%s%s&sort_by=popularity.desc&vote_count.gte=%d&%s.gte=%d-01-01&%s.lte=%d-12-31",
+          kn, L->code, excl(b), en ? 300 : 20, df, dec, df, dec + 9);
+      if ((r = kind_row(b, home, nHome, key, path, RF_DECADE, kind, 0, L->code,
+                        sh * 0.5 + 0.1 - (dec == 1990 ? 0.05 : 0), RECS_AGE_LIST))) {
+        const char *pat = tv ? (dec == 2000 ? "%s series from the 2000s" : "%s series from the 1990s")
+                             : (dec == 2000 ? "%s films from the 2000s" : "%s films from the 1990s");
+        fmt_title(b, r->title, sizeof r->title, pat, lname);
+      }
+    }
+  }
+
+  /* 10. people (films: discover/movie takes a cast or crew id; discover/tv does not): the ones Home did not take */
+  if (!tv)
+    for (int pass = 0; pass < 2; pass++) {
+      int want = pass ? 1 : (low ? 1 : 2);
+      char used[RECS_T_PEOPLE] = { 0 };
+      for (int q = 0, got = 0; got < want && q < 12; q++) {
+        int best = -1;
+        for (int k = 0; t && k < t->np; k++)
+          if (!used[k] && t->pdir[k] == pass && t->pname[k][0] && (best < 0 || t->pw[k] > t->pw[best]))
+            best = k;
+        if (best < 0)
+          break;
+        used[best] = 1;
+        snprintf(key, sizeof key, "pe|%d|%d", pass, t->pid[best]);
+        snprintf(path, sizeof path, "/discover/movie?%s=%d&sort_by=popularity.desc&vote_count.gte=20",
+                 pass ? "with_crew" : "with_cast", t->pid[best]);
+        if (home_has(home, nHome, key, path))
+          continue; /* Home has this one: the next person */
+        got++;
+        double sh = t->wsum > 0 ? t->pw[best] / t->wsum : 0;
+        if ((r = kind_row(b, home, nHome, key, path, RF_PERSON, 'm', 0, NULL, (pass ? 0.2 : 0.25) + sh, RECS_AGE_LIST)))
+          fmt_title(b, r->title, sizeof r->title, pass ? "Directed by %s" : "More with %s", t->pname[best]);
+      }
+    }
+  return b->n;
+}
+
 /* ---- E. Because you watched ---- */
 typedef struct {
   const RecCand *c;
@@ -1349,7 +1727,7 @@ int recs_byw_rank(const RecSeedX *s, const RecPrefs *p, const RecCand *own, int 
     for (int r = 0; r < ln && r < RECS_LIST; r++) {
       const RecCand *c = &l[r];
       int key = recs_key(c->tmdb, c->kind);
-      if (key == self || excluded(p, key) || (c->adult && !p->allowAdult) || unreleased(p, c))
+      if (key == self || excluded(p, key) || (c->adult && !p->allowAdult) || unreleased(p, c) || cand_skip(p, c))
         continue;
       int at = 0;
       while (at < n && recs_key(it[at].c->tmdb, it[at].c->kind) != key)
@@ -1526,6 +1904,8 @@ static void pg_prepare(PgScratch *S, const RecPageCtx *cx, const RecRowIn *r, in
     if (e && e->ex)
       continue;
     if (c->adult && !cx->allowAdult)
+      continue;
+    if ((cx->kind && c->kind != cx->kind) || (cx->noAnime && recs_is_anime(c)))
       continue;
     long d = days_fast(c->date);
     if (!rankRow) {
