@@ -5,11 +5,16 @@
 #include "screens/board.h"
 #include "screens/player.h"
 #include "platform/plat.h"
+#include "ui/img.h"
 #include <SDL2/SDL.h>
 
 static double bootAt, idleAt;
 static int libBoot, addonBoot, away;
 static volatile int resumed; /* set from SDL's event watch, read once a frame */
+static volatile int purgeWanted; /* sent away on another thread: the pictures are let go on the next frame */
+static SDL_threadID mainTid;
+static double awayAt; /* when it left (main-thread time) */
+#define PURGE_AFTER_S 10.0
 static int rebuildWanted;
 static double rebuildSince;
 
@@ -20,8 +25,20 @@ static int SDLCALL on_event(void *ud, SDL_Event *e) {
   if (l > 0) {
     away = 0;
     resumed = 1;
-  } else if (l < 0)
+  } else if (l < 0) {
+    if (!away) { /* once per leaving: the picture textures go. Android: here, at once (its main thread is held in the
+                    event pump while away, and it only leaves for real). Elsewhere a lost focus can be a system pop-up
+                    over the app (the TV's volume or quick settings): the frame loop lets them go after 10 s away */
+#ifdef __ANDROID__
+      if (SDL_ThreadID() == mainTid)
+        img_background();
+      else
+#endif
+        purgeWanted = 1;
+      awayAt = app_now();
+    }
     away = 1;
+  }
   return 0;
 }
 /* a pull that changed the library: applied in a pause of the remote (a rebuild in the middle of a move is a
@@ -59,6 +76,7 @@ void sync_after_switch(void) {
 }
 void sync_init(void) {
   bootAt = idleAt = app_now();
+  mainTid = SDL_ThreadID();
   if (!sb_signed_in())
     libBoot = addonBoot = 1; /* signing in fetches both itself */
   SDL_AddEventWatch(on_event, NULL);
@@ -89,6 +107,11 @@ void sync_tick(void) {
   if (!addonBoot && now - bootAt >= 0.9) {
     addonBoot = 1;
     sb_sync_addons(on_addons, NULL);
+  }
+  if (purgeWanted && (!away || app_now() - awayAt >= PURGE_AFTER_S)) {
+    purgeWanted = 0;
+    if (away) /* (not when it is back already: that would empty the screen it just came back to) */
+      img_background();
   }
   if (resumed) {
     resumed = 0;

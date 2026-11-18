@@ -1,5 +1,6 @@
 #include "platform/plat.h"
 #include "core/store.h"
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -143,10 +144,128 @@ void store_remove(const char *k) {
     touch();
   }
 }
+/* ---- an index of the cache folder, in memory: the drawing thread asks "is there a copy?" a few times per card, and a
+   stat() of a missing file waited 0.5 to 2.5 s behind the writer on the TV's flash. Key = the two hashes of the file's
+   name, value = its mtime. Its own mutex, never held during any file I/O ---- */
+typedef struct {
+  unsigned long long h1;
+  unsigned h2;
+  long mt; /* 0: empty; -1: deleted */
+} CIx;
+static CIx *cix;
+static unsigned cixCap, cixN, cixUsed; /* slots, live entries, live + deleted */
+static pthread_mutex_t cixMu = PTHREAD_MUTEX_INITIALIZER;
+static volatile int cixReady; /* the scan at start is done */
+static void cache_hash(const char *key, unsigned long long *h1, unsigned *h2) {
+  unsigned long long a = 1469598103934665603ULL;
+  unsigned b = 2166136261u;
+  for (const unsigned char *p = (const unsigned char *)key; *p; p++) {
+    a = (a ^ *p) * 1099511628211ULL;
+    b = (b ^ *p) * 16777619u;
+  }
+  *h1 = a;
+  *h2 = b;
+}
+static unsigned cix_slot(unsigned long long h1, unsigned h2) {
+  return (unsigned)((h1 ^ (h1 >> 29) ^ ((unsigned long long)h2 << 7)) % cixCap);
+}
+static void cix_grow(void) { /* under cixMu */
+  CIx *old = cix;
+  unsigned oc = cixCap, nc = oc ? oc * 2 : 4096;
+  CIx *n = calloc(nc, sizeof *n);
+  if (!n)
+    return;
+  cix = n;
+  cixCap = nc;
+  cixN = cixUsed = 0;
+  for (unsigned i = 0; i < oc; i++)
+    if (old[i].mt > 0) {
+      unsigned k = cix_slot(old[i].h1, old[i].h2);
+      while (cix[k].mt)
+        k = (k + 1) % cixCap;
+      cix[k] = old[i];
+      cixN++;
+      cixUsed++;
+    }
+  free(old);
+}
+static void cix_put(unsigned long long h1, unsigned h2, long mt) { /* the newer mtime stays */
+  pthread_mutex_lock(&cixMu);
+  if (!cixCap || (cixUsed + 1) * 2 > cixCap)
+    cix_grow();
+  if (cixCap) {
+    unsigned k = cix_slot(h1, h2);
+    int fr = -1;
+    for (;; k = (k + 1) % cixCap) {
+      if (cix[k].mt == 0)
+        break;
+      if (cix[k].mt < 0) {
+        if (fr < 0)
+          fr = (int)k;
+        continue;
+      }
+      if (cix[k].h1 == h1 && cix[k].h2 == h2) {
+        if (mt > cix[k].mt)
+          cix[k].mt = mt;
+        pthread_mutex_unlock(&cixMu);
+        return;
+      }
+    }
+    if (fr >= 0)
+      k = (unsigned)fr;
+    else
+      cixUsed++;
+    cix[k].h1 = h1;
+    cix[k].h2 = h2;
+    cix[k].mt = mt;
+    cixN++;
+  }
+  pthread_mutex_unlock(&cixMu);
+}
+static void cix_del(unsigned long long h1, unsigned h2) {
+  pthread_mutex_lock(&cixMu);
+  if (cixCap) {
+    unsigned k = cix_slot(h1, h2);
+    for (unsigned n = 0; n < cixCap && cix[k].mt; n++, k = (k + 1) % cixCap)
+      if (cix[k].mt > 0 && cix[k].h1 == h1 && cix[k].h2 == h2) {
+        cix[k].mt = -1;
+        cixN--;
+        break;
+      }
+  }
+  pthread_mutex_unlock(&cixMu);
+}
+static long cix_get(unsigned long long h1, unsigned h2) {
+  long r = 0;
+  pthread_mutex_lock(&cixMu);
+  if (cixCap) {
+    unsigned k = cix_slot(h1, h2);
+    for (unsigned n = 0; n < cixCap && cix[k].mt; n++, k = (k + 1) % cixCap)
+      if (cix[k].mt > 0 && cix[k].h1 == h1 && cix[k].h2 == h2) {
+        r = cix[k].mt;
+        break;
+      }
+  }
+  pthread_mutex_unlock(&cixMu);
+  return r;
+}
+int cache_known(const char *key, long maxAge) {
+  if (!cixReady)
+    return 0;
+  unsigned long long h1;
+  unsigned h2;
+  cache_hash(key, &h1, &h2);
+  long mt = cix_get(h1, h2);
+  return mt > 0 && !(maxAge > 0 && (long)time(NULL) - mt > maxAge);
+}
+
 /* cache files are written on a thread of their own: a disk write in the middle of a frame was a long frame on the TV
    (its flash can take tens of ms) */
 #include <pthread.h>
 typedef struct CW {
+  int ix; /* a cache file: indexed (taken out again if the write fails) */
+  unsigned long long h1;
+  unsigned h2;
   char path[1200];
   unsigned char *data;
   size_t len;
@@ -168,14 +287,18 @@ static void *cw_run(void *a) {
     if (!cwHead)
       cwTail = NULL;
     pthread_mutex_unlock(&cwMu);
-    write_all(w->path, w->data, w->len);
+    if (!write_all(w->path, w->data, w->len) && w->ix)
+      cix_del(w->h1, w->h2);
     free(w->data);
     free(w);
   }
   return NULL;
 }
-static void write_later(const char *path, unsigned char *own, size_t len) { /* own: malloc'd, taken */
-  CW *w = malloc(sizeof *w);
+static void write_later_x(const char *path, unsigned char *own, size_t len, int ix, unsigned long long h1, unsigned h2) {
+  CW *w = malloc(sizeof *w); /* (own: malloc'd, taken) */
+  w->ix = ix;
+  w->h1 = h1;
+  w->h2 = h2;
   snprintf(w->path, sizeof w->path, "%s", path);
   w->data = own;
   w->len = len;
@@ -190,7 +313,8 @@ static void write_later(const char *path, unsigned char *own, size_t len) { /* o
   }
   if (!cwThread) {
     pthread_mutex_unlock(&cwMu);
-    write_all(w->path, w->data, w->len);
+    if (!write_all(w->path, w->data, w->len) && ix)
+      cix_del(h1, h2);
     free(w->data);
     free(w);
     return;
@@ -203,13 +327,20 @@ static void write_later(const char *path, unsigned char *own, size_t len) { /* o
   pthread_cond_signal(&cwCv);
   pthread_mutex_unlock(&cwMu);
 }
+static void write_later(const char *path, unsigned char *own, size_t len) {
+  write_later_x(path, own, len, 0, 0, 0);
+}
 static void cache_path(const char *key, char *out, size_t cap);
 void cache_write(const char *key, const unsigned char *data, size_t len) {
   char p[1200];
   cache_path(key, p, sizeof p);
   unsigned char *c = malloc(len ? len : 1);
   memcpy(c, data, len);
-  write_later(p, c, len);
+  unsigned long long h1;
+  unsigned h2;
+  cache_hash(key, &h1, &h2);
+  cix_put(h1, h2, (long)time(NULL)); /* (the file will be there: asked about at once) */
+  write_later_x(p, c, len, 1, h1, h2);
 }
 void store_flush(void) {
   if (!dirty)
@@ -331,20 +462,24 @@ void store_scope_forget(const char *prefix) {
 
 /* ---- file cache ---------------------------------------------------------------------------- */
 static void cache_path(const char *key, char *out, size_t cap) {
-  unsigned long long h1 = 1469598103934665603ULL;
-  unsigned h2 = 2166136261u;
-  for (const unsigned char *p = (const unsigned char *)key; *p; p++) {
-    h1 = (h1 ^ *p) * 1099511628211ULL;
-    h2 = (h2 ^ *p) * 16777619u;
-  }
+  unsigned long long h1;
+  unsigned h2;
+  cache_hash(key, &h1, &h2);
   snprintf(out, cap, "%s/cache/%016llx%08x", dir, h1, h2);
 }
 unsigned char *cache_read(const char *key, long maxAge, size_t *len) {
   char p[1200];
   cache_path(key, p, sizeof p);
   struct stat st;
-  if (stat(p, &st))
+  unsigned long long h1;
+  unsigned h2;
+  cache_hash(key, &h1, &h2);
+  if (cixReady && !cix_get(h1, h2))
+    return NULL; /* (not in the index: no copy; a stat of a missing file can wait seconds behind the writer on the TV's flash) */
+  if (stat(p, &st)) {
+    cix_del(h1, h2); /* (the index kept right: a miss) */
     return NULL;
+  }
   if (maxAge > 0 && time(NULL) - st.st_mtime > maxAge)
     return NULL;
   unsigned char *b = (unsigned char *)read_all(p, len);
@@ -359,7 +494,8 @@ unsigned char *cache_read(const char *key, long maxAge, size_t *len) {
 typedef struct {
   char name[40];
   time_t at;
-  long size;
+  long size; /* -1: removed */
+  long mt;
 } CEnt;
 static int cent_cmp(const void *a, const void *b) {
   time_t x = ((const CEnt *)a)->at, y = ((const CEnt *)b)->at;
@@ -378,8 +514,10 @@ static void *prune_run(void *a) {
   char d[1100];
   snprintf(d, sizeof d, "%s/cache", dir);
   DIR *dd = opendir(d);
-  if (!dd)
+  if (!dd) {
+    cixReady = 1;
     return NULL;
+  }
   int n = 0, cap = 4096;
   CEnt *e = malloc(cap * sizeof *e);
   long total = 0;
@@ -399,6 +537,7 @@ static void *prune_run(void *a) {
     snprintf(e[n].name, sizeof e[n].name, "%s", de->d_name);
     e[n].at = st.st_atime > st.st_mtime ? st.st_atime : st.st_mtime;
     e[n].size = st.st_size;
+    e[n].mt = st.st_mtime;
     total += st.st_size;
     n++;
   }
@@ -412,12 +551,24 @@ static void *prune_run(void *a) {
       snprintf(p, sizeof p, "%s/%s", d, e[i].name);
       if (!remove(p)) {
         total -= e[i].size;
+        e[i].size = -1;
         del++;
       }
     }
     fprintf(stderr, "[cache] %d files removed, %ld KB kept\n", del, total / 1024);
   }
   __atomic_store_n(&keptBytes, total, __ATOMIC_RELAXED);
+  for (int i = 0; i < n; i++) { /* the index from what the scan found and kept (no file I/O here, the lock is short) */
+    if (e[i].size < 0 || strlen(e[i].name) != 24 || strchr(e[i].name, '.'))
+      continue;
+    char a[17], b[9];
+    memcpy(a, e[i].name, 16);
+    a[16] = 0;
+    memcpy(b, e[i].name + 16, 8);
+    b[8] = 0;
+    cix_put(strtoull(a, NULL, 16), (unsigned)strtoul(b, NULL, 16), e[i].mt > 0 ? e[i].mt : 1);
+  }
+  cixReady = 1;
   free(e);
   return NULL;
 }
@@ -430,7 +581,32 @@ void cache_prune_start(int capMb) {
 int cache_file(const char *key, long maxAge, char *p, size_t cap) {
   cache_path(key, p, cap);
   struct stat st;
-  if (stat(p, &st))
+  {
+    unsigned long long h1;
+    unsigned h2;
+    cache_hash(key, &h1, &h2);
+    if (cixReady) { /* the index knows both whether there is a copy and how old it is: the disk is not asked (a stat of
+                       a file that exists waited 2.3 s on the TV's flash behind the writer, on the main thread) */
+      long mt = cix_get(h1, h2);
+      return mt > 0 && !(maxAge > 0 && (long)time(NULL) - mt > maxAge);
+    }
+  }
+  static int slowLog = -1; /* SB_SLOWLOG: a lookup that waited on the disk is logged (development) */
+  if (slowLog < 0)
+    slowLog = getenv("SB_SLOWLOG") != NULL;
+  Uint64 t0 = slowLog ? SDL_GetPerformanceCounter() : 0;
+  int r = stat(p, &st);
+  if (slowLog) {
+    double ms = (double)(SDL_GetPerformanceCounter() - t0) * 1000.0 / SDL_GetPerformanceFrequency();
+    if (ms > 15)
+      fprintf(stderr, "[slow] disk stat %.0f ms (%s)\n", ms, r ? "missing" : "found");
+  }
+  if (r) {
+    unsigned long long h1;
+    unsigned h2;
+    cache_hash(key, &h1, &h2);
+    cix_del(h1, h2);
     return 0;
+  }
   return !(maxAge > 0 && time(NULL) - st.st_mtime > maxAge);
 }

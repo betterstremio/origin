@@ -20,6 +20,9 @@ void store_pump(void); /* writes a little after the last change; call per frame 
 unsigned char *cache_read(const char *key, long maxAgeSec, size_t *len);
 int cache_file(const char *key, long maxAgeSec, char *path,
                size_t cap); /* 1: a copy exists (and is young enough); its path */
+/* for the drawing thread: is there a copy (young enough)? From an index in memory: never touches the disk, never waits on I/O.
+   0 while the index is not ready (the scan at start, in cache_prune_start's thread) or when the key is unknown */
+int cache_known(const char *key, long maxAgeSec);
 void cache_prune_start(int capMb); /* the cache folder kept under capMb, least recently used first (a thread) */
 long cache_cap_bytes(void); /* the cap given to cache_prune_start (0 before) */
 long cache_kept_bytes(void); /* the cache folder's size after the prune at start (-1 until it ran) */
