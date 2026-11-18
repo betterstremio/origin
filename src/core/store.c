@@ -585,8 +585,11 @@ int cache_file(const char *key, long maxAge, char *p, size_t cap) {
     unsigned long long h1;
     unsigned h2;
     cache_hash(key, &h1, &h2);
-    if (cixReady && !cix_get(h1, h2))
-      return 0; /* (the index says there is no copy: the disk is not asked) */
+    if (cixReady) { /* the index knows both whether there is a copy and how old it is: the disk is not asked (a stat of
+                       a file that exists waited 2.3 s on the TV's flash behind the writer, on the main thread) */
+      long mt = cix_get(h1, h2);
+      return mt > 0 && !(maxAge > 0 && (long)time(NULL) - mt > maxAge);
+    }
   }
   static int slowLog = -1; /* SB_SLOWLOG: a lookup that waited on the disk is logged (development) */
   if (slowLog < 0)
