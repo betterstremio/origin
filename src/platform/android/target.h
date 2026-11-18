@@ -19,6 +19,7 @@
 #define SB_TV_PACER 1
 #define SB_CACHE_MB 400
 #define SB_IMG_BUDGET_MB 96
+#define SB_TEX_COMPRESS 1 /* pictures kept as ETC1/ETC2 textures where the GPU takes them (ui/etc.c) */
 #define SB_PLAT_INSTALLER 1 /* plat_install_start / plat_install_poll: the system's package installer */
 #define SB_CRASH_TO_SYSTEM 1 /* a crash is logged, then handed to the system, which writes its own report */
 #define SB_BEST_ON_BY_DEFAULT 1 /* the best stream is chosen automatically until switched off */

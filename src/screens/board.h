@@ -5,6 +5,7 @@
 #include "core/collections.h"
 extern Screen homeScreen, discScreen, libScreen, colScreen;
 int board_home_ready(void);
+int board_home_rows_ready(void); /* its first two rows have their cards (no billboard needed) */
 const void *board_focus_row(char *title, size_t cap); /* the fast-scroll test: the focused row (NULL: none) and its title */
 int board_focus_pos(int *row, int *col, int *nrows); /* the fast-scroll test: Home's focus */
 void tabs_warm_tick(void);

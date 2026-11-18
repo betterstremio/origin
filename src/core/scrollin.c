@@ -6,6 +6,7 @@
 #include "core/fillstat.h"
 #include "core/keys.h"
 #include "core/recs.h"
+#include "core/stremio.h"
 #include "screens/board.h"
 #include "screens/profiles.h"
 #include <SDL2/SDL.h>
@@ -350,7 +351,7 @@ void scrollin_tick(void) {
       }
       return;
     }
-    if (SCR == SCR_HOME && board_home_ready()) {
+    if (SCR == SCR_HOME && (board_home_ready() || (!sb_signed_in() && board_home_rows_ready()))) { /* (signed out: no billboard) */
       int r0, c0, n0;
       pos(&r0, &c0, &n0);
       unsigned rv = recs_version();
