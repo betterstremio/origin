@@ -31,23 +31,26 @@ static int clamp255(int v) {
   return v < 0 ? 0 : v > 255 ? 255 : v;
 }
 
-/* the error of the half pl with the base colour (br, bg, bb): sets the table and each pixel's index (0 +small, 1 +big,
-   2 -small, 3 -big, the bits ETC1 stores) */
-static int eval_half(const Blk *k, const unsigned char *pl, int br, int bg, int bb, int *tbl, unsigned char *sel) {
-  int dr[8], dg[8], db[8], S[8], d2 = 0;
+/* the table and each pixel's index (0 +small, 1 +big, 2 -small, 3 -big, the bits ETC1 stores) for the half pl with the
+   base colour (br, bg, bb): the table whose big step best matches the half's spread, and its two neighbours, tried */
+static void fit_half(const Blk *k, const unsigned char *pl, int br, int bg, int bb, int *tbl, unsigned char *sel) {
+  int S[8], mx = 0, d2 = 0;
   for (int i = 0; i < 8; i++) {
-    int p = pl[i];
-    dr[i] = k->r[p] - br;
-    dg[i] = k->g[p] - bg;
-    db[i] = k->b[p] - bb;
-    S[i] = dr[i] + dg[i] + db[i];
-    d2 += dr[i] * dr[i] + dg[i] * dg[i] + db[i] * db[i];
+    int p = pl[i], dr = k->r[p] - br, dg = k->g[p] - bg, db = k->b[p] - bb;
+    d2 += dr * dr + dg * dg + db * db;
+    S[i] = dr + dg + db;
+    int a = S[i] < 0 ? -S[i] : S[i];
+    if (a > mx)
+      mx = a;
   }
+  int want = mx / 3, t0 = 0; /* (a modifier moves all three channels: a pixel's offset is S / 3) */
+  while (t0 < 7 && T1[t0][1] + T1[t0 + 1][1] < 2 * want)
+    t0++;
   int lo = br < bg ? (br < bb ? br : bb) : (bg < bb ? bg : bb);
   int hi = br > bg ? (br > bb ? br : bb) : (bg > bb ? bg : bb);
   int best = INT_MAX;
-  for (int t = 0; t < 8; t++) {
-    int a = T1[t][0], b = T1[t][1], e;
+  for (int t = t0 > 0 ? t0 - 1 : 0; t <= (t0 < 7 ? t0 + 1 : 7); t++) {
+    int a = T1[t][0], b = T1[t][1], e = 0;
     unsigned char s[8];
     if (lo - b >= 0 && hi + b <= 255) { /* nothing clamps: error = |d|^2 + 3m^2 - 2mS */
       e = d2;
@@ -71,12 +74,10 @@ static int eval_half(const Blk *k, const unsigned char *pl, int br, int bg, int 
       }
     } else { /* a channel clamps at 0 or 255: each of the 4 tried */
       const int M[4] = { a, b, -a, -b };
-      e = 0;
       for (int i = 0; i < 8; i++) {
-        int be = INT_MAX, bc = 0;
+        int be = INT_MAX, bc = 0, p = pl[i];
         for (int c = 0; c < 4; c++) {
-          int x = clamp255(br + M[c]) - k->r[pl[i]], y = clamp255(bg + M[c]) - k->g[pl[i]],
-              z = clamp255(bb + M[c]) - k->b[pl[i]];
+          int x = clamp255(br + M[c]) - k->r[p], y = clamp255(bg + M[c]) - k->g[p], z = clamp255(bb + M[c]) - k->b[p];
           int er = x * x + y * y + z * z;
           if (er < be) {
             be = er;
@@ -91,96 +92,74 @@ static int eval_half(const Blk *k, const unsigned char *pl, int br, int bg, int 
       best = e;
       *tbl = t;
       memcpy(sel, s, 8);
-      if (e == 0)
-        break;
     }
   }
-  return best;
 }
 
+/* one orientation, one mode, one table a half: the orientation with the less variance inside its halves, the
+   differential mode when the halves' colours are close enough, individual when not */
 static void enc_color(const Blk *k, unsigned char *o) {
-  int bestErr = INT_MAX;
-  int uniform = 1;
-  for (int p = 1; p < 16 && uniform; p++)
-    uniform = k->r[p] == k->r[0] && k->g[p] == k->g[0] && k->b[p] == k->b[0];
-  for (int flip = 0; flip < 2; flip++) {
-    int mean[2][3];
-    for (int s = 0; s < 2; s++) {
-      int sr = 0, sg = 0, sb = 0;
-      for (int i = 0; i < 8; i++) {
-        int p = SUBP[flip][s][i];
-        sr += k->r[p];
-        sg += k->g[p];
-        sb += k->b[p];
-      }
-      mean[s][0] = (sr + 4) / 8;
-      mean[s][1] = (sg + 4) / 8;
-      mean[s][2] = (sb + 4) / 8;
+  int s[4][3] = { { 0 } }, ss[4][3] = { { 0 } };
+  for (int p = 0; p < 16; p++) {
+    int q = (p >> 3) * 2 + ((p & 3) >> 1);
+    int v[3] = { k->r[p], k->g[p], k->b[p] };
+    for (int c = 0; c < 3; c++) {
+      s[q][c] += v[c];
+      ss[q][c] += v[c] * v[c];
     }
-    for (int diff = uniform ? 1 : 0; diff < 2; diff++) {
-      int q[2][3], tb[2], er[2];
-      unsigned char se[2][8];
-      int ok = 1;
-      for (int c = 0; c < 3; c++) {
-        if (diff) {
-          int q0 = (mean[0][c] * 31 + 127) / 255, q1 = (mean[1][c] * 31 + 127) / 255;
-          if (q1 < q0 - 4)
-            q1 = q0 - 4;
-          if (q1 > q0 + 3)
-            q1 = q0 + 3;
-          if (q1 < 0 || q1 > 31) { /* (q0 at 0 or 31 with a clamped delta can step out) */
-            ok = 0;
-            break;
-          }
-          q[0][c] = q0;
-          q[1][c] = q1;
-        } else {
-          q[0][c] = (mean[0][c] * 15 + 127) / 255;
-          q[1][c] = (mean[1][c] * 15 + 127) / 255;
-        }
-      }
-      if (!ok)
-        continue;
-      int tot = 0;
-      for (int s = 0; s < 2; s++) {
-        int c8[3];
-        for (int c = 0; c < 3; c++)
-          c8[c] = diff ? (q[s][c] << 3) | (q[s][c] >> 2) : q[s][c] * 17;
-        er[s] = eval_half(k, SUBP[flip][s], c8[0], c8[1], c8[2], &tb[s], se[s]);
-        tot += er[s];
-        if (tot >= bestErr)
-          break;
-      }
-      if (tot >= bestErr)
-        continue;
-      bestErr = tot;
-      if (diff) {
-        o[0] = (unsigned char)((q[0][0] << 3) | ((q[1][0] - q[0][0]) & 7));
-        o[1] = (unsigned char)((q[0][1] << 3) | ((q[1][1] - q[0][1]) & 7));
-        o[2] = (unsigned char)((q[0][2] << 3) | ((q[1][2] - q[0][2]) & 7));
-      } else {
-        o[0] = (unsigned char)((q[0][0] << 4) | q[1][0]);
-        o[1] = (unsigned char)((q[0][1] << 4) | q[1][1]);
-        o[2] = (unsigned char)((q[0][2] << 4) | q[1][2]);
-      }
-      o[3] = (unsigned char)((tb[0] << 5) | (tb[1] << 2) | (diff << 1) | flip);
-      unsigned msb = 0, lsb = 0;
-      for (int s = 0; s < 2; s++)
-        for (int i = 0; i < 8; i++) {
-          int p = SUBP[flip][s][i], bit = (p & 3) * 4 + (p >> 2); /* stored by column: x * 4 + y */
-          msb |= (unsigned)(se[s][i] >> 1) << bit;
-          lsb |= (unsigned)(se[s][i] & 1) << bit;
-        }
-      o[4] = (unsigned char)(msb >> 8);
-      o[5] = (unsigned char)msb;
-      o[6] = (unsigned char)(lsb >> 8);
-      o[7] = (unsigned char)lsb;
-      if (bestErr <= 8)
-        return; /* (as good as the table steps allow) */
-    }
-    if (uniform)
-      return;
   }
+  /* flip 0: left (quadrants 0, 2) and right (1, 3); flip 1: top (0, 1) and bottom (2, 3) */
+  static const unsigned char Q[2][2][2] = { { { 0, 2 }, { 1, 3 } }, { { 0, 1 }, { 2, 3 } } };
+  int hs[2][2][3], cost[2] = { 0, 0 };
+  for (int f = 0; f < 2; f++)
+    for (int h = 0; h < 2; h++)
+      for (int c = 0; c < 3; c++) {
+        int sum = s[Q[f][h][0]][c] + s[Q[f][h][1]][c], sq = ss[Q[f][h][0]][c] + ss[Q[f][h][1]][c];
+        hs[f][h][c] = sum;
+        cost[f] += sq - (sum * sum >> 3);
+      }
+  int flip = cost[1] < cost[0];
+  int q0[3], q1[3], diff = 1;
+  for (int c = 0; c < 3; c++) {
+    int m0 = (hs[flip][0][c] + 4) >> 3, m1 = (hs[flip][1][c] + 4) >> 3;
+    q0[c] = (m0 * 31 + 127) / 255;
+    q1[c] = (m1 * 31 + 127) / 255;
+    if (q1[c] - q0[c] < -4 || q1[c] - q0[c] > 3)
+      diff = 0;
+  }
+  if (!diff)
+    for (int c = 0; c < 3; c++) {
+      q0[c] = (((hs[flip][0][c] + 4) >> 3) * 15 + 127) / 255;
+      q1[c] = (((hs[flip][1][c] + 4) >> 3) * 15 + 127) / 255;
+    }
+  int tb[2];
+  unsigned char se[2][8];
+  for (int h = 0; h < 2; h++) {
+    const int *q = h ? q1 : q0;
+    int c8[3];
+    for (int c = 0; c < 3; c++)
+      c8[c] = diff ? (q[c] << 3) | (q[c] >> 2) : q[c] * 17;
+    fit_half(k, SUBP[flip][h], c8[0], c8[1], c8[2], &tb[h], se[h]);
+  }
+  if (diff) {
+    for (int c = 0; c < 3; c++)
+      o[c] = (unsigned char)((q0[c] << 3) | ((q1[c] - q0[c]) & 7));
+  } else {
+    for (int c = 0; c < 3; c++)
+      o[c] = (unsigned char)((q0[c] << 4) | q1[c]);
+  }
+  o[3] = (unsigned char)((tb[0] << 5) | (tb[1] << 2) | (diff << 1) | flip);
+  unsigned msb = 0, lsb = 0;
+  for (int h = 0; h < 2; h++)
+    for (int i = 0; i < 8; i++) {
+      int p = SUBP[flip][h][i], bit = (p & 3) * 4 + (p >> 2); /* stored by column: x * 4 + y */
+      msb |= (unsigned)(se[h][i] >> 1) << bit;
+      lsb |= (unsigned)(se[h][i] & 1) << bit;
+    }
+  o[4] = (unsigned char)(msb >> 8);
+  o[5] = (unsigned char)msb;
+  o[6] = (unsigned char)(lsb >> 8);
+  o[7] = (unsigned char)lsb;
 }
 
 /* EAC alpha: base, multiplier, one of 16 modifier tables, 3 bits a pixel */
@@ -221,11 +200,13 @@ static void enc_alpha(const Blk *k, unsigned char *o) {
   for (int t = 0; t < 16; t++) {
     int tmin = EA[t][3], tmax = EA[t][7], span = tmax - tmin;
     int m0 = (R + span / 2) / span;
-    for (int m = m0 - 1; m <= m0 + 1; m++) {
-      if (m < 1 || m > 15)
-        continue;
-      int bases[3] = { (mn + mx + 1) / 2, mn - m * tmin, mx - m * tmax };
-      for (int bi3 = 0; bi3 < 3; bi3++) {
+    for (int m = m0; m <= m0; m++) { /* (one multiplier, two bases: alpha edges are smooth, the pixel's own table step is small) */
+      if (m < 1)
+        m = 1;
+      if (m > 15)
+        m = 15;
+      int bases[2] = { (mn + mx + 1) / 2, mn - m * tmin };
+      for (int bi3 = 0; bi3 < 2; bi3++) {
         int base = clamp255(bases[bi3]);
         int lv[8];
         for (int i = 0; i < 8; i++)
