@@ -24,6 +24,7 @@
 #include "screens/profiles.h"
 #include "ui/qrcard.h"
 #include "core/recs.h"
+#include "core/anilist.h"
 #include "core/sync.h"
 #include "core/update.h"
 #include "screens/btrailer.h"
@@ -2416,6 +2417,7 @@ void app_tick(float dt) {
   bg_tick(dt);
   sync_tick();
   recs_tick();
+  anilist_tick();
   update_tick(dt);
   best_tick();
   curKey = 0; /* (a page switch later in the frame is not a key's) */
