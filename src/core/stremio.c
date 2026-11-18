@@ -1323,10 +1323,19 @@ static int cmp_mtime(const void *a, const void *b) {
          y = tms(cJSON_GetObjectItemCaseSensitive(*(cJSON **)b, "_mtime"));
   return x < y ? 1 : x > y ? -1 : 0;
 }
-int lib_cw_items(ItemList *out) {
+int lib_id_is_anime(const char *type, const char *id) {
+  if (type && !strcmp(type, "anime"))
+    return 1;
+  if (!id)
+    return 0;
+  return !strncmp(id, "kitsu:", 6) || !strncmp(id, "anilist:", 8) || !strncmp(id, "mal:", 4) ||
+         !strncmp(id, "anidb:", 6);
+}
+int lib_cw_items_k(ItemList *out, int kind) {
   cJSON *lib = lib_arr();
-  cJSON *picks[256];
-  int n = 0;
+  int base = kind & 7, noAnime = kind & LIB_CW_NO_ANIME;
+  cJSON **picks = NULL;
+  int n = 0, cap = 0;
   const cJSON *it;
   cJSON_ArrayForEach(it, lib) {
     const cJSON *s = js_obj(it, "state");
@@ -1340,19 +1349,44 @@ int lib_cw_items(ItemList *out) {
       continue;
     if (!js_str(it, "name", "")[0])
       continue;
-    if (n < 256)
-      picks[n++] = (cJSON *)it;
+    int anime = lib_id_is_anime(ty, js_str(it, "_id", ""));
+    int want;
+    if (base == LIB_CW_SERIES)
+      want = !strcmp(ty, "series") && !(noAnime && anime);
+    else if (base == LIB_CW_MOVIES)
+      want = !strcmp(ty, "movie") && !(noAnime && anime);
+    else if (base == LIB_CW_ANIME)
+      want = anime;
+    else
+      want = !(noAnime && anime);
+    if (!want)
+      continue;
+    if (n == cap) {
+      int ncap = cap ? cap * 2 : 32;
+      cJSON **grow = realloc(picks, sizeof(cJSON *) * (size_t)ncap);
+      if (!grow)
+        break; /* out of memory: the ones found so far */
+      picks = grow;
+      cap = ncap;
+    }
+    picks[n++] = (cJSON *)it;
   }
-  qsort(picks, n, sizeof picks[0], cmp_mtime);
-  if (n > 12)
-    n = 12;
+  if (n)
+    qsort(picks, n, sizeof picks[0], cmp_mtime);
   out->items = calloc(n ? n : 1, sizeof(Item));
+  if (!out->items)
+    n = 0;
   out->n = n;
+  out->total = n;
   for (int i = 0; i < n; i++) {
     item_from_lib(&out->items[i], picks[i]);
     out->items[i].cw = 1;
   }
+  free(picks);
   return n;
+}
+int lib_cw_items(ItemList *out) {
+  return lib_cw_items_k(out, LIB_CW_ALL);
 }
 int lib_cw_info(const Item *it, CwInfo *out) {
   cJSON *l = lib_get(it->id);
