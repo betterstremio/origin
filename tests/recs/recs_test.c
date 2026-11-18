@@ -834,6 +834,111 @@ static void t_rows(void) {
   free(d);
 }
 
+/* recs_rows_build_kind: the rows of one kind, none of Home's, thin history, small device */
+static void t_kind(void) {
+  static RecSeedX seeds[8];
+  static RecCand rb[8][20], sb[8][20];
+  static RecTaste t;
+  RecRowDef *home = malloc(sizeof(RecRowDef) * 160), *d = malloc(sizeof(RecRowDef) * 160);
+  const char *lg[8] = { "hi", "hi", "en", "hi", "en", "hi", "en", "hi" };
+  for (int i = 0; i < 8; i++) {
+    mkseed(&seeds[i], 100 + i, i < 5 ? 'm' : 't', "Seed", lg[i], i < 5 ? 28 : 18, i % 2 ? 35 : 10749, 1.0 - i * 0.1,
+           3 + i * 4);
+    snprintf(seeds[i].title, sizeof seeds[i].title, "Seed %d", i);
+    for (int j = 0; j < 20; j++) {
+      mk(&rb[i][j], 1000 + i * 40 + j, seeds[i].kind, "r", lg[i], 18, 0, 7, 300, "2025-05-05");
+      mk(&sb[i][j], 5000 + i * 40 + j, seeds[i].kind, "s", lg[i], 18, 0, 7, 300, "2025-05-05");
+    }
+    seeds[i].recs = rb[i];
+    seeds[i].nrecs = 20;
+    seeds[i].sim = sb[i];
+    seeds[i].nsim = 20;
+  }
+  recs_taste_build(seeds, 8, &t);
+  RecLang L[2] = { { "hi", 1 }, { "en", 1 } };
+  RecRowCtx cx = mkctx(L, 2, &t, seeds, 8, "IE", "2026-11-09");
+  cx.regionName = "Ireland";
+  int nh = recs_rows_build(&cx, home, 160);
+  for (int k = 0; k < 2; k++) {
+    char kind = k ? 't' : 'm';
+    int n = recs_rows_build_kind(&cx, kind, home, nh, d, 60), dup = 0, wrong = 0, chart = 0, byw = 0, personal = 0;
+    for (int i = 0; i < n; i++) {
+      for (int j = 0; j < nh; j++)
+        dup += !strcmp(d[i].key, home[j].key) || (d[i].path[0] && !strcmp(d[i].path, home[j].path));
+      for (int j = 0; j < i; j++)
+        dup += !strcmp(d[i].key, d[j].key);
+      wrong += d[i].kind && d[i].kind != kind;
+      chart += d[i].family == RF_CHART && has(d[i].path, k ? "/trending/tv/day" : "/trending/movie/day");
+      byw += d[i].family == RF_BYW;
+      personal += d[i].family == RF_PERSONAL;
+    }
+    CHECK(n >= 10, "kind %c: a normal build gives rows (%d)", kind, n);
+    CHECK(!dup, "kind %c: no row repeats a Home key or path, or another row of the page (%d)", kind, dup);
+    CHECK(!wrong, "kind %c: every row is of its kind (%d wrong)", kind, wrong);
+    CHECK(chart == 1, "kind %c: one Top 10 today row (%d)", kind, chart);
+    /* Home took the 5 most recent seeds, all films: Movies has no seed left, Shows has its own */
+    CHECK((k ? byw >= 1 : byw == 0) && personal == 1 && !d[0].path[0],
+          "kind %c: Because you watched only for seeds Home did not use (%d) and a local Top picks (%d)", kind, byw,
+          personal);
+    for (int i = 0; i < n; i++)
+      if (d[i].family == RF_BYW)
+        CHECK(seeds[d[i].seed].kind == kind, "kind %c: a Because-you-watched row uses a seed of its kind", kind);
+    /* the small device asks for fewer rows of each family */
+    RecRowCtx lo = cx;
+    lo.lowMem = 1;
+    int nl = recs_rows_build_kind(&lo, kind, home, nh, d, 60), lb = 0;
+    for (int i = 0; i < nl; i++)
+      lb += d[i].family == RF_BYW;
+    CHECK(nl < n && lb <= 3, "kind %c: small device builds fewer rows (%d < %d) and at most 3 BYW (%d)", kind, nl, n,
+          lb);
+  }
+  /* thin history of series (1 series seed): no Because-you-watched, Top picks asks a taste list */
+  {
+    RecCand *sbk = calloc(1, sizeof(RecCand));
+    (void)sbk;
+    free(sbk);
+    RecSeedX thin[6];
+    memcpy(thin, seeds, sizeof thin);
+    for (int i = 0; i < 6; i++)
+      if (i == 5)
+        thin[i].kind = 't';
+      else
+        thin[i].kind = 'm';
+    RecTaste tt;
+    recs_taste_build(thin, 6, &tt);
+    RecRowCtx c2 = mkctx(L, 2, &tt, thin, 6, "IE", "2026-11-09");
+    int n = recs_rows_build_kind(&c2, 't', NULL, 0, d, 60), byw = 0, pers = 0, pathPers = 0, binge = 0;
+    for (int i = 0; i < n; i++) {
+      byw += d[i].family == RF_BYW;
+      pers += d[i].family == RF_PERSONAL;
+      pathPers += d[i].family == RF_PERSONAL && d[i].path[0] && has(d[i].path, "/discover/tv?with_genres=");
+      binge += has(d[i].title, "Binge");
+    }
+    CHECK(byw == 0 && pers == 1 && pathPers == 1 && binge == 1,
+          "thin series history: no BYW (%d), one taste Top picks (%d, with a request %d), binge row %d", byw, pers,
+          pathPers, binge);
+    /* the carry-over maps Action (28) to Action & Adventure (10759) */
+    CHECK(has(d[0].path, "10759"), "thin series history: films' Action carries over as 10759 (%s)", d[0].path);
+  }
+  /* no history at all */
+  {
+    RecTaste e;
+    memset(&e, 0, sizeof e);
+    RecRowCtx c3 = mkctx(L, 2, &e, NULL, 0, "IE", "2026-11-09");
+    int n = recs_rows_build_kind(&c3, 'm', NULL, 0, d, 60), pers = 0, chart = 0, nw = 0, gn = 0;
+    for (int i = 0; i < n; i++) {
+      pers += d[i].family == RF_PERSONAL;
+      chart += d[i].family == RF_CHART;
+      nw += d[i].family == RF_NEW;
+      gn += !strncmp(d[i].key, "gn|", 3);
+    }
+    CHECK(n >= 12 && !pers && chart == 1 && nw >= 1 && gn >= 6,
+          "no history: Top 10 today, new in your languages, genres (%d rows, %d chart, %d new, %d genres)", n, chart,
+          nw, gn);
+  }
+  free(home);
+  free(d);
+}
 static void t_byw_top(void) {
   RecSeedX s;
   RecCand rec[20], sim[20], own[20], out[40];
@@ -1212,6 +1317,7 @@ static void home_synthetic(void) {
   t_parse_seed();
   t_taste_langs();
   t_rows();
+  t_kind();
   t_byw_top();
   t_page();
 }
