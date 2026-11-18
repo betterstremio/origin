@@ -1,5 +1,6 @@
 #include "ui/gfx.h"
 #include "ui/atlas.h"
+#include "ui/etc.h"
 #include "ui/layout.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -990,25 +991,32 @@ void gfx_circle(float cx, float cy, float r, uint32_t c) {
 static struct {
   GLuint t;
   int w, h, ch;
+  long bytes; /* its real size (a compressed picture is not w * h * ch) */
+  int comp; /* compressed: never pooled (the pool matches raw sizes) */
 } treg[TREG];
-static void treg_add(GLuint t, int w, int h, int ch) {
+static void treg_add_b(GLuint t, int w, int h, int ch, long bytes, int comp) {
   if (!t)
     return;
   unsigned i = t % TREG;
   for (int k = 0; k < TREG; k++, i = (i + 1) % TREG)
     if (!treg[i].t || treg[i].t == t) {
       if (treg[i].t == t) {
-        texBytes -= (long)treg[i].w * treg[i].h * treg[i].ch;
+        texBytes -= treg[i].bytes;
         texCount--;
       }
       treg[i].t = t;
       treg[i].w = w;
       treg[i].h = h;
       treg[i].ch = ch;
-      texBytes += (long)w * h * ch;
+      treg[i].bytes = bytes;
+      treg[i].comp = comp;
+      texBytes += bytes;
       texCount++;
       return;
     }
+}
+static void treg_add(GLuint t, int w, int h, int ch) {
+  treg_add_b(t, w, h, ch, (long)w * h * ch, 0);
 }
 static int treg_find(GLuint t) {
   unsigned i = t % TREG;
@@ -1024,17 +1032,18 @@ static void treg_del(GLuint t) {
   int i = treg_find(t);
   if (i < 0)
     return;
-  texBytes -= (long)treg[i].w * treg[i].h * treg[i].ch;
+  texBytes -= treg[i].bytes;
   texCount--;
   treg[i].t = 0;
   /* (open addressing: the run after it is put back so later lookups still find their entries) */
   for (unsigned j = ((unsigned)i + 1) % TREG; treg[j].t; j = (j + 1) % TREG) {
     GLuint u = treg[j].t;
-    int w = treg[j].w, h = treg[j].h, ch = treg[j].ch;
+    int w = treg[j].w, h = treg[j].h, ch = treg[j].ch, comp = treg[j].comp;
+    long bytes = treg[j].bytes;
     treg[j].t = 0;
-    texBytes -= (long)w * h * ch;
+    texBytes -= bytes;
     texCount--;
-    treg_add(u, w, h, ch);
+    treg_add_b(u, w, h, ch, bytes, comp);
   }
 }
 static void gl_del(GLuint t) {
@@ -1076,6 +1085,10 @@ void gfx_tex_recycle(GLuint t, int w, int h, int ch, int linear) {
       glDeleteTextures(1, &t);
       return;
     }
+    if (treg[r].comp) {
+      gl_del(t);
+      return;
+    } /* (compressed pictures are small and of every size: not kept) */
     w = treg[r].w;
     h = treg[r].h;
     ch = treg[r].ch;
@@ -1115,6 +1128,88 @@ static void pool_age(void) {
       i--;
     }
 } /* none kept past 10 s */
+/* compressed pictures (ETC1 / ETC2 made on the device, ui/etc.c): the GPU keeps 4 to 8 times fewer bytes than RGBA */
+#ifndef GL_COMPRESSED_RGB8_ETC2
+#define GL_COMPRESSED_RGB8_ETC2 0x9274
+#endif
+#ifndef GL_COMPRESSED_RGBA8_ETC2_EAC
+#define GL_COMPRESSED_RGBA8_ETC2_EAC 0x9278
+#endif
+#ifndef GL_ETC1_RGB8_OES
+#define GL_ETC1_RGB8_OES 0x8D64
+#endif
+#ifndef SB_TEX_COMPRESS
+#define SB_TEX_COMPRESS \
+  0 /* a desktop driver would emulate ETC2 in software: only the TV and Android targets turn it on */
+#endif
+static int etcCaps = -1;
+static void etc_detect(void) {
+  etcCaps = 0;
+  const char *ev = getenv("SB_TEXC");
+  if (SB_TEX_COMPRESS ? (ev && !strcmp(ev, "0")) : !(ev && !strcmp(ev, "1")))
+    goto done;
+  const char *ver = (const char *)glGetString(GL_VERSION);
+  const char *ext = (const char *)glGetString(GL_EXTENSIONS);
+  int v3 = ver && !strncmp(ver, "OpenGL ES 3", 11), e2 = 0, e1 = 0;
+  GLint n = 0;
+  glGetIntegerv(GL_NUM_COMPRESSED_TEXTURE_FORMATS, &n);
+  if (n > 0 && n < 256) {
+    GLint f[256];
+    glGetIntegerv(GL_COMPRESSED_TEXTURE_FORMATS, f);
+    int a = 0, b = 0;
+    for (int i = 0; i < n; i++) {
+      a |= f[i] == GL_COMPRESSED_RGB8_ETC2;
+      b |= f[i] == GL_COMPRESSED_RGBA8_ETC2_EAC;
+      e1 |= f[i] == GL_ETC1_RGB8_OES;
+    }
+    e2 = a && b;
+  }
+  if (ext && strstr(ext, "GL_OES_compressed_ETC1_RGB8_texture"))
+    e1 = 1;
+  etcCaps = ((v3 || e2) ? 1 : 0) | (e1 || v3 || e2 ? 2 : 0);
+done:
+  fprintf(stderr, "[gfx] compressed pictures: %s\n", etcCaps & 1 ? "ETC2" : etcCaps & 2 ? "ETC1" : "off");
+}
+int gfx_etc_caps(void) {
+  if (etcCaps < 0)
+    etc_detect();
+  return etcCaps;
+}
+static GLenum etc_format(int fmt) {
+  return fmt == 2 ? GL_COMPRESSED_RGBA8_ETC2_EAC : (etcCaps & 1) ? GL_COMPRESSED_RGB8_ETC2 : GL_ETC1_RGB8_OES;
+}
+GLuint gfx_ctex_create(int fmt, const unsigned char *data, int w, int h) {
+  if (gfx_etc_caps() == 0 || (fmt == 2 && !(etcCaps & 1)))
+    return 0;
+  size_t sz = etc_size(w, h, fmt == 2);
+  unsigned char *zero = NULL;
+  if (!data) { /* (a null pointer is not allowed for compressed data on every driver: zeros, filled by the bands) */
+    zero = calloc(1, sz);
+    if (!zero)
+      return 0;
+  }
+  GLuint t;
+  glGenTextures(1, &t);
+  glBindTexture(GL_TEXTURE_2D, t);
+  glCompressedTexImage2D(GL_TEXTURE_2D, 0, etc_format(fmt), w, h, 0, (GLsizei)sz, data ? data : zero);
+  free(zero);
+  treg_add_b(t, w, h, fmt == 2 ? 4 : 3, (long)sz, 1);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  if (curTex == t)
+    curTex = 0;
+  return t;
+}
+void gfx_ctex_update(GLuint t, int fmt, const unsigned char *blocks, int y, int w, int rows) {
+  if (!(etcCaps & 1))
+    return; /* (ETC1 through the extension cannot take a part: the whole picture goes up at once) */
+  gfx_flush();
+  glBindTexture(GL_TEXTURE_2D, t);
+  glCompressedTexSubImage2D(GL_TEXTURE_2D, 0, 0, y, w, rows, etc_format(fmt), (GLsizei)etc_size(w, rows, fmt == 2),
+                            blocks);
+}
 GLuint gfx_tex_create(const unsigned char *px, int w, int h, int ch, int linear) {
   GLenum f = ch == 1 ? GL_ALPHA : ch == 3 ? GL_RGB : GL_RGBA;
   {

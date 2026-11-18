@@ -13,6 +13,7 @@
 #define SB_CACHE_MB 40 /* the app partition is small and shared with every app's install */
 #define SB_SYS_JPEG 1 /* the TV has libjpeg.so.62 (libjpeg-turbo): JPEGs decoded scaled (ui/jpegscale.c) */
 #define SB_IMG_BUDGET_MB 40 /* the TVs have little memory to spare */
+#define SB_TEX_COMPRESS 1 /* pictures kept as ETC1/ETC2 textures where the GPU takes them (ui/etc.c) */
 #define SB_VTX_CLIENT_ARRAYS 1 /* the driver maps new memory for every buffer update */
 #define SB_SDL_QUEUE_BY_NAME 1 /* older TVs have an SDL without the audio queue */
 #define SB_720_FULLSCREEN 1 /* 720p drawing goes to a fullscreen window, which the TV scales */

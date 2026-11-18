@@ -99,6 +99,14 @@ void gfx_quad_pts(const float *px, const float *py,
 void gfx_tex_recycle(GLuint t, int w, int h, int ch,
                      int linear); /* a picture's texture let go: kept a moment for the next one of its size */
 GLuint gfx_tex_create(const unsigned char *rgba, int w, int h, int channels, int linear); /* channels 1 (alpha), 3, 4 */
+/* pictures kept compressed (ETC1 / ETC2, ui/etc.c). gfx_etc_caps: bit 1 = ETC2 RGB and RGBA (EAC) usable, bit 2 = ETC1
+   (0: none; always 0 on a desktop, whose driver would emulate them in software; SB_TEXC=0 off, =1 on where supported).
+   fmt 1 = RGB, 2 = RGBA (EAC). data NULL allocates, the bands follow with gfx_ctex_update (y and rows in multiples of
+   4, the last band may end at the picture's edge; blocks = the blocks of those rows; not on an ETC1-only device: whole
+   pictures only) */
+int gfx_etc_caps(void);
+GLuint gfx_ctex_create(int fmt, const unsigned char *data, int w, int h);
+void gfx_ctex_update(GLuint tex, int fmt, const unsigned char *blocks, int y, int w, int rows);
 void gfx_tex_free(GLuint tex);
 /* a picture that just arrived fades in over 0.2 s wherever it is drawn (never pops in); gfx_tex_fade is its
    opacity now (1 = settled), so a placeholder under it can stay until it is */
