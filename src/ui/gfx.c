@@ -993,6 +993,7 @@ static struct {
   int w, h, ch;
   long bytes; /* its real size (a compressed picture is not w * h * ch) */
   int comp; /* compressed: never pooled (the pool matches raw sizes) */
+  float corner; /* a picture without corners of its own: the radius in texture pixels gfx_image rounds it with (0: none) */
 } treg[TREG];
 static void treg_add_b(GLuint t, int w, int h, int ch, long bytes, int comp) {
   if (!t)
@@ -1010,6 +1011,7 @@ static void treg_add_b(GLuint t, int w, int h, int ch, long bytes, int comp) {
       treg[i].ch = ch;
       treg[i].bytes = bytes;
       treg[i].comp = comp;
+      treg[i].corner = 0;
       texBytes += bytes;
       texCount++;
       return;
@@ -1039,12 +1041,19 @@ static void treg_del(GLuint t) {
   for (unsigned j = ((unsigned)i + 1) % TREG; treg[j].t; j = (j + 1) % TREG) {
     GLuint u = treg[j].t;
     int w = treg[j].w, h = treg[j].h, ch = treg[j].ch, comp = treg[j].comp;
+    float corner = treg[j].corner;
     long bytes = treg[j].bytes;
     treg[j].t = 0;
     texBytes -= bytes;
     texCount--;
     treg_add_b(u, w, h, ch, bytes, comp);
+    treg[treg_find(u)].corner = corner;
   }
+}
+void gfx_tex_set_corner(GLuint t, float rpx) {
+  int i = treg_find(t);
+  if (i >= 0)
+    treg[i].corner = rpx > 0 ? rpx : 0;
 }
 static void gl_del(GLuint t) {
   treg_del(t);
@@ -1321,6 +1330,13 @@ void gfx_image(GLuint tex, float x, float y, float w, float h, float r, uint32_t
     float f = gfx_tex_fade(tex);
     if (f < 1)
       tint = col_alpha(tint, f);
+  }
+  if (r <= 0) { /* a picture kept without its corners (ETC RGB): rounded here, by the radius registered with it, scaled to the size it is drawn at */
+    int ti = treg_find(tex);
+    if (ti >= 0 && treg[ti].corner > 0 && treg[ti].w > 0) {
+      float su = u1 > u0 ? u1 - u0 : u0 - u1;
+      r = treg[ti].corner * w / (treg[ti].w * (su > 0.001f ? su : 1.0f));
+    }
   }
   float m = r + 2; /* a big rounded picture (a sheet's glass): the rounded program only on its rim, the plain one inside
                       (the same pixels: coverage is 1 there) */

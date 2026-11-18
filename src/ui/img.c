@@ -190,6 +190,8 @@ typedef struct Img {
   int encTried; /* queued for the background encoder (once; cleared when the queue drops it) */
   unsigned char *eb; /* its encoded blocks, waiting for the main thread to swap the texture */
   int ef;
+  float cornerPx; /* an ETC picture without corners of its own: the radius (texture pixels) the shader rounds it with */
+  float ec;
   struct Img *enext;
   GLuint tex;
   float aspect;
@@ -450,8 +452,8 @@ static double mono_s(void) {
    (on the TV it is ~1 us a pixel): the picture loads as RGBA as before, and ONE encoder thread, at the lowest priority
    and only while the loader has no on-screen work, turns its small copy into blocks, writes them to disk ("etc:" key:
    the next visit loads them with no decode at all) and hands them to the main thread, which swaps the texture ---- */
-#define ETC_MAGIC "SBETC1"
-#define ETC_HDR 24 /* magic(6) fmt(1) 0(1) pw(4) ph(4) aspect(4) focal(4), then the blocks */
+#define ETC_MAGIC "SBETC2"
+#define ETC_HDR 28 /* magic(6) fmt(1) 0(1) pw(4) ph(4) aspect(4) focal(4) corner(4), then the blocks */
 static unsigned etcN;
 static long etcUs; /* pictures encoded so far and the time it took (microseconds) */
 static int etcLog = -1; /* SB_UPLOG: each encode logged */
@@ -461,7 +463,7 @@ static int etc_alpha(const unsigned char *px, int w, int h) {
       return 1;
   return 0;
 }
-static void etc_write(const Img *im, int fmt, int w, int h, const unsigned char *blocks) {
+static void etc_write(const Img *im, int fmt, int w, int h, const unsigned char *blocks, float corner) {
   size_t sz = etc_size(w, h, fmt == 2);
   unsigned char *b = malloc(ETC_HDR + sz);
   if (!b)
@@ -473,6 +475,7 @@ static void etc_write(const Img *im, int fmt, int w, int h, const unsigned char 
   memcpy(b + 12, &h, 4);
   memcpy(b + 16, &im->aspect, 4);
   memcpy(b + 20, &im->focal, 4);
+  memcpy(b + 24, &corner, 4);
   memcpy(b + ETC_HDR, blocks, sz);
   char key[2400];
   snprintf(key, sizeof key, "etc:%dx%d:%s", im->w, im->h, im->url);
@@ -493,15 +496,16 @@ static int etc_load(Img *im) {
   if (!d)
     return 0;
   int fmt = len > ETC_HDR ? d[6] : 0, pw = 0, ph = 0;
-  float aspect = 0, hf = -1;
+  float aspect = 0, hf = -1, corner = 0;
   if (len > ETC_HDR) {
     memcpy(&pw, d + 8, 4);
     memcpy(&ph, d + 12, 4);
     memcpy(&aspect, d + 16, 4);
     memcpy(&hf, d + 20, 4);
+    memcpy(&corner, d + 24, 4);
   }
   if (len <= ETC_HDR || memcmp(d, ETC_MAGIC, 6) || (fmt != 1 && fmt != 2) || (fmt == 2 && !(caps & 1)) || pw < 4 ||
-      ph < 4 || pw > 4096 || ph > 4096 || len != ETC_HDR + etc_size(pw, ph, fmt == 2) || !(aspect > 0)) {
+      ph < 4 || pw > 4096 || ph > 4096 || len != ETC_HDR + etc_size(pw, ph, fmt == 2) || !(aspect > 0) || !(corner >= 0 && corner < 2000)) {
     free(d);
     return 0;
   }
@@ -513,12 +517,14 @@ static int etc_load(Img *im) {
   im->pch = fmt == 2 ? 4 : 3;
   im->aspect = aspect;
   im->focal = im->fit == 3 ? focal : hf;
+  im->cornerPx = corner; /* (the picture has no corners of its own: the shader rounds them) */
   im->fromSm = 1;
   return 1;
 }
 static void load(Img *im) {
   im->fromSm = 0;
   im->fmt = 0;
+  im->cornerPx = 0;
   dec_enter();
   int ok = etc_load(im) || small_load(im);
   dec_leave();
@@ -576,12 +582,15 @@ static void enc_run(Img *im) {
     free(px);
     return;
   }
-  int fmt = (im->fit >= 0 && im->radius > 0) || etc_alpha(px, w, h) ? 2 : 1;
+  /* a picture with no alpha of its own is RGB (half the bytes) and its corners are the shader's; one with alpha (a logo)
+     keeps them in its alpha, baked */
+  int fmt = etc_alpha(px, w, h) ? 2 : 1;
+  float corner = fmt == 1 && im->fit >= 0 ? im->radius : 0;
   if (fmt == 2 && !(caps & 1)) {
     free(px);
     return;
   }
-  if (im->fit >= 0)
+  if (fmt == 2 && im->fit >= 0)
     round_corners(px, w, h, im->radius);
   size_t sz = etc_size(w, h, fmt == 2);
   unsigned char *b = malloc(sz);
@@ -602,11 +611,12 @@ static void enc_run(Img *im) {
     etcLog = getenv("SB_UPLOG") != NULL;
   if (etcLog)
     fprintf(stderr, "[etc] %dx%d fmt%d %.1f ms\n", w, h, fmt, ms);
-  etc_write(im, fmt, w, h, b);
+  etc_write(im, fmt, w, h, b, corner);
   pthread_mutex_lock(&mu); /* still shown (as RGBA)? then the main thread swaps it; else the disk copy is all that is kept */
   if (im->tex && !im->texFmt && !im->eb) {
     im->eb = b;
     im->ef = fmt;
+    im->ec = corner;
     im->enext = edone;
     edone = im;
     b = NULL;
@@ -1313,6 +1323,8 @@ static void up_done(Img *im) {
     gfx_tex_fade_in(im->tex);
   im->bytes = (int)pic_bytes(im);
   im->texFmt = im->fmt;
+  if (im->fmt && im->cornerPx > 0)
+    gfx_tex_set_corner(im->tex, im->cornerPx);
   usedBytes += im->bytes;
   phUps++;
   if (usedBytes > phPeak)
@@ -1367,6 +1379,8 @@ static void enc_apply(void) {
   long nb = (long)etc_size(im->pw, im->ph, im->ef == 2);
   gfx_tex_recycle(im->tex, im->pw, im->ph, im->pch, 1);
   im->tex = t;
+  if (im->ec > 0)
+    gfx_tex_set_corner(t, im->ec);
   usedBytes += nb - im->bytes;
   im->bytes = (int)nb;
   im->texFmt = im->ef;

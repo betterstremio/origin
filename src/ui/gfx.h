@@ -107,6 +107,9 @@ GLuint gfx_tex_create(const unsigned char *rgba, int w, int h, int channels, int
 int gfx_etc_caps(void);
 GLuint gfx_ctex_create(int fmt, const unsigned char *data, int w, int h);
 void gfx_ctex_update(GLuint tex, int fmt, const unsigned char *blocks, int y, int w, int rows);
+/* a picture kept without corners of its own: gfx_image, asked for radius 0, rounds it with this radius (texture pixels,
+   scaled to the drawn size). Forgotten with the texture */
+void gfx_tex_set_corner(GLuint tex, float rpx);
 void gfx_tex_free(GLuint tex);
 /* a picture that just arrived fades in over 0.2 s wherever it is drawn (never pops in); gfx_tex_fade is its
    opacity now (1 = settled), so a placeholder under it can stay until it is */
