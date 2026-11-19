@@ -2461,8 +2461,8 @@ void app_glow_kick(void) {
   orbs_pulse(ORB_PHONE, 1);
 }
 static void ambient_draw(void) {
-  int srch = SCR == SCR_SEARCH && !ambGuide, want = ambGuide == 1; /* 3.0.0: Search and Settings sit on the plain page
-                                                                        (no drifting glows); the guide keeps its own */
+  int srch = SCR == SCR_SEARCH && !ambGuide, want = 0; /* 3.0.0: Search, Settings and the guide all sit on the plain
+                                                           page (no drifting glows) */
   Orbs *o = orbs_app();
   if (want && !ambIn) {
     ambIn = 1;

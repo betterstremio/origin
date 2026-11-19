@@ -2010,7 +2010,7 @@ static float point_h(const Page *p, int b) {
 }
 static float words_h(const Page *p) {
   if (p->pv == PV_NEWS) {
-    float h = p->nt * TI_LH + 36;
+    float h = p->nt * TI_LH + 8 + LE_LH + 28;
     for (int i = 0; i < W.nnews; i++)
       h += fmaxf(CHIP, W.news[i].nt * NT_LH + (W.news[i].nx ? 6 + W.news[i].nx * NX_LH : 0)) + NGAP;
     return h;
@@ -2048,7 +2048,8 @@ static void words(int i, float a, float dx) {
   text_draw_wrapped(T(p->title), x, y, COLW, 2, TI_PX, 800, WHITE_A(255), -1.4f, al, TI_LH);
   y += p->nt * TI_LH;
   if (p->pv == PV_NEWS) {
-    y += 36;
+    text_draw(T1("Version {v}", "v", W.short_ver), x, y + 8, LE_PX, 500, WHITE_A(150), 0, COLW, al);
+    y += 8 + LE_LH + 28; /* which version this is, plainly under the title */
     for (int k = 0; k < W.nnews; k++) {
       float cx = rtl ? x - CHIP : x,
             h = fmaxf(CHIP, W.news[k].nt * NT_LH + (W.news[k].nx ? 6 + W.news[k].nx * NX_LH : 0));
