@@ -123,7 +123,8 @@ typedef struct {
   /* the focused card opens after a rest (as Nuvio's): wider, its backdrop over its poster, then the trailer in it */
   Tween exp;
   int expRow, expCol;
-  double wideBt, wideSt;
+  double wideSt;
+  int wideReady;
   unsigned wideKey; /* the title whose wide picture the times are for (a new one: times again) */
   int boxN, boxReady; /* the open box's titles, and how many had their picture in as they came (the log) */
   double heroAt, fadeHold;
@@ -2345,10 +2346,10 @@ static void row_far_ahead(Row *r) {
     }
   }
   if (r->col >= 0 && r->col < n) {
-    const CardPrep *cp = row_prep(r, r->col, 0, &(int){ 0 }, NULL);
+    char bu[512];
     int fw = r->wide ? cw : (int)CARD_OPEN_W;
-    if (cp && cp->crop && img_seen_shaped(cp->art, fw, ch, CARD_R, 1))
-      img_ahead_shaped(cp->art, fw, ch, CARD_R, 1); /* the one the box shows */
+    if (sb_bg_card(&r->items.items[r->col], bu, sizeof bu)[0] && img_seen_shaped(bu, fw, ch, CARD_R, 1))
+      img_ahead_shaped(bu, fw, ch, CARD_R, 1); /* the one the box shows, including in landscape rows */
   }
   img_prefetch_mode(0);
   fill_far(asked, have);
@@ -2552,102 +2553,88 @@ static float lay_w(const RowLay *L, int i) {
    from x where it stood; the focused one times its sharp picture (the log, the soft fade-in) */
 static void card_wide(Board *b, const Row *r, const Item *it, const CardPrep *cp, float x, float ox, float ow, float cy,
                       float cw, float ch, float ek, int rtl, int focused) {
+  char bu[512];
+  if (ek <= 0.001f || !sb_bg_card(it, bu, sizeof bu)[0]) {
+    card_draw_prep(it, cp, x, cy, cw, ch, r->wide, r->label, 1);
+    crop_logo(it, cp, x, cy, cw, ch, 1);
+    if (focused) {
+      b->wideReady = 0;
+      b->wideSt = 0;
+      b->wideKey = 0;
+    }
+    return;
+  }
+
   /* a card cut from its wide picture opens as Netflix's: the same picture widens around the part it showed */
   int crop = cp && cp->crop && !r->wide;
   const char *cu = crop && img_shaped_loaded(cp->art, (int)cw, (int)ch, CARD_R, 3) ? cp->art : crop ? cp->pre : "";
   float fc = crop ? img_shaped_focal(cu, (int)cw, (int)ch, CARD_R, 3) : -1; /* (the same from either: 64 columns) */
-  if (fc < 0 || ek <= 0.001f) {
-    card_draw_prep(it, cp, x, cy, cw, ch, r->wide, r->label, 1);
-    crop_logo(it, cp, x, cy, cw, ch, clampf(1 - 3 * ek, 0, 1));
+  int fw = r->wide ? (int)cw : (int)CARD_OPEN_W;
+  GLuint bt = img_get_shaped(bu, fw, (int)ch, CARD_R, 1);
+  if (ph_hold())
+    bt = 0;
+  float fade = bt ? gfx_tex_fade(bt) : 0;
+  char su[512];
+  GLuint sm = 0;
+  if (fade < 1 && !r->wide && sb_bg_small(it, su, sizeof su)[0] && strcmp(su, bu)) {
+    sm = img_get_shaped(su, WIDE_SM_W, WIDE_SM_H, CARD_R * 0.4f, 1);
+    if (ph_hold())
+      sm = 0;
   }
-  if (ek > 0.001f) {
-    char bu[512];
-    int fw = r->wide ? (int)cw : (int)CARD_OPEN_W;
-    if (sb_bg_card(it, bu, sizeof bu)[0]) {
-      GLuint bt = img_get_shaped(bu, fw, (int)ch, CARD_R,
-                                 1); /* a size of its own, loaded once: it is uncovered as the card widens */
-      char su[512];
-      GLuint sm = !r->wide && sb_bg_small(it, su, sizeof su)[0]
-                      ? img_get_shaped(su, WIDE_SM_W, WIDE_SM_H, CARD_R * 0.4f, 1)
-                      : 0;
-      float wx = rtl ? ox + ow - fw : ox, L = 0;
-      if (fc >= 0) { /* the crop's part of the picture moves from where the card was to its place in the open card */
-        float t = (float)fw > cw ? (ow - cw) / ((float)fw - cw) : 1;
-        L = img_crop_left(fc, (float)fw, cw);
-        wx = rtl ? ox + ow - fw + ((float)fw - cw - L) * (1 - t) : ox - L * (1 - t);
-      }
-      double wn = app_now();
-      if (focused) {
-        unsigned key = 2166136261u;
-        for (const char *p = bu; *p; p++)
-          key = (key ^ (unsigned char)*p) * 16777619u;
-        if (key != b->wideKey) { /* a title new to the box: its picture there already shows at once, no fade */
-          b->wideKey = key;
-          b->wideBt = bt ? wn - 1 : 0;
-          b->wideSt = 0;
-          if (ek >= 0.999f) {
-            b->boxN++;
-            b->boxReady += bt != 0;
-            fill_box(bt != 0);
-            fprintf(stderr, "[card] box: picture %s on arrival (%d of %d ready)\n", bt ? "ready" : "NOT ready",
-                    b->boxReady, b->boxN);
-          }
-        }
-      }
-      if (focused && sm && !b->wideSt)
-        b->wideSt = app_trailer_idle() + 1e-3; /* (how long after the key each came: the log below) */
-      if (focused && bt && !b->wideBt) {
-        b->wideBt = wn - (ek < 0.3f ? 1 : 0);
-        fprintf(stderr, "[card] wide picture %.2f s after the key (stand-in %.2f s, card %s)\n", app_trailer_idle(),
-                b->wideSt, ek >= 0.999f ? "already open" : "opening");
-      }
-      float sk =
-          !bt ? 0
-          : focused
-              ? clampf((float)((wn - b->wideBt) / 0.18), 0, 1)
-              : 1; /* the sharp one: over the stand-in, softly; there before the card opened: nothing to see change */
-      if (ek >= 0.999f && focused)
-      {
-        fill_art(bt && sk >= 1 && gfx_tex_fade(bt) >= 1);
-        if (fill_on() && (!bt || gfx_tex_fade(bt) < 1))
-          fill_why(img_why_shaped(bu, fw, (int)ch, CARD_R, 1));
-      }
-      if (fc >= 0) { /* the stand-in at the sides, the crop where it was, the sharp picture over both once in */
-        GLuint ct = img_get_shaped(cu, (int)cw, (int)ch, CARD_R, 3);
-        gfx_clip_push(ox, cy, ow, ch);
-        if (sm && sk < 1) {
-          gfx_opacity_push(ek);
-          ph_picture(sm, wx, cy, (float)fw, ch, CARD_R, WHITE_A(255));
-          gfx_opacity_pop();
-        }
-        if (ct && sk < 1)
-          ph_picture(ct, wx + L, cy, cw, ch, CARD_R, WHITE_A(255));
-        if (bt) {
-          gfx_opacity_push(sk);
-          ph_picture(bt, wx, cy, (float)fw, ch, CARD_R, WHITE_A(255));
-          gfx_opacity_pop();
-        }
-        gfx_clip_pop();
-        crop_logo(it, cp, wx + L, cy, cw, ch, clampf(1 - 3 * ek, 0, 1));
-      } else if (sm || bt) {
-        gfx_clip_push(ox, cy, ow, ch);
-        if (sm && sk < 1) {
-          gfx_opacity_push(ek);
-          ph_picture(sm, wx, cy, (float)fw, ch, CARD_R, WHITE_A(255));
-          gfx_opacity_pop();
-        }
-        if (bt) {
-          gfx_opacity_push(sm ? ek * sk : ek * ek);
-          ph_picture(bt, wx, cy, (float)fw, ch, CARD_R, WHITE_A(255));
-          gfx_opacity_pop();
-        }
-        gfx_clip_pop();
+  if (focused) {
+    unsigned key = 2166136261u;
+    for (const char *p = bu; *p; p++)
+      key = (key ^ (unsigned char)*p) * 16777619u;
+    if (key != b->wideKey) {
+      b->wideKey = key;
+      b->wideReady = bt != 0;
+      b->wideSt = 0;
+      if (ek >= 0.999f) {
+        b->boxN++;
+        b->boxReady += bt != 0;
+        fill_box(bt != 0);
+        fprintf(stderr, "[card] box: picture %s on arrival (%d of %d ready)\n", bt ? "ready" : "NOT ready", b->boxReady,
+                b->boxN);
       }
     }
-  } else if (focused) {
-    b->wideBt = b->wideSt = 0;
-    b->wideKey = 0;
+    if (sm && !b->wideSt)
+      b->wideSt = app_trailer_idle() + 1e-3;
+    if (bt && !b->wideReady) {
+      b->wideReady = 1;
+      fprintf(stderr, "[card] wide picture %.2f s after the key (stand-in %.2f s, card %s)\n", app_trailer_idle(),
+              b->wideSt, ek >= 0.999f ? "already open" : "opening");
+    }
+    if (ek >= 0.999f) {
+      fill_art(fade >= 1);
+      if (fill_on() && fade < 1)
+        fill_why(img_why_shaped(bu, fw, (int)ch, CARD_R, 1));
+    }
   }
+
+  float wx = rtl ? ox + ow - fw : ox, left = 0;
+  if (fc >= 0) { /* keep the part shown on the poster under the opening card */
+    float t = (float)fw > cw ? (ow - cw) / ((float)fw - cw) : 1;
+    left = img_crop_left(fc, (float)fw, cw);
+    wx = rtl ? ox + ow - fw + ((float)fw - cw - left) * (1 - t) : ox - left * (1 - t);
+  }
+  if (fade < 1 && (!sm || gfx_tex_fade(sm) < 1 || ek < 0.999f)) {
+    if (img_shaped_failed(bu, fw, (int)ch, CARD_R, 1) && !ph_hold())
+      ph_surface(ox, cy, ow, ch, CARD_R);
+    else
+      ph_box(ox, cy, ow, ch, CARD_R);
+  }
+  gfx_clip_push(ox, cy, ow, ch);
+  if (sm)
+    gfx_image(sm, wx, cy, (float)fw, ch, 0, WHITE_A((int)(255 * ek)), 0, 0, 1, 1);
+  if (fc >= 0 && fade < 1 && ek < 0.999f && !ph_hold()) {
+    GLuint ct = img_get_shaped(cu, (int)cw, (int)ch, CARD_R, 3);
+    gfx_image(ct, wx + left, cy, cw, ch, 0, WHITE_A((int)(255 * (1 - ek))), 0, 0, 1, 1);
+  }
+  if (bt)
+    gfx_image(bt, wx, cy, (float)fw, ch, 0, WHITE_A(255), 0, 0, 1, 1);
+  gfx_clip_pop();
+  if (fc >= 0)
+    crop_logo(it, cp, wx + left, cy, cw, ch, clampf(1 - 3 * ek, 0, 1));
 }
 static void row_draw(Board *b, Row *r, int ri, float y, int near, float rowA) {
   int rtl = app_rtl();
@@ -2754,22 +2741,25 @@ static void row_draw(Board *b, Row *r, int ri, float y, int near, float rowA) {
        app_now() >= r->wideAt)) { /* the wide pictures: asked as the focus lands and again every half second (an ask
                                      nobody repeats for 1.5 s is dropped) */
     int landed = active && r->pfOpen != r->col + 1, fw0 = r->wide ? (int)cw : (int)CARD_OPEN_W;
-    char pu0[512];
+    char wideSrc[512], smallSrc[512];
     r->pfOpen = active ? r->col + 1 : 0;
     r->wideAt = app_now() + 0.5;
-    if (landed && r->col < r->items.n && sb_bg_card(&r->items.items[r->col], pu0, sizeof pu0)[0])
-      img_urgent_shaped(pu0, fw0, (int)ch, CARD_R, 1); /* the one the card is about to show: ahead of the queue */
     for (int d = active ? -1 : 0; d <= (active ? 6 : 2); d++) {
       int i = r->col + d;
       if (i < 0 || i >= r->items.n)
         continue;
       const Item *wi = &r->items.items[i];
-      if (!r->wide && sb_bg_small(wi, pu0, sizeof pu0)[0])
-        img_get_shaped(pu0, WIDE_SM_W, WIDE_SM_H, CARD_R * 0.4f,
-                       1); /* (a stand-in of a few KB, for every card it could reach) */
-      if ((d == 0 || (active && d <= 2)) && (d == 0 || img_has_room()) && sb_bg_card(wi, pu0, sizeof pu0)[0])
-        img_get_shaped(pu0, fw0, (int)ch, CARD_R, 1);
+      if (!sb_bg_card(wi, wideSrc, sizeof wideSrc)[0] || img_shaped_loaded(wideSrc, fw0, (int)ch, CARD_R, 1))
+        continue;
+      img_prefetch_mode(d != 0 || !active);
+      if (!r->wide && sb_bg_small(wi, smallSrc, sizeof smallSrc)[0] && strcmp(smallSrc, wideSrc))
+        img_get_shaped(smallSrc, WIDE_SM_W, WIDE_SM_H, CARD_R * 0.4f, 1);
+      if (landed && d == 0)
+        img_urgent_shaped(wideSrc, fw0, (int)ch, CARD_R, 1);
+      else if (d == 0 || (active && d <= 2 && img_has_room()))
+        img_get_shaped(wideSrc, fw0, (int)ch, CARD_R, 1);
     }
+    img_prefetch_mode(0);
   }
   if (L.slot && near)
     row_ahead(r, (int)cw, (int)ch);
@@ -2911,6 +2901,11 @@ static void home_pin(Board *b) {
   for (int k = 0; k < nf; k++) {
     Row *r = first[k];
     int cw = (int)card_w(r), ch = (int)card_h(r);
+    if (r->col >= 0 && r->col < r->items.n) {
+      char bu[512];
+      img_pin_shaped(sb_bg_card(&r->items.items[r->col], bu, sizeof bu), r->wide ? cw : (int)CARD_OPEN_W, ch, CARD_R,
+                     1);
+    }
     for (int c = 0; c < 14 && c < r->items.n; c++) {
       int hold;
       const CardPrep *cp = row_prep(r, c, 0, &hold, NULL);
@@ -3017,18 +3012,18 @@ static int first_cards(Board *b, int nrows) {
       want++;
       int hold;
       const CardPrep *cp = row_prep(row, c, 0, &hold, NULL);
-      const char *src = cp ? cp->pre : "";
-      if (!*src) {
+      if (!cp || !cp->pre[0]) {
         got++;
         continue;
       }
-      int cw = (int)card_w(row), ch = (int)card_h(row),
-          fit = row->wide  ? 1
-                : cp->crop ? 3
-                           : 0; /* the same shaped picture the card draws */
-      img_get_shaped(src, cw, ch, CARD_R, fit);
+      int cw = (int)card_w(row), ch = (int)card_h(row), fit = row->wide ? 1 : cp->crop ? 3 : 0;
+      /* Once a sharp crop is ready, drawing drops the preview. Checking for that preview would keep loading it again.
+       */
+      const char *src = cp->crop && img_back_shaped(cp->art, cw, ch, CARD_R, 3) ? cp->art : cp->pre;
       if (img_shaped_loaded(src, cw, ch, CARD_R, fit) || img_shaped_failed(src, cw, ch, CARD_R, fit))
         got++;
+      else
+        img_get_shaped(src, cw, ch, CARD_R, fit);
     }
   }
   return seen && got >= want;
