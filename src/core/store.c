@@ -8,8 +8,12 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <dirent.h>
+#include <sys/statvfs.h>
 #include <SDL2/SDL.h>
 
+#ifndef SB_CACHE_FLOOR_MB
+#define SB_CACHE_FLOOR_MB 150 /* the cache gives way before the data partition has less than this free */
+#endif
 static char dir[1024], path[1100];
 static cJSON *root;
 static int dirty;
@@ -275,6 +279,72 @@ static CW *cwHead, *cwTail;
 static pthread_mutex_t cwMu = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t cwCv = PTHREAD_COND_INITIALIZER;
 static int cwThread;
+static long capBytes, keptBytes = -1;
+static long free_bytes(void);
+static long eff_cap(long long kept);
+static long prune_dir(long cap, int index);
+/* the writer thread's view of the free space: looked at every 10 s at most (a statvfs each write would be a waste) */
+static long cwFree = -1, cwWritten;
+static time_t cwFreeAt;
+static long cw_free(int force) {
+  time_t now = time(NULL);
+  if (force || now - cwFreeAt >= 10 || cwWritten > 16L * 1024 * 1024) {
+    cwFree = free_bytes();
+    cwFreeAt = now;
+    cwWritten = 0;
+  }
+  return cwFree;
+}
+#define FLOOR_BYTES ((long long)SB_CACHE_FLOOR_MB * 1024 * 1024)
+/* a prune on the writer thread (so no cache write runs beside it), at most every 5 s: a folder that cannot get under
+   its cap (files that will not go) is not scanned again on every write */
+static time_t cwPruneAt;
+static void cw_prune(void) {
+  if (__atomic_load_n(&keptBytes, __ATOMIC_RELAXED) < 0)
+    return; /* the prune at start has not finished: it does this */
+  time_t now = time(NULL);
+  if (now - cwPruneAt < 5)
+    return;
+  cwPruneAt = now;
+  __atomic_store_n(&keptBytes, prune_dir(-1, 0), __ATOMIC_RELAXED);
+  cw_free(1);
+}
+/* below the floor: the cache gives way first (it may be what filled the disk); still below: the copy is not written */
+static int cw_full(size_t len) {
+  long fr = cw_free(0);
+  if (fr < 0 || (long long)fr - (long long)len >= FLOOR_BYTES)
+    return 0;
+  cw_prune();
+  fr = cw_free(0);
+  if (fr < 0 || (long long)fr - (long long)len >= FLOOR_BYTES)
+    return 0;
+  static time_t logAt;
+  time_t now = time(NULL);
+  if (now - logAt >= 60) {
+    logAt = now;
+    fprintf(stderr, "[cache] disk nearly full (%ld MB free): not writing\n", fr / (1024 * 1024));
+  }
+  return 1;
+}
+/* a cache file was written: counted into the folder's size (a replaced file counts twice until the next prune, which
+   counts again from the disk), and the folder pruned when it is over the cap in force */
+static void cw_wrote(size_t len) {
+  if (__atomic_load_n(&keptBytes, __ATOMIC_RELAXED) < 0)
+    return; /* the prune at start has not finished: it will see this file */
+  long long kept = __atomic_add_fetch(&keptBytes, (long)len, __ATOMIC_RELAXED);
+  cwWritten += (long)len;
+  long fr = cw_free(0);
+  if (fr >= 0 && cwWritten > 0) {
+    fr -= (long)len; /* (a number from before this file; a fresh one, cwWritten 0, already has it) */
+    cwFree = fr;
+  }
+  long long cap = capBytes;
+  if (fr >= 0 && kept + fr - FLOOR_BYTES < cap)
+    cap = kept + fr - FLOOR_BYTES;
+  if (kept > (cap < 0 ? 0 : cap))
+    cw_prune();
+}
+static volatile int roomDone;
 static void *cw_run(void *a) {
   plat_thread_background(15);
   (void)a;
@@ -287,14 +357,27 @@ static void *cw_run(void *a) {
     if (!cwHead)
       cwTail = NULL;
     pthread_mutex_unlock(&cwMu);
-    if (!write_all(w->path, w->data, w->len) && w->ix)
+    if (w->ix < 0) { /* cache_room_start: every cache file goes (here, so that no write runs beside it) */
+      long total = prune_dir(0, 0);
+      __atomic_store_n(&keptBytes, total, __ATOMIC_RELAXED);
+      long fr = cw_free(1);
+      fprintf(stderr, "[cache] emptied for an update: %ld MB free\n", fr < 0 ? -1L : fr / (1024 * 1024));
+      __atomic_store_n(&roomDone, 1, __ATOMIC_RELEASE);
+    } else if (w->ix && cw_full(w->len)) { /* no room: the copy is not written */
       cix_del(w->h1, w->h2);
+    } else if (!write_all(w->path, w->data, w->len)) {
+      if (w->ix)
+        cix_del(w->h1, w->h2);
+    } else if (w->ix) {
+      cw_wrote(w->len);
+    }
     free(w->data);
     free(w);
   }
   return NULL;
 }
-static void write_later_x(const char *path, unsigned char *own, size_t len, int ix, unsigned long long h1, unsigned h2) {
+static void write_later_x(const char *path, unsigned char *own, size_t len, int ix, unsigned long long h1,
+                          unsigned h2) {
   CW *w = malloc(sizeof *w); /* (own: malloc'd, taken) */
   w->ix = ix;
   w->h1 = h1;
@@ -475,7 +558,8 @@ unsigned char *cache_read(const char *key, long maxAge, size_t *len) {
   unsigned h2;
   cache_hash(key, &h1, &h2);
   if (cixReady && !cix_get(h1, h2))
-    return NULL; /* (not in the index: no copy; a stat of a missing file can wait seconds behind the writer on the TV's flash) */
+    return NULL; /* (not in the index: no copy; a stat of a missing file can wait seconds behind the writer on the TV's
+                    flash) */
   if (stat(p, &st)) {
     cix_del(h1, h2); /* (the index kept right: a miss) */
     return NULL;
@@ -501,26 +585,53 @@ static int cent_cmp(const void *a, const void *b) {
   time_t x = ((const CEnt *)a)->at, y = ((const CEnt *)b)->at;
   return x < y ? -1 : x > y;
 }
-static long capBytes, keptBytes = -1;
 long cache_cap_bytes(void) {
   return capBytes;
 }
 long cache_kept_bytes(void) {
   return __atomic_load_n(&keptBytes, __ATOMIC_RELAXED);
 }
-static void *prune_run(void *a) {
-  (void)a;
-  plat_thread_background(15);
+static long free_bytes(void) {
+  struct statvfs sv;
+  if (statvfs(dir, &sv))
+    return -1;
+  unsigned long long b = (unsigned long long)sv.f_bavail * sv.f_frsize;
+  return b > (1ULL << 30) ? 1L << 30 : (long)b; /* (long is 32 bits on the TV and on Windows: 1 GB is room enough) */
+}
+/* the cap in force: the set cap, lowered so that the free space stays above the floor */
+static long eff_cap(long long kept) {
+  long long cap = capBytes, fr = free_bytes();
+  if (fr >= 0) {
+    long long room = kept + fr - FLOOR_BYTES;
+    if (room < cap)
+      cap = room;
+  }
+  return cap < 0 ? 0 : (long)cap;
+}
+static int cent_key(const char *name, unsigned long long *h1, unsigned *h2) {
+  if (strlen(name) != 24 || strchr(name, '.'))
+    return 0;
+  char a[17], b[9];
+  memcpy(a, name, 16);
+  a[16] = 0;
+  memcpy(b, name + 16, 8);
+  b[8] = 0;
+  *h1 = strtoull(a, NULL, 16);
+  *h2 = (unsigned)strtoul(b, NULL, 16);
+  return 1;
+}
+/* scans the cache folder (top level, files only); cap < 0: the cap in force; over cap: the least recently used go until
+   3/4 of cap is left. index 1: fills the index with what is kept; 0: takes the removed files out of it. Returns the
+   size kept. */
+static long prune_dir(long cap, int index) {
   char d[1100];
   snprintf(d, sizeof d, "%s/cache", dir);
   DIR *dd = opendir(d);
-  if (!dd) {
-    cixReady = 1;
-    return NULL;
-  }
-  int n = 0, cap = 4096;
-  CEnt *e = malloc(cap * sizeof *e);
-  long total = 0;
+  if (!dd)
+    return 0;
+  int n = 0, ecap = 4096;
+  CEnt *e = malloc(ecap * sizeof *e);
+  long long total = 0; /* (64 bits: long is 32 on the TV and on Windows) */
   struct dirent *de;
   while ((de = readdir(dd))) {
     if (de->d_name[0] == '.' || strlen(de->d_name) >= sizeof e[0].name)
@@ -530,9 +641,9 @@ static void *prune_run(void *a) {
     struct stat st;
     if (stat(p, &st) || !S_ISREG(st.st_mode))
       continue;
-    if (n == cap) {
-      cap *= 2;
-      e = realloc(e, cap * sizeof *e);
+    if (n == ecap) {
+      ecap *= 2;
+      e = realloc(e, ecap * sizeof *e);
     }
     snprintf(e[n].name, sizeof e[n].name, "%s", de->d_name);
     e[n].at = st.st_atime > st.st_mtime ? st.st_atime : st.st_mtime;
@@ -542,9 +653,11 @@ static void *prune_run(void *a) {
     n++;
   }
   closedir(dd);
-  if (total > capBytes) {
+  if (cap < 0)
+    cap = eff_cap(total); /* (the cap in force, from the size just found) */
+  if (total > cap) {
     qsort(e, n, sizeof *e, cent_cmp);
-    long goal = capBytes * 3 / 4;
+    long long goal = (long long)cap * 3 / 4;
     int del = 0;
     for (int i = 0; i < n && total > goal; i++) {
       char p[1200];
@@ -553,23 +666,35 @@ static void *prune_run(void *a) {
         total -= e[i].size;
         e[i].size = -1;
         del++;
+        unsigned long long h1;
+        unsigned h2;
+        if (!index && cent_key(e[i].name, &h1, &h2))
+          cix_del(h1, h2);
       }
     }
-    fprintf(stderr, "[cache] %d files removed, %ld KB kept\n", del, total / 1024);
+    long fr = free_bytes();
+    fprintf(stderr, "[cache] %d files removed, %ld KB kept (cap %ld MB, %ld MB free)\n", del, (long)(total / 1024),
+            cap / (1024 * 1024), fr < 0 ? -1L : fr / (1024 * 1024));
   }
-  __atomic_store_n(&keptBytes, total, __ATOMIC_RELAXED);
-  for (int i = 0; i < n; i++) { /* the index from what the scan found and kept (no file I/O here, the lock is short) */
-    if (e[i].size < 0 || strlen(e[i].name) != 24 || strchr(e[i].name, '.'))
-      continue;
-    char a[17], b[9];
-    memcpy(a, e[i].name, 16);
-    a[16] = 0;
-    memcpy(b, e[i].name + 16, 8);
-    b[8] = 0;
-    cix_put(strtoull(a, NULL, 16), (unsigned)strtoul(b, NULL, 16), e[i].mt > 0 ? e[i].mt : 1);
+  if (index) {
+    /* the index from what the scan found and kept (no file I/O here, the lock is short) */
+    for (int i = 0; i < n; i++) {
+      unsigned long long h1;
+      unsigned h2;
+      if (e[i].size < 0 || !cent_key(e[i].name, &h1, &h2))
+        continue;
+      cix_put(h1, h2, e[i].mt > 0 ? e[i].mt : 1);
+    }
   }
-  cixReady = 1;
   free(e);
+  return total > 0x7fffffffLL ? 0x7fffffffL : (long)total;
+}
+static void *prune_run(void *a) {
+  (void)a;
+  plat_thread_background(15);
+  long total = prune_dir(-1, 1);
+  __atomic_store_n(&keptBytes, total, __ATOMIC_RELAXED);
+  cixReady = 1;
   return NULL;
 }
 void cache_prune_start(int capMb) {
@@ -577,6 +702,40 @@ void cache_prune_start(int capMb) {
   pthread_t t;
   if (!pthread_create(&t, NULL, prune_run, NULL))
     pthread_detach(t);
+}
+int cache_room_start(long needBytes) {
+  long fr = free_bytes();
+  if (fr < 0 || fr >= needBytes)
+    return 1;
+  CW *w = calloc(1, sizeof *w);
+  if (!w)
+    return 1;
+  w->ix = -1; /* the writer thread empties the cache after the writes queued before it */
+  __atomic_store_n(&roomDone, 0, __ATOMIC_RELEASE);
+  pthread_mutex_lock(&cwMu);
+  if (!cwThread) {
+    pthread_t t;
+    if (pthread_create(&t, NULL, cw_run, NULL) == 0) {
+      pthread_detach(t);
+      cwThread = 1;
+    }
+  }
+  if (!cwThread) {
+    pthread_mutex_unlock(&cwMu);
+    free(w);
+    return 1; /* (no thread: go on, the install tells if it fails) */
+  }
+  if (cwTail)
+    cwTail->next = w;
+  else
+    cwHead = w;
+  cwTail = w;
+  pthread_cond_signal(&cwCv);
+  pthread_mutex_unlock(&cwMu);
+  return 0;
+}
+int cache_room_done(void) {
+  return __atomic_load_n(&roomDone, __ATOMIC_ACQUIRE);
 }
 int cache_file(const char *key, long maxAge, char *p, size_t cap) {
   cache_path(key, p, cap);

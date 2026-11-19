@@ -66,6 +66,7 @@ static struct {
   unsigned shown;
   double shownAt, goAt;
   int kind;
+  int room; /* the install waits for the cache to be emptied (cache_room_done) */
   struct {
     char lb[128], badge[48];
     void (*ok)(void);
@@ -539,6 +540,7 @@ static void on_install(const char *payload, void *ud) {
   changed();
   cJSON_Delete(j);
 }
+static void install_go(void);
 void update_install(void) {
   if (app_now() - U.openAt < 0.9)
     return; /* the OK that opened this page */
@@ -546,8 +548,8 @@ void update_install(void) {
     update_check(1);
     return;
   }
-  if (U.state == UPD_INSTALLING)
-    return;
+  if (U.state == UPD_INSTALLING || U.state == UPD_CHECKING)
+    return; /* (a check under way may still change what is offered) */
 #if SB_MANUAL_UPDATE
   snprintf(U.msg, sizeof U.msg, "%s", T("Install the update with Apps2Samsung"));
   changed();
@@ -557,6 +559,13 @@ void update_install(void) {
   snprintf(U.msg, sizeof U.msg, "%s", T("Downloading…"));
   changed();
   fprintf(stderr, "[update] installing %s\n", U.avail.ver);
+  if (!cache_room_start(120L * 1024 * 1024)) { /* the cache is being emptied: update_tick goes on when that is done */
+    U.room = 1;
+    return;
+  }
+  install_go();
+}
+static void install_go(void) {
 #if SB_PLAT_INSTALLER
   if (!plat_install_start(U.avail.url, U.avail.sha, U.avail.ver)) {
     U.state = UPD_AVAIL;
@@ -751,8 +760,13 @@ void update_tick(float dt) {
   tween_tick(&U.slide, dt);
   tween_tick(&U.dot, dt);
   plat_luna_pump();
+  if (U.room && cache_room_done()) {
+    U.room = 0;
+    if (U.state == UPD_INSTALLING)
+      install_go();
+  }
 #if SB_PLAT_INSTALLER
-  if (U.state == UPD_INSTALLING) {
+  if (U.state == UPD_INSTALLING && !U.room) {
     char m[240];
     int st = plat_install_poll(m, sizeof m);
     if (st < 0) {
