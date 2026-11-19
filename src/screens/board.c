@@ -29,6 +29,10 @@
 #include "core/pace.h"
 #include "platform/plat.h"
 #include "core/bgtrailer.h"
+#include "core/anime_page.h"
+#include "core/anime_taste.h"
+#include "core/anime_addon.h"
+#include <strings.h>
 
 #define MAXROWS 64 /* (a catalog answer packs its row in 6 bits: 64 is the most) */
 #define SPOT_ROW 255 /* (a details answer for a spotlight title, in place of its row) */
@@ -92,6 +96,7 @@ typedef struct {
                         near the focus (rows_window) */
   int rank;
   float extra; /* rank: a Top 10 row (numerals); extra: the details under the open card (cinematic Home) */
+  int alIdx1, poster; /* the Anime tab: its row's place in the plan (+1; 0 none) and "portrait cover cards, no logo" */
 } Row;
 #define NFEAT 8
 /* what the hero shows: put in while it is invisible, all together */
@@ -108,7 +113,7 @@ typedef struct {
 } HeroLay;
 typedef struct {
   int kind; /* 0 home, 1 disc */
-  int dtype; /* what a Discover-kind board holds: 0 everything (phones), 1 Shows, 2 Movies, 3 Catalogue */
+  int dtype; /* what a Discover-kind board holds: 0 everything (phones), 1 Shows, 2 Movies, 3 Catalogue, 4 Anime */
   Row rows[MAXROWS];
   int n, rowIdx, built, winRow;
   unsigned gen, libVer;
@@ -162,10 +167,13 @@ typedef struct {
   double billSwitch;
 } Board;
 enum { HP_IDLE, HP_GATHER, HP_LATER_WAIT, HP_LATER_OUT };
-#define NBOARDS 5
+#define NBOARDS 6 /* (a catalog answer's token keeps the board in 3 bits: 8 at most) */
 #define B_CATALOGUE 4
-static Board boards[NBOARDS]; /* Home, Shows (the phones' Discover), a collection tile's page, Movies, Catalogue */
-/* the board SCR_DISC shows: Shows 1, Movies 3, Catalogue 4 (each tab keeps its own rows: switching never rebuilds) */
+#define B_ANIME 5
+static Board
+    boards[NBOARDS]; /* Home, Shows (the phones' Discover), a collection tile's page, Movies, Catalogue, Anime */
+/* the board SCR_DISC shows: Shows 1, Movies 3, Catalogue 4, Anime 5 (each tab keeps its own rows: switching never
+ * rebuilds) */
 static int discBoard = 1;
 static const ColFolder *colFolder;
 static double colAt;
@@ -673,15 +681,21 @@ static void row_load(Row *r) {
     r->col = r->items.n ? r->items.n - 1 : 0;
 }
 #define KIND_ASK 4 /* Shows / Movies: a row asks its catalogue within this many rows of the focus (6 at entry) */
+static void ani_ask(Board *b, int ri);
+static int ani_patch(Item *it);
 static void kind_ask(Board *b, int ri) {
   Row *r = &b->rows[ri];
+  if (r->alIdx1) {
+    ani_ask(b, ri);
+    return;
+  }
   if (!r->hasDef || r->asked)
     return;
   r->asked = 1;
   sb_catalog_url(r->def.url, r->def.type, 20, on_catalog, tok(b, ri));
 }
 static int kindb(const Board *b) {
-  return b->kind == 1 && (b->dtype == 1 || b->dtype == 2);
+  return b->kind == 1 && (b->dtype == 1 || b->dtype == 2 || b->dtype == 4);
 }
 static void rows_window(Board *b) {
   b->winRow = b->rowIdx;
@@ -727,6 +741,108 @@ static void bill_fill(Board *b, int first) {
     tween_set(&b->dotW[i], i == b->featIdx ? 34 : 10);
   if ((first || !was) && b->cine)
     b->featOn = 1; /* Home opens on its billboard */
+}
+/* ---- the Anime tab (dtype 4): the rows are planned by core/anime_page.c from AniList and the taste; this is only the
+   board's side: Continue Watching of anime, the rows made and asked near the focus, the lists cleaned as they come ----
+ */
+static AnimeRow aniPlan[MAXROWS];
+static int aniMode;
+static unsigned aniSig, aniMetaV;
+static double aniT0, aniPlanAt, aniAskAt, aniLogAt;
+static int aniReq0 = -1;
+static const char *const ANI_MODE[] = { "foryou", "popular", "kitsu" };
+static void ani_cw_row(Board *b) {
+  ItemList cw;
+  if (lib_cw_items_k(&cw, LIB_CW_ANIME) > 0) {
+    Row *r = row_add(b, "Continue Watching", 1, 0);
+    if (r) {
+      r->items = cw;
+      r->hidden = 0;
+      return;
+    }
+  }
+  itemlist_clear(&cw);
+}
+/* an anime title whose Kitsu meta (fanart, logo) is still on its way: its box picture waits for it, so the AniList
+   banner is not fetched for nothing */
+static int ani_hold(const Item *it) {
+  return strncmp(it->id, "anilist:", 8) == 0 && anime_addon_ready() && !anime_meta_get(it->id, NULL);
+}
+static int ani_same(const Item *a, const Item *b) {
+  return !strcmp(a->id, b->id) || (a->name[0] && !strcasecmp(a->name, b->name));
+}
+/* the items of l that o also has, taken out of l */
+static void ani_take_out(ItemList *l, const ItemList *o) {
+  int k = 0;
+  for (int i = 0; i < l->n; i++) {
+    int dup = 0;
+    for (int j = 0; j < o->n && !dup; j++)
+      dup = ani_same(&l->items[i], &o->items[j]);
+    if (!dup)
+      l->items[k++] = l->items[i];
+  }
+  l->n = k;
+}
+/* a row came: no title twice in the first six rows (the row nearer the top keeps it), and a row under 8 cards is not
+   shown. Then as any catalog's answer */
+static void on_anime(ItemList *l, int cached, void *ud) {
+  uintptr_t t = (uintptr_t)ud;
+  Board *b = &boards[(t >> 28) & 7];
+  int row = t & 63;
+  if ((b->gen & 0x3fffff) == ((t >> 6) & 0x3fffff) && row < b->n) {
+    if (row < 6)
+      for (int j = 0; j < 6 && j < b->n; j++) {
+        Row *o = &b->rows[j];
+        if (j == row || !o->items.n)
+          continue;
+        if (j < row)
+          ani_take_out(l, &o->items);
+        else {
+          ani_take_out(&o->items, l);
+          o->hidden = o->items.n < 8 && !o->wide;
+          if (o->col >= o->items.n)
+            o->col = o->items.n ? o->items.n - 1 : 0;
+        }
+      }
+    if (l->n < 8)
+      l->n = 0;
+  }
+  on_catalog(l, cached, ud);
+}
+static void ani_ask(Board *b, int ri) {
+  Row *r = &b->rows[ri];
+  if (!r->alIdx1 || r->asked)
+    return;
+  r->asked = 1;
+  anime_page_ask(&aniPlan[r->alIdx1 - 1], on_anime, tok(b, ri));
+}
+static void ani_rows(Board *b, int keep, const int *oldCols) {
+  int mem = plat_mem_total_mb(), cap = mem > 0 && mem <= 1200 ? 14 : 24;
+  anime_page_open();
+  aniT0 = app_now();
+  if (aniReq0 < 0)
+    aniReq0 = anilist_request_count(); /* (counted from the first time the tab is opened) */
+  aniLogAt = aniT0 + 9;
+  ani_cw_row(b);
+  int n = anime_page_plan(aniPlan, cap - b->n, &aniMode);
+  aniSig = anime_page_sig();
+  for (int i = 0; i < n; i++) {
+    Row *r = row_add(b, aniPlan[i].title, 0, 0);
+    if (!r)
+      break;
+    int ri = (int)(r - b->rows);
+    r->poster = 1;
+    if (keep && ri < MAXROWS)
+      r->col = oldCols[ri];
+    if (aniPlan[i].src == AS_KITSU) {
+      if (!anime_page_def(&aniPlan[i], &r->def))
+        continue; /* (the addon is not in yet: this row stays hidden) */
+      r->hasDef = 1;
+    } else
+      r->alIdx1 = i + 1;
+    if (ri < 6)
+      kind_ask(b, ri);
+  }
 }
 static double catAt; /* when the Catalogue last built: an empty page says so a moment after */
 #define CATDEFS 60 /* the Catalogue: every installed catalogue of every addon, as many as fit the board's rows */
@@ -801,11 +917,14 @@ static void load_catalog_rows(Board *b, int disc, int keep) {
       col_disc_rows(b, keep, oldCols); /* (the collections live on the Catalogue now; phones' Discover keeps them) */
   }
   static CatalogDef defs[CATDEFS]; /* (the main thread only; too big for a stack) */
-  int kb = disc && (b->dtype == 1 || b->dtype == 2);
+  int kb = disc && (b->dtype == 1 || b->dtype == 2), an = disc && b->dtype == 4;
   if (kb)
     board_cw_row_kind(b, b->dtype == 1 ? "series" : "movie");
   int nd;
-  if (kb) {
+  if (an) {
+    ani_rows(b, keep, oldCols); /* (its own rows: Continue Watching, then the plan; asked near the focus) */
+    nd = 0;
+  } else if (kb) {
     int mem = plat_mem_total_mb();
     int low = mem > 0 && mem <= 1200;
     nd = sb_kind_defs(defs, (low ? 20 : 36) - b->n, b->dtype == 1 ? "series" : "movie", low);
@@ -839,7 +958,9 @@ static void load_catalog_rows(Board *b, int disc, int keep) {
     }
   } else
     b->rowIdx = 0;
-  if (disc && b->dtype) {
+  if (an)
+    fprintf(stderr, "[anime] page: %d rows (%s) in %.0f ms\n", b->n, ANI_MODE[aniMode], (app_now() - t0) * 1000);
+  if (disc && b->dtype && !an) {
     if (b->dtype == 3)
       catAt = app_now();
     fprintf(stderr, "[tabs] %s: %d rows (%s) in %.0f ms\n",
@@ -925,7 +1046,45 @@ static void on_feat(ItemList *l, int cached, void *ud) {
   free(l);
   feat_done(b);
 }
+/* the Anime billboard: top picks (or trending when there is no taste), taken once their lists are in; every title's
+   Kitsu fanart and logo asked at once (8 small requests, cached) */
+static void ani_feat_fill(Board *b) {
+  if (b->nfeat)
+    return;
+  ItemList l = { 0 };
+  if (!b->featLoad) {
+    b->featLoad = 1;
+    aniAskAt = 0;
+  }
+  if (anime_page_billboard(&l) <= 0) {
+    if (app_now() - aniT0 > 7)
+      b->featLoad = 0; /* (nothing came: no billboard, the rows as they are) */
+    return;
+  }
+  for (int i = 0; i < l.n && b->nfeat < NFEAT; i++) {
+    b->feat[b->nfeat++] = l.items[i];
+    anime_meta_ask(l.items[i].type, l.items[i].id);
+  }
+  itemlist_clear(&l);
+  if (b->cine) {
+    b->bill = 1;
+    if (b->rowIdx == 0 && !(b->n && b->rows[0].col)) {
+      b->featOn = 1;
+      b->billBtn = 0;
+    }
+  }
+  b->featIdx = 0;
+  for (int i = 0; i < NFEAT; i++)
+    tween_set(&b->dotW[i], i == 0 ? 34 : 10);
+  logos_ahead(b, 1);
+  if (b->featOn && cur() == b)
+    hero_soon(b, 0);
+}
 static void feat_fill(Board *b) {
+  if (b->kind == 1 && b->dtype == 4) {
+    ani_feat_fill(b);
+    return;
+  }
   if (b->kind != 1 || b->dtype == 3 || b->nfeat || b->featLoad)
     return;
   b->featLoad = 1;
@@ -990,6 +1149,11 @@ static void on_meta(cJSON *m, void *ud) {
     if (d)
       snprintf(it->description, sizeof it->description, "%s", d);
   }
+  if (b->dtype == 4 && !strncmp(it->id, "anilist:", 8)) { /* the Anime tab: the Kitsu meta gives the fanart, the logo
+                                                             and IMDb; the line is anime's own (never seasons) */
+    anime_meta_ask(it->type, it->id);
+    ani_patch(it);
+  } else
   /* the details' facts are what the title page shows (a catalog can list a series' total running time where the
      details give an episode's): the line follows them, keeping the catalog's rating when the details have none */
   {
@@ -1031,7 +1195,7 @@ static void logo_src(const Item *it, char *out, size_t cap) {
    rows next to it. Asked again every half second, so translated art that turns up later is fetched too and what
    is near stays recently used */
 static void logos_ahead(Board *b, int force) {
-  static double at[3];
+  static double at[NBOARDS];
   double now = app_now();
   int bi = (int)(b - boards);
   if (!force && now - at[bi] < 0.5)
@@ -1657,6 +1821,9 @@ static void cine_card_art(const Item *it, float ox, float cy, float ow, float ch
   if (logo_fit(lu, 360, 130, &lw, &lh, &lt))
     gfx_image(lt, rtl ? ox + ow - 28 - lw : ox + 28, cy + ch - 28 - lh, lw, lh, 0, WHITE_A((int)(255 * ek)), 0, 0, 1,
               1);
+  else if ((!lu[0] || img_failed(lu)) && lib_id_is_anime(it->type, it->id) && it->name[0] && !ani_hold(it))
+    text_draw_wrapped(it->name, ox + 28, cy + ch - 28 - 2 * 44, ow - 56, 2, 40, 700, WHITE_A((int)(255 * ek)), -0.4f,
+                      rtl ? ALIGN_RIGHT : ALIGN_LEFT, 44); /* no logo: the title in words (an anime without fanart) */
   int bd = recs_badges(it);
   float bx = rtl ? ox + 22 : ox + ow - 22, byy = cy + ch - 22 - 42;
   for (int k = 0; k < 2; k++) {
@@ -1823,7 +1990,7 @@ int board_disc_type(void) {
 }
 /* selects the board SCR_DISC shows; the other tabs' boards keep their rows (Shows -> Movies -> Shows builds nothing) */
 void board_disc_type_set(int t) {
-  int bi = t == 2 ? 3 : t == 3 ? B_CATALOGUE : 1;
+  int bi = t == 2 ? 3 : t == 3 ? B_CATALOGUE : t == 4 ? B_ANIME : 1;
   discBoard = bi;
   Board *b = &boards[bi];
   if (b->dtype == t)
@@ -2167,11 +2334,77 @@ static void card_open_tick(Board *b, float dt) {
     tween_set(&b->exp, 0);
   tween_tick(&b->exp, dt);
 }
+/* the Anime tab, once a frame: the Kitsu meta that came put into the cards, the details asked ahead of the focus, the
+   plan looked at again (the taste or AniList's state moved: the rows are made again, only while the focus is at the
+   top) */
+static int ani_patch(Item *it) {
+  return strncmp(it->id, "anilist:", 8) == 0 && anime_meta_apply(it);
+}
+static void ani_tick(Board *b) {
+  double now = app_now();
+  if (anime_meta_version() != aniMetaV) {
+    aniMetaV = anime_meta_version();
+    for (int i = 0; i < b->n; i++) {
+      Row *r = &b->rows[i];
+      if (!r->poster)
+        continue;
+      for (int c = 0; c < r->items.n; c++)
+        ani_patch(&r->items.items[c]);
+    }
+    for (int i = 0; i < b->nfeat; i++)
+      ani_patch(&b->feat[i]);
+    if (b->heroSet && ani_patch(&b->hero))
+      b->heroVer++;
+  }
+  if (now < aniAskAt)
+    return;
+  aniAskAt = now + 0.25;
+  anime_taste_begin();
+  if (!b->nfeat)
+    ani_feat_fill(b); /* (its lists may have come since) */
+  int mem = plat_mem_total_mb(), ahead = mem > 0 && mem <= 1200 ? 2 : 4;
+  for (int ri = b->rowIdx - 2; ri <= b->rowIdx + 2 && ri < b->n; ri++) {
+    if (ri < 0 || b->rows[ri].hidden || !b->rows[ri].poster)
+      continue;
+    Row *r = &b->rows[ri];
+    int d1 = ri == b->rowIdx ? r->col + ahead : r->col + 2;
+    for (int c = ri == b->rowIdx && r->col > 0 ? r->col - 1 : r->col; c <= d1 && c < r->items.n; c++)
+      anime_meta_ask(r->items.items[c].type, r->items.items[c].id);
+  }
+  if (aniLogAt && now >= aniLogAt) {
+    aniLogAt = 0;
+    fprintf(stderr, "[anime] anilist: %d requests since the tab was first opened (%d rows)\n",
+            anilist_request_count() - aniReq0, b->n);
+  }
+  if (now >= aniPlanAt) {
+    aniPlanAt = now + 1;
+    if (anime_page_sig() != aniSig && b->rowIdx <= 1 && !b->rows[b->rowIdx < b->n ? b->rowIdx : 0].col)
+      board_rebuild();
+  }
+}
+/* the tab goes off: its rows, billboard and what the page keeps are let go */
+void board_anime_off(void) {
+  Board *b = &boards[B_ANIME];
+  for (int i = 0; i < b->n; i++)
+    row_clear(&b->rows[i]);
+  b->n = 0;
+  b->gen++;
+  b->rowIdx = 0;
+  b->built = 0;
+  b->nfeat = 0;
+  b->featLoad = 0;
+  b->bill = 0;
+  b->featOn = 1;
+  b->heroSet = 0;
+  anime_page_close();
+}
 static void board_tick(float dt) {
   Board *b = cur();
   if (!b)
     return;
   card_open_tick(b, dt);
+  if (b->kind == 1 && b->dtype == 4)
+    ani_tick(b);
   timer_tick(&b->fade, dt);
   nudge_tick(&b->nudge, dt);
   if (b->kind == 0 || (b->kind == 1 && b->dtype)) {
@@ -2386,7 +2619,7 @@ static const CardPrep *row_prep(Row *r, int i, int near, int *hold, int *changed
   if (!r->cpSt[i] || art) {
     card_prep(cp, &r->items.items[i], r->wide, art);
     char bu[512]; /* as Netflix's: a poster card is its wide picture cut at the subject (opening uncovers the rest) */
-    if (!r->wide && !r->ntiles && sb_bg_card(&r->items.items[i], bu, sizeof bu)[0]) {
+    if (!r->wide && !r->ntiles && !r->poster && sb_bg_card(&r->items.items[i], bu, sizeof bu)[0]) {
       snprintf(cp->art, sizeof cp->art, "%s", bu);
       if (!sb_bg_small(&r->items.items[i], cp->pre, sizeof cp->pre)[0])
         snprintf(cp->pre, sizeof cp->pre, "%s", bu);
@@ -2504,6 +2737,13 @@ static void row_ahead(Row *r, int cw, int ch) {
       continue;
     int hold;
     const CardPrep *cp = row_prep(r, i, 1, &hold, NULL);
+    if (cp && r->poster && !cp->crop) { /* a portrait cover: only the open box's picture is asked ahead (its Kitsu
+                                           fanart first, when that is on its way) */
+      char bu[512];
+      if (!ani_hold(&r->items.items[i]) && sb_bg_card(&r->items.items[i], bu, sizeof bu)[0])
+        img_ahead_shaped(bu, (int)CARD_OPEN_W, ch, CARD_R, 1);
+      continue;
+    }
     if (!cp || !cp->crop)
       continue;
     if (d) {
@@ -2896,10 +3136,11 @@ static void row_draw(Board *b, Row *r, int ri, float y, int near, float rowA) {
       if (i < 0 || i >= r->items.n)
         continue;
       const Item *wi = &r->items.items[i];
-      if (!r->wide && sb_bg_small(wi, pu0, sizeof pu0)[0])
+      if (!r->wide && !(r->poster && ani_hold(wi)) && sb_bg_small(wi, pu0, sizeof pu0)[0])
         img_get_shaped(pu0, WIDE_SM_W, WIDE_SM_H, CARD_R * 0.4f,
                        1); /* (a stand-in of a few KB, for every card it could reach) */
-      if ((d == 0 || (active && d <= 2)) && (d == 0 || img_has_room()) && sb_bg_card(wi, pu0, sizeof pu0)[0])
+      if ((d == 0 || (active && d <= 2)) && (d == 0 || img_has_room()) && !(r->poster && ani_hold(wi)) &&
+          sb_bg_card(wi, pu0, sizeof pu0)[0])
         img_get_shaped(pu0, fw0, (int)ch, CARD_R, 1);
     }
   }
@@ -3092,6 +3333,18 @@ static void board_draw(void) {
       any = !b->rows[i].hidden;
     if (!any)
       text_draw(T("Nothing found."), SB_W / 2, SB_H / 2, 31, 600, WHITE_A(204), 0, SB_W - 96, ALIGN_CENTER);
+  }
+  if (b->kind == 1 && b->dtype == 4 && b->n && app_now() - aniT0 > 6) {
+    int any = 0;
+    for (int i = 0; i < b->n && !any; i++)
+      any = !b->rows[i].hidden;
+    if (!any && !b->nfeat) {
+      text_draw(T("Anime can't load right now"), SB_W / 2, SB_H / 2 - 40, 44, 700, WHITE_A(230), 0, SB_W - 96,
+                ALIGN_CENTER);
+      text_draw_wrapped(T("The lists come from AniList and the Anime Kitsu addon. Check the connection, then open "
+                          "this tab again."),
+                        SB_W / 2, SB_H / 2 + 24, 960, 3, 28, 400, WHITE_A(150), 0, ALIGN_CENTER, 40);
+    }
   }
   if (b->kind == 1 && b->dtype == 3) {
     int any = 0;
@@ -3407,7 +3660,10 @@ __attribute__((constructor)) static void board_kinds(void) {
   boards[3].kind = boards[B_CATALOGUE].kind = 1;
   boards[3].dtype = 2;
   boards[B_CATALOGUE].dtype = 3;
-  boards[1].featOn = boards[3].featOn = 1;
+  boards[B_ANIME].kind = 1;
+  boards[B_ANIME].dtype = 4;
+  boards[1].featOn = boards[3].featOn = boards[B_ANIME].featOn = 1;
+  tween_set(&boards[B_ANIME].rowsA, 1);
   tween_set(&boards[1].rowsA, 1);
   tween_set(&boards[3].rowsA, 1);
   tween_set(&boards[B_CATALOGUE].rowsA, 1);

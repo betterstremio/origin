@@ -45,6 +45,7 @@ static int supWant; /* the support row: which code shows (0 the coffee, 1 GitHub
 #include "core/usb.h"
 #include "core/recs.h"
 #include "core/recs_core.h"
+#include "core/anime_addon.h"
 #include "core/nuvio.h"
 #include "screens/profiles.h"
 #include "core/sync.h"
@@ -118,7 +119,7 @@ static const Opt ACCENT_OPTS[] = { { "logo", "From the logo" },
 #define NCAT 11
 #define MAXROWS 48
 static Setting recsS[12];
-static Setting playBase[8], playS[8], subsS[7], audS[6], lookS[3], langS[2], keyS[5], addonS[40], acctS[1], supS[7],
+static Setting playBase[8], playS[8], subsS[7], audS[6], lookS[4], langS[2], keyS[5], addonS[40], acctS[1], supS[7],
     profS[4];
 static Cat cats[NCAT];
 static int ncat; /* (Keys leaves when this build carries every key) */
@@ -189,7 +190,7 @@ static void set_act(Setting *s, const char *k, const char *lb, const char *ds) {
 /* a switch per addon: on or off on this TV only */
 static int addon_opts(void) {
   int n = 0;
-  cJSON *l = sb_addons();
+  cJSON *l = sb_addons_account();
   const cJSON *a;
   set_act(&addonS[n++], "__sync", "Sync addons now",
           "Fetch your addon list from your account"); /* (either service's) */
@@ -588,7 +589,8 @@ static void build(void) {
         "logo"); /* first, right under its picture */
   set_s(&lookS[1], "catalogueTab", "Catalogue tab",
         "Collections and your addons\xe2\x80\x99 catalogues in their own tab", OO, 2, "true");
-  set_s(&lookS[2], "ssDelay", "Screensaver", "After a while without a key, the titles of the moment fill the screen",
+  set_s(&lookS[2], "animeTab", "Anime tab", "Anime in its own tab, with the Anime Kitsu addon", OO, 2, "false");
+  set_s(&lookS[3], "ssDelay", "Screensaver", "After a while without a key, the titles of the moment fill the screen",
         SS_OPTS, 5, "5");
   /* language names are shown in their own language, never translated */
   set_s(&langS[0], "uiLang", "Language", "The app restarts in the new language", NULL, 0, "auto");
@@ -647,7 +649,7 @@ static void build(void) {
     { "Watch", "Subtitles", "set_subs", "Language, size, colour, opacity, background", "subs", subsS, 7, 0 },
     { "Watch", "Audio", "set_aud", "Default audio language, DTS, interface sounds", NULL, audS, naud, 0 },
     { "Watch", "For You", "g_spark", "Recommendations on Home, region, languages", NULL, recsS, nr, 0 },
-    { "Screens", "Appearance", "set_look", "Accent colour, Catalogue tab", "look", lookS, 3, 0 },
+    { "Screens", "Appearance", "set_look", "Accent colour, Catalogue tab, Anime tab", "look", lookS, 4, 0 },
     { "Screens", "Language", "set_lang", "The language of the app", NULL, langS, nl, 0 },
     { "Account and system", "Account", "set_acct", "Stremio or Nuvio, and your profiles", NULL, profS, nprof, 0 },
     { "Account and system", "Addons", "set_addon", "", NULL, addonS, na, 0 },
@@ -804,6 +806,19 @@ static void catalogue_tab_changed(void) {
   if (!app_catalogue_on() && board_disc_type() == 3)
     board_disc_type_set(1);
 }
+/* the Anime tab: its word on the bar, the Kitsu addon kept on this device (not in the account), the recommendations
+   leaving anime out of Shows and Movies */
+static void anime_tab_changed(void) {
+  int on = app_anime_on();
+  topnav_relayout();
+  anime_addon_set(on);
+  recs_set_no_anime(on);
+  if (!on) {
+    if (board_disc_type() == 4)
+      board_disc_type_set(1);
+    board_anime_off();
+  }
+}
 int settings_apply_pref(const char *k, const char *v) {
   if (!strcmp(store_get(k, ""), v))
     return 0;
@@ -835,6 +850,8 @@ int settings_apply_pref(const char *k, const char *v) {
   S.dirty = 1;
   if (!strcmp(k, "catalogueTab"))
     catalogue_tab_changed();
+  if (!strcmp(k, "animeTab"))
+    anime_tab_changed();
   if (!strcmp(k, "netLogs"))
     net_logs_set(v);
   if (!strcmp(k, "recsLang1")) {
@@ -935,6 +952,8 @@ static void set_val(Setting *o, const char *v, int dir) {
   S.dirty = 1;
   if (!strcmp(o->k, "catalogueTab"))
     catalogue_tab_changed();
+  if (!strcmp(o->k, "animeTab"))
+    anime_tab_changed();
   if (!strcmp(o->k, "netLogs"))
     net_logs_set(v);
   if (!strcmp(o->k, "recsLang1")) {

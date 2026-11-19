@@ -33,6 +33,26 @@ static void meta_parse(const char *ml, const char *genres, const char *name, Met
   memset(p, 0, sizeof *p);
   if (!ml)
     ml = "";
+  char hd[256];
+  const char *tl = strchr(ml, 0x1f);
+  if (tl) { /* "IMDb 8.9   2023" 0x1f "24 episodes" 0x1f "Fantasy" 0x1f "Madhouse": the parts after the first are
+               drawn as they are (the Anime tab's details line) */
+    size_t hn = (size_t)(tl - ml);
+    if (hn >= sizeof hd)
+      hn = sizeof hd - 1;
+    memcpy(hd, ml, hn);
+    hd[hn] = 0;
+    for (int k = 0; k < 3 && tl; k++) {
+      const char *e = strchr(tl + 1, 0x1f);
+      size_t n = e ? (size_t)(e - tl - 1) : strlen(tl + 1);
+      if (n >= sizeof p->more[k])
+        n = sizeof p->more[k] - 1;
+      memcpy(p->more[k], tl + 1, n);
+      p->more[k][n] = 0;
+      tl = e;
+    }
+    ml = hd;
+  }
   if (name && *name)
     snprintf(p->name, sizeof p->name, "%s", name);
   /* IMDb 8.5 */
@@ -139,6 +159,13 @@ static float meta_draw_at(const MetaParts *p, float x, float y, int px, uint32_t
         draw ? text_draw(p->rest, cx, y, px, 600, color, 0.2f, 0, ALIGN_LEFT) : text_width(p->rest, px, 600, 0.2f);
     cx += w;
   }
+  for (int k = 0; k < 3; k++)
+    if (p->more[k][0]) {
+      SEP();
+      float w = draw ? text_draw(p->more[k], cx, y, px, 600, k == 0 ? color : WHITE_A(179), 0.2f, 0, ALIGN_LEFT)
+                     : text_width(p->more[k], px, 600, 0.2f);
+      cx += w;
+    }
   if (p->genres[0]) {
     SEP();
     float w = draw ? text_draw(p->genres, cx, y, px, 600, WHITE_A(179), 0.2f, 0, ALIGN_LEFT)
@@ -510,7 +537,8 @@ static void card_art(const char *src, float x, float y, float w, float h, float 
   } /* nothing is coming: the surface stays still */
   fill_art(tex && gfx_tex_fade(tex) >= 1);
   if (fill_on() && (!tex || gfx_tex_fade(tex) < 1))
-    fill_why(!loadArt && !tex ? (img_why_shaped(src, (int)w, (int)h, r, fit) & ~15) | 3 : img_why_shaped(src, (int)w, (int)h, r, fit));
+    fill_why(!loadArt && !tex ? (img_why_shaped(src, (int)w, (int)h, r, fit) & ~15) | 3
+                              : img_why_shaped(src, (int)w, (int)h, r, fit));
   if (tex && !wide && cardKey[0] && !ph_hold() && gfx_tex_fade(tex) >= 1) {
     sx_image(cardKey, tex, x, y, w, h, 0, WHITE_A(255), 0, 0, 1, 1);
     *shown = 1;
@@ -554,18 +582,30 @@ void card_prep(CardPrep *cp, const Item *it, int wide, const char *artOverride) 
     if (*p == ':')
       se = atoi(p + 1);
   }
-  if (c && se >= 0)
+  /* anime episodes are numbered without seasons: "Name" with "E17 · 9 min left" in the chip, "E6 next" for the next one
+   */
+  int anime = lib_id_is_anime(it->type, it->id) && c && ep > 0;
+  if (anime)
+    snprintf(cp->lbl, sizeof cp->lbl, "%s", it->name);
+  else if (c && se >= 0)
     snprintf(cp->lbl, sizeof cp->lbl, "%s  S%d E%d", it->name, se, ep);
   else
     snprintf(cp->lbl, sizeof cp->lbl, "%s", it->name);
+  char ea[24] = "";
+  if (anime)
+    snprintf(ea, sizeof ea, "E%d \xC2\xB7 ", ep);
   if (it->left > 0) {
     if (it->left < 1)
-      snprintf(cp->left, sizeof cp->left, "%s", T("Less than a minute left"));
+      snprintf(cp->left, sizeof cp->left, "%s%s", ea, T("Less than a minute left"));
     else {
-      char r[32];
+      char r[32], l[48];
       sb_fmt_runtime((int)(it->left + 0.5f) < 1 ? 1 : (int)(it->left + 0.5f), r, sizeof r);
-      snprintf(cp->left, sizeof cp->left, "%s", T1("{t} left", "t", r));
+      snprintf(l, sizeof l, "%s", T1("{t} left", "t", r));
+      snprintf(cp->left, sizeof cp->left, "%s%s", ea, l);
     }
+    cp->leftW = text_width(cp->left, 22, 500, 0) + 16;
+  } else if (anime && it->progress <= 0.001f) {
+    snprintf(cp->left, sizeof cp->left, "E%d %s", ep, T("next"));
     cp->leftW = text_width(cp->left, 22, 500, 0) + 16;
   }
 }
@@ -579,15 +619,16 @@ static int card_body(const Item *it, const CardPrep *cp, float x, float y, float
   } /* a card without its own: resolved here, as before */
   if (cp->crop && !img_shaped_loaded(cp->art, (int)w, (int)h, CARD_R, 3)) {
     if (loadArt && img_back_shaped(cp->art, (int)w, (int)h, CARD_R, 3)) {
-      img_ahead_shaped(cp->art, (int)w, (int)h, CARD_R, 3); /* a return: the sharp one at once, in one step (no quick crop, no wait) */
+      img_ahead_shaped(cp->art, (int)w, (int)h, CARD_R,
+                       3); /* a return: the sharp one at once, in one step (no quick crop, no wait) */
       card_art(cp->art, x, y, w, h, CARD_R, 3, loadArt, &shown);
     } else {
-    if (loadArt && img_idle())
-      img_get_shaped(cp->art, (int)w, (int)h, CARD_R, 3); /* the sharp one, once nothing else waits */
-    card_art(cp->pre, x, y, w, h, CARD_R, 3, loadArt, &shown); /* the quick one meanwhile */
-    fill_art(0);
-    if (fill_on())
-      fill_why(img_why_shaped(cp->art, (int)w, (int)h, CARD_R, 3));
+      if (loadArt && img_idle())
+        img_get_shaped(cp->art, (int)w, (int)h, CARD_R, 3); /* the sharp one, once nothing else waits */
+      card_art(cp->pre, x, y, w, h, CARD_R, 3, loadArt, &shown); /* the quick one meanwhile */
+      fill_art(0);
+      if (fill_on())
+        fill_why(img_why_shaped(cp->art, (int)w, (int)h, CARD_R, 3));
     }
   } else {
     card_art(cp->art, x, y, w, h, CARD_R, cp->crop ? 3 : wide ? 1 : 0, loadArt, &shown);
@@ -642,7 +683,7 @@ static int card_body(const Item *it, const CardPrep *cp, float x, float y, float
   }
   if (wide) {
     /* the name over a fade (12 15 26 padding: the inset progress line sits under it), the time left in a chip */
-    float lh = text_line_height(26), gh = 12 + lh + 26, lw = it->left > 0 ? cp->leftW : 0;
+    float lh = text_line_height(26), gh = 12 + lh + 26, lw = cp->left[0] ? cp->leftW : 0;
     gfx_rrect_v(x, y + h - gh, w, gh, 0, BLACK_A(0), BLACK_A(224));
     text_draw(cp->lbl, app_rtl() ? x + w - 15 : x + 15, y + h - 26 - lh, 26, 600, WHITE_A(255), 0, w - 30 - lw,
               ALIGN_START);
