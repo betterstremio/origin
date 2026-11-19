@@ -53,7 +53,9 @@ void sb_sync_addons(void (*cb)(int changed, void *ud), void *ud);
 void sb_pull_library(void (*cb)(int changed, void *ud), void *ud);
 void sb_sync_soon(int force); /* pull if the last one was a while ago (core/sync.c: boards rebuild when it changed) */
 unsigned sb_lib_sync_age(void); /* ms since the last library pull began (huge when none yet) */
-cJSON *sb_addons(void); /* the installed addon list (array), including those off on this TV */
+cJSON *sb_addons(void); /* the installed addon list (array), including those off on this TV, and this device's own
+                           (the Anime Kitsu addon while the Anime tab is on: core/anime_addon.c) */
+cJSON *sb_addons_account(void); /* only the account's addons (what Settings lists and a sync compares) */
 int sb_addon_on(const cJSON *addon); /* not switched off on this TV ("adOn_<key>") */
 void sb_addon_key(const cJSON *addon, char *out, size_t cap); /* its manifest id, or its URL */
 

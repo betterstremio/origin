@@ -18,6 +18,7 @@ float meta_draw(const char *metaLine, const char *genres, const char *name, floa
    screens keep one in their view and prepare it again when meta_stale() says the language moved */
 typedef struct {
   char name[128], imdb[16], year[24], rt[32], rest[96], genres[128];
+  char more[3][40]; /* extra parts after the year (the Anime tab: episodes, genre, studio) */
   int px;
   float w;
   unsigned lg;

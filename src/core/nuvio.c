@@ -712,7 +712,7 @@ void nv_profile_verify_pin(int index, const char *pin, NvDoneCb cb, void *ud) {
 }
 int nv_profile_kept(int index) { /* this device already holds that profile's addons and library */
   if (index == nv_profile_current())
-    return sb_addons() != NULL;
+    return sb_addons_account() != NULL;
   char s[160], p[1400];
   struct stat st;
   nv_scope(index, s, sizeof s);
@@ -878,7 +878,7 @@ static void add_end(AddReq *r, int changed) {
   free(r);
 }
 static cJSON *old_entry(const char *url) {
-  cJSON *a, *old = sb_addons();
+  cJSON *a, *old = sb_addons_account();
   if (old)
     cJSON_ArrayForEach(a, old)
       if (!strcmp(js_str(a, "transportUrl", ""), url))
@@ -890,7 +890,7 @@ static void add_done(AddReq *r) {
     add_end(r, 0);
     return;
   } /* another profile since it was asked */
-  cJSON *old = sb_addons();
+  cJSON *old = sb_addons_account();
   cJSON *o[64];
   int have[64], kept = 0, missing = 0, changed = 0, nOld = old ? cJSON_GetArraySize(old) : 0;
   double now = (double)time(NULL);

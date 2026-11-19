@@ -7,6 +7,7 @@
 #include "core/json.h"
 #include "core/i18n.h"
 #include "core/addons.h"
+#include "core/anime_addon.h"
 #include "core/nuvio.h"
 #include "core/best.h"
 #include <stdio.h>
@@ -207,9 +208,13 @@ void sb_forget_local(void) {
   lib_invalidate();
 }
 /* addons */
-cJSON *sb_addons(void) {
+cJSON *sb_addons_account(void) {
   cJSON *a = store_node("addons");
   return cJSON_IsArray(a) ? a : NULL;
+}
+/* the account's addons, and (Anime tab on) the Anime Kitsu addon after them: kept on this device only */
+cJSON *sb_addons(void) {
+  return anime_addons_merge(sb_addons_account());
 }
 /* an addon can be switched off on this TV only (Settings > Addons): a local choice, never synced back to the
    account. Off, it gives no rows, metadata or streams here */
@@ -241,7 +246,7 @@ static void on_addons(int st, const unsigned char *b, size_t n, void *ud) {
   int changed = 0;
   if (got && cJSON_GetArraySize(got)) {
     char *next = cJSON_PrintUnformatted(got);
-    cJSON *cur = sb_addons();
+    cJSON *cur = sb_addons_account();
     char *curs = cur ? cJSON_PrintUnformatted(cur) : NULL;
     if (!curs || strcmp(curs, next)) {
       store_set_node("addons", cJSON_Duplicate(got, 1));

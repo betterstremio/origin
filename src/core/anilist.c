@@ -4,6 +4,7 @@
 #include "core/json.h"
 #include "core/net.h"
 #include "core/store.h"
+#include "core/i18n.h"
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,9 +21,10 @@
 #define WAIT_429_MS 60000 /* Retry-After is not shown to us: AniList's window is a minute */
 
 /* what a row asks for, kept lean: tags and studios are only for anilist_media_info */
-#define MF                                                                                           \
-  "id idMal format episodes seasonYear status title{english romaji} genres averageScore popularity " \
-  "coverImage{extraLarge} bannerImage description(asHtml:false) startDate{year}"
+#define MF                                                                                                   \
+  "id idMal format episodes seasonYear status title{english romaji} genres averageScore popularity "         \
+  "coverImage{extraLarge} bannerImage description(asHtml:false) startDate{year} nextAiringEpisode{episode} " \
+  "studios(isMain:true){nodes{name}}"
 
 enum { JK_ROW, JK_INFO, JK_MAL };
 
@@ -204,6 +206,66 @@ static void clean_text(char *dst, size_t cap, const char *s) {
     o--;
   dst[o] = 0;
 }
+/* what a list answer said about each title, kept for the Anime tab's ranking and details line (a small ring: the
+   newest 400 titles seen) */
+#define NFACTS 400
+static AlFacts *facts;
+static int nfacts, factsAt;
+static void facts_put(const AlFacts *f) {
+  if (!facts && !(facts = calloc(NFACTS, sizeof *facts)))
+    return;
+  for (int i = 0; i < nfacts; i++)
+    if (facts[i].id == f->id) {
+      facts[i] = *f;
+      return;
+    }
+  if (nfacts < NFACTS)
+    facts[nfacts++] = *f;
+  else {
+    facts[factsAt] = *f;
+    factsAt = (factsAt + 1) % NFACTS;
+  }
+}
+int anilist_facts(int id, AlFacts *out) {
+  for (int i = 0; i < nfacts; i++)
+    if (facts[i].id == id) {
+      if (out)
+        *out = facts[i];
+      return 1;
+    }
+  return 0;
+}
+int anilist_request_count(void) {
+  return al_requests;
+}
+/* "[IMDb 8.9   ]2023   24 episodes   Fantasy   Madhouse" (the segments separated by 0x1f: the app's meta line
+   draws each as its own part): never seasons (each entry is one season), never the language */
+void anilist_meta_line(const AlFacts *f, const char *imdb, char *out, size_t cap) {
+  char ep[48] = "", head[48] = "", n[16], a[16];
+  if (f->episodes > 0 && f->aired > 0 && f->aired < f->episodes) {
+    snprintf(n, sizeof n, "%d", f->episodes);
+    snprintf(a, sizeof a, "%d", f->aired);
+    snprintf(ep, sizeof ep, "%s", T2("{a} of {n} episodes out", "a", a, "n", n));
+  } else if (f->episodes > 1) {
+    snprintf(n, sizeof n, "%d", f->episodes);
+    snprintf(ep, sizeof ep, "%s", T1("{n} episodes", "n", n));
+  } else if (f->episodes == 1 && !f->movie)
+    snprintf(ep, sizeof ep, "%s", T("1 episode"));
+  else if (f->episodes <= 0 && f->aired > 1) {
+    snprintf(a, sizeof a, "%d", f->aired);
+    snprintf(ep, sizeof ep, "%s", T1("{a} episodes out", "a", a));
+  }
+  size_t o = 0;
+  if (imdb && *imdb)
+    o += (size_t)snprintf(head + o, sizeof head - o, "IMDb %s", imdb);
+  if (f->year)
+    o += (size_t)snprintf(head + o, sizeof head - o, "%s%d", o ? "   " : "", f->year);
+  size_t w = (size_t)snprintf(out, cap, "%s", head);
+  const char *seg[3] = { ep, f->ng ? f->genres[0] : "", f->studio };
+  for (int i = 0; i < 3; i++)
+    if (seg[i][0] && w + 2 < cap)
+      w += (size_t)snprintf(out + w, cap - w, "\x1f%s", seg[i]);
+}
 static int fill_media(Item *it, const cJSON *m) {
   int id = (int)js_num(m, "id", 0);
   if (id <= 0)
@@ -220,25 +282,31 @@ static int fill_media(Item *it, const cJSON *m) {
   snprintf(it->poster, sizeof it->poster, "%s", js_str(js_obj(m, "coverImage"), "extraLarge", ""));
   snprintf(it->background, sizeof it->background, "%s", js_str(m, "bannerImage", ""));
   clean_text(it->description, sizeof it->description, js_str(m, "description", ""));
-  int year = (int)js_num(js_obj(m, "startDate"), "year", 0);
-  if (!year)
-    year = (int)js_num(m, "seasonYear", 0);
-  char g[64] = "";
+  AlFacts f;
+  memset(&f, 0, sizeof f);
+  f.id = id;
+  f.movie = !strcmp(fmt, "MOVIE");
+  f.year = (int)js_num(js_obj(m, "startDate"), "year", 0);
+  if (!f.year)
+    f.year = (int)js_num(m, "seasonYear", 0);
   const cJSON *ga = js_arr(m, "genres");
-  for (int i = 0; ga && i < 2; i++) {
+  for (int i = 0; ga && i < 3; i++) {
     const cJSON *e = cJSON_GetArrayItem(ga, i);
     if (cJSON_IsString(e) && e->valuestring)
-      snprintf(g + strlen(g), sizeof g - strlen(g), "%s%s", i ? ", " : "", e->valuestring);
+      snprintf(f.genres[f.ng++], sizeof f.genres[0], "%s", e->valuestring);
   }
-  double sc = js_num(m, "averageScore", 0) / 10.0;
-  size_t o = 0, cap = sizeof it->metaLine;
-  char *ml = it->metaLine;
-  if (year)
-    o += (size_t)snprintf(ml + o, cap - o, "%d", year);
-  if (g[0])
-    o += (size_t)snprintf(ml + o, cap - o, "%s%s", o ? " \xC2\xB7 " : "", g);
-  if (sc > 0)
-    snprintf(ml + o, cap - o, "%s%.1f", o ? " \xC2\xB7 " : "", sc);
+  f.score = (int)js_num(m, "averageScore", 0);
+  f.popularity = (int)js_num(m, "popularity", 0);
+  f.episodes = (int)js_num(m, "episodes", 0);
+  const char *st = js_str(m, "status", "");
+  snprintf(f.status, sizeof f.status, "%s", st);
+  int nx = (int)js_num(js_obj(m, "nextAiringEpisode"), "episode", 0);
+  f.aired = !strcmp(st, "RELEASING") ? (nx > 1 ? nx - 1 : 0) : !strcmp(st, "FINISHED") ? f.episodes : 0;
+  const cJSON *sn = js_arr(js_obj(m, "studios"), "nodes");
+  if (sn && cJSON_GetArraySize(sn))
+    snprintf(f.studio, sizeof f.studio, "%s", js_str(cJSON_GetArrayItem(sn, 0), "name", ""));
+  facts_put(&f);
+  anilist_meta_line(&f, NULL, it->metaLine, sizeof it->metaLine);
   return 1;
 }
 static void collect(ItemList *l, const cJSON *arr, int rec) {
@@ -415,6 +483,10 @@ static void pump(void) {
       qt = NULL;
     qn--;
     infl++;
+    if (getenv("SB_ANILIST_OFF")) { /* development: AniList cannot be reached (the Kitsu fallback, the empty page) */
+      on_net(0, NULL, 0, j);
+      continue;
+    }
     al_requests++;
     stamps[nstamps++] = now;
     net_post_hdr_t(AL_URL, j->body, "application/json", "Accept: application/json", 20000, on_net, j);

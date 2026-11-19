@@ -6,7 +6,8 @@
 extern Screen homeScreen, discScreen, libScreen, colScreen;
 int board_home_ready(void);
 int board_home_rows_ready(void); /* its first two rows have their cards (no billboard needed) */
-const void *board_focus_row(char *title, size_t cap); /* the fast-scroll test: the focused row (NULL: none) and its title */
+const void *board_focus_row(char *title,
+                            size_t cap); /* the fast-scroll test: the focused row (NULL: none) and its title */
 int board_focus_pos(int *row, int *col, int *nrows); /* the fast-scroll test: Home's focus */
 void tabs_warm_tick(void);
 /* after start: the other tabs' first screens made ready in the background */ /* the first rows' posters are in, the
@@ -14,7 +15,8 @@ void tabs_warm_tick(void);
 void board_invalidate_all(void); /* another account: Discover too */
 void board_invalidate(void); /* the library changed: Home and Library rebuild when shown */
 void board_rebuild(void); /* the board on screen reloads its rows in place, focus kept */
-int board_disc_type(void); /* what Discover's board holds: 0 everything (phones), 1 the Shows tab, 2 the Movies tab */
+int board_disc_type(void); /* 0 Discover (phones), 1 Shows, 2 Movies, 3 Catalogue, 4 Anime */
+void board_anime_off(void); /* the Anime tab went off: its rows and what its page keeps are let go */
 void board_disc_type_set(int t); /* (a change: it builds afresh the next time it is entered) */
 int board_spot_up(void);
 float board_open_wait(void); /* how much longer than its quickest the focused cinematic card waits to open */

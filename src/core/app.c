@@ -25,6 +25,7 @@
 #include "ui/qrcard.h"
 #include "core/recs.h"
 #include "core/anilist.h"
+#include "core/anime_addon.h"
 #include "core/sync.h"
 #include "core/update.h"
 #include "screens/btrailer.h"
@@ -727,15 +728,19 @@ static const char *chipLabel(int i) {
   return i == NAV_HOME        ? T("Home")
          : i == NAV_SHOWS     ? T("Shows")
          : i == NAV_MOVIES    ? T("Movies")
+         : i == NAV_ANIME     ? T("Anime")
          : i == NAV_CATALOGUE ? T("Catalogue")
                               : T("My List");
 }
-static int catVis = 1; /* the Catalogue word is on the bar (read once per layout and frame, not per use) */
+static int catVis = 1, aniVis; /* the Catalogue / Anime words are on the bar (read once per layout and frame) */
 int app_catalogue_on(void) {
   return strcmp(store_get("catalogueTab", "true"), "false") != 0;
 }
+int app_anime_on(void) {
+  return strcmp(store_get("animeTab", "false"), "true") == 0;
+}
 static int chipOn(int i) {
-  return i != NAV_CATALOGUE || catVis;
+  return i == NAV_CATALOGUE ? catVis : i == NAV_ANIME ? aniVis : 1;
 }
 /* the tab a page belongs to: a collection tile's page is the Catalogue's, the other pages under a tab are counted as
    Home's */
@@ -747,6 +752,7 @@ static int tab_of(Scr s) { /* the bar's item for a page, -1 none */
          : s == SCR_HOME ? NAV_HOME
          : s == SCR_DISC ? (board_disc_type() == 2   ? NAV_MOVIES
                             : board_disc_type() == 3 ? NAV_CATALOGUE
+                            : board_disc_type() == 4 ? NAV_ANIME
                                                      : NAV_SHOWS)
          : s == SCR_COL  ? NAV_CATALOGUE
          : s == SCR_LIB  ? NAV_LIB
@@ -754,11 +760,11 @@ static int tab_of(Scr s) { /* the bar's item for a page, -1 none */
                          : -1;
 }
 static Scr chipScr(int i) {
-  return i == NAV_SEARCH                                           ? SCR_SEARCH
-         : i == NAV_HOME                                           ? SCR_HOME
-         : i == NAV_SHOWS || i == NAV_MOVIES || i == NAV_CATALOGUE ? SCR_DISC
-         : i == NAV_LIB                                            ? SCR_LIB
-                                                                   : SCR_SET;
+  return i == NAV_SEARCH                                                             ? SCR_SEARCH
+         : i == NAV_HOME                                                             ? SCR_HOME
+         : i == NAV_SHOWS || i == NAV_MOVIES || i == NAV_ANIME || i == NAV_CATALOGUE ? SCR_DISC
+         : i == NAV_LIB                                                              ? SCR_LIB
+                                                                                     : SCR_SET;
 }
 static int chipCur(int i) {
   return tab_of(tab_scr()) == i;
@@ -769,6 +775,7 @@ static int chipFocused(int i) {
 static void topnav_layout(void) {
   float pad = 36, w[NAV_N] = { 0 }, tot = 0;
   catVis = app_catalogue_on();
+  aniVis = app_anime_on();
   for (int pass = 0; pass < 3; pass++) {
     tot = BAR_H;
     w[NAV_SEARCH] = BAR_H;
@@ -837,8 +844,8 @@ void topnav_leave(void) {
 } /* the pointer went into the page: the bar's pill lets go too */
 void topnav_switch(int i) {
   i = i < 0 ? 0 : i > NAV_SET ? NAV_SET : i;
-  if (i == NAV_SHOWS || i == NAV_MOVIES || i == NAV_CATALOGUE)
-    board_disc_type_set(i == NAV_SHOWS ? 1 : i == NAV_MOVIES ? 2 : 3); /* a board per tab, picked here */
+  if (i == NAV_SHOWS || i == NAV_MOVIES || i == NAV_ANIME || i == NAV_CATALOGUE)
+    board_disc_type_set(i == NAV_SHOWS ? 1 : i == NAV_MOVIES ? 2 : i == NAV_ANIME ? 4 : 3); /* a board per tab */
   if (i == topNav.idx && (app_is_board(SCR) || SCR == SCR_SEARCH || SCR == SCR_SET) && tab_of(tab_scr()) == i)
     return;
   {
@@ -897,8 +904,8 @@ static int topnav_key(int k) {
   } /* past Search: the profiles and the app's own items, out of the left edge */
   if (k == K_LEFT || k == K_RIGHT) {
     int i = topNav.idx + (k == K_RIGHT ? 1 : -1);
-    if (i == NAV_CATALOGUE && !chipOn(i))
-      i += k == K_RIGHT ? 1 : -1; /* (a hidden Catalogue is stepped over) */
+    for (int g = 0; g < 2 && (i == NAV_ANIME || i == NAV_CATALOGUE) && !chipOn(i); g++)
+      i += k == K_RIGHT ? 1 : -1; /* (a hidden Anime or Catalogue is stepped over) */
     if (i < 0)
       i = 0;
     if (i > NAV_LIB)
@@ -1013,6 +1020,7 @@ static void caret_draw(float x, float cy, uint32_t c) {
 } /* a small down caret beside the picture */
 void topnav_draw(void) {
   catVis = app_catalogue_on();
+  aniVis = app_anime_on();
   if (!topNav.laidOut)
     topnav_paint();
   int signin = SCR == SCR_LOGIN;
@@ -2377,6 +2385,9 @@ void app_init(void) {
   accent_apply();
   accent_tick(0);
   sync_init();
+  recs_set_no_anime(app_anime_on()); /* (the stored choice; a change of it rebuilds the pages, none: nothing) */
+  if (app_anime_on())
+    anime_addon_set(1); /* the Anime Kitsu addon, kept on this device: its manifest from the disk (7 days) or the net */
   btr_init();
   castlink_start();
 }
