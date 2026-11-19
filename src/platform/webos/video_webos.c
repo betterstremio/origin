@@ -604,16 +604,36 @@ static bool on_load(LSHandle *h, LSMessage *m, void *ctx) {
        NULL); /* the pipeline picks its default tracks itself (choosing before sourceInfo can stall it) */
   return true;
 }
-/* the TV asks before its screen saver starts; the answer goes back with the request's own timestamp */
+/* the value after "key" in a flat JSON message, past the spaces the TV puts around the colon (tvpower sends
+   { "returnValue": true, "timestamp": "3164314197", "state": "Active", ... }), or NULL */
+static const char *json_val(const char *p, const char *key) {
+  size_t n = strlen(key);
+  for (const char *k = p ? strstr(p, key) : NULL; k; k = strstr(k + 1, key)) {
+    if (k == p || k[-1] != '"' || k[n] != '"')
+      continue;
+    const char *v = k + n + 1;
+    while (*v == ' ' || *v == '\t')
+      v++;
+    if (*v != ':')
+      continue;
+    v++;
+    while (*v == ' ' || *v == '\t')
+      v++;
+    return v;
+  }
+  return NULL;
+}
+/* the TV asks before its screen saver starts; the answer goes back with the request's own timestamp.
+   Until 3.0.1 this matched "state":"Active" with no space and so never answered: the TV went ahead after 3 s */
 static int ss_answer(const char *p, char *out, size_t cap) {
-  if (!p || !strstr(p, "\"state\":\"Active\""))
-    return 0;
-  const char *t = strstr(p, "\"timestamp\":");
+  const char *t = json_val(p, "timestamp");
   if (!t)
+    return 0; /* the subscription's own replies ("processing": "Request Screen Saver") carry none */
+  const char *s = json_val(p, "state"); /* a request with no state is still answered */
+  if (s && strncmp(s, "\"Active\"", 8)) {
+    log_payload("screen saver request not answered:", p);
     return 0;
-  t += 12;
-  while (*t == ' ')
-    t++;
+  }
   char ts[64];
   int k = 0;
   while (*t && *t != ',' && *t != '}' && k < 63)
@@ -622,7 +642,10 @@ static int ss_answer(const char *p, char *out, size_t cap) {
   pthread_mutex_lock(&mu);
   int hold = screensaverHeld();
   pthread_mutex_unlock(&mu);
-  snprintf(out, cap, "{\"clientName\":\"%s\",\"ack\":%s,\"timestamp\":%s}", SB_APP_ID, hold ? "false" : "true", ts);
+  int n =
+      snprintf(out, cap, "{\"clientName\":\"%s\",\"ack\":%s,\"timestamp\":%s}", SB_APP_ID, hold ? "false" : "true", ts);
+  if (n < 0 || (size_t)n >= cap)
+    return 0; /* a cut answer would be bad JSON */
   fprintf(stderr, "[video] screen saver asked: %s\n", hold ? "held (a film plays)" : "let through");
   return 1;
 }
