@@ -25,8 +25,6 @@ void anime_page_ask(const AnimeRow *r, AlCb cb, void *ud);
 /* a Kitsu catalogue row's definition (the fallback when AniList is down); 0 when the addon is not in */
 int anime_page_def(const AnimeRow *r, CatalogDef *d);
 void anime_page_close(void); /* the tab went off: what the page keeps is let go */
-unsigned anime_page_version(void); /* bumps when the billboard's titles or the AniList state change */
-int anime_page_down(void); /* AniList is judged down: failed with nothing cached, twice, and never answered */
 int anime_page_billboard(ItemList *out); /* top picks (or trending without a taste): up to 8; 0 = not yet */
 int anime_page_mylist(ItemList *out); /* the anime of the library (My List), newest first */
 

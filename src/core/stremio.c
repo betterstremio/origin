@@ -223,6 +223,8 @@ void sb_addon_key(const cJSON *a, char *out, size_t cap) {
   copy_str(out, cap, id && *id ? id : js_str(a, "transportUrl", ""));
 }
 int sb_addon_on(const cJSON *a) {
+  if (anime_addon_is_local(a))
+    return 1;
   char k[300], sk[320];
   sb_addon_key(a, k, sizeof k);
   snprintf(sk, sizeof sk, "adOn_%s", k);

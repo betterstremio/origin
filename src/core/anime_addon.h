@@ -10,6 +10,7 @@
 #define ANIME_KITSU_URL "https://anime-kitsu.strem.fun/manifest.json"
 void anime_addon_set(int on); /* the tab's switch (and the stored value at start) */
 int anime_addon_ready(void); /* the manifest is in and the addon is in the list (or the account has it) */
+int anime_addon_is_local(const cJSON *ad);
 /* sb_addons() through this: the account's list as it is, or a copy with the Kitsu addon after it. raw may be NULL */
 cJSON *anime_addons_merge(cJSON *raw);
 #endif

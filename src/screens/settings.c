@@ -589,7 +589,7 @@ static void build(void) {
         "logo"); /* first, right under its picture */
   set_s(&lookS[1], "catalogueTab", "Catalogue tab",
         "Collections and your addons\xe2\x80\x99 catalogues in their own tab", OO, 2, "true");
-  set_s(&lookS[2], "animeTab", "Anime tab", "Anime in its own tab, with the Anime Kitsu addon", OO, 2, "false");
+  set_s(&lookS[2], "animeTab", "Anime tab", "Anime in its own tab. Uses Anime Kitsu on this device.", OO, 2, "false");
   set_s(&lookS[3], "ssDelay", "Screensaver", "After a while without a key, the titles of the moment fill the screen",
         SS_OPTS, 5, "5");
   /* language names are shown in their own language, never translated */

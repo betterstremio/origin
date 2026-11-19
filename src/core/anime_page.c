@@ -13,7 +13,7 @@
 #include <string.h>
 #include <time.h>
 
-static unsigned ver, metaVer;
+static unsigned pageGen, metaVer;
 static int okc, failc;
 static double openAt;
 static ItemList trend, top; /* the billboard's candidates (up to 8 each) */
@@ -43,15 +43,25 @@ static int genre_used(char used[][24], int n, const char *g) {
   return 0;
 }
 static void add_genre(AnimeRow *o, int *n, int max, const char *genre) {
-  char lg[24], t[160];
-  snprintf(lg, sizeof lg, "%s", genre);
-  for (char *c = lg; *c; c++)
-    if (*c >= 'A' && *c <= 'Z')
-      *c = (char)(*c + 32); /* ("Popular action anime") */
-  snprintf(t, sizeof t, "%s", T1("Popular {genre} anime", "genre", lg));
-  add(o, n, max, t, AS_AL, AL_ROW_GENRE, genre);
+  static const struct { const char *genre, *title; } titles[] = {
+    { "Action", "Popular action anime" }, { "Adventure", "Popular adventure anime" },
+    { "Comedy", "Popular comedy anime" }, { "Drama", "Popular drama anime" },
+    { "Ecchi", "Popular ecchi anime" }, { "Fantasy", "Popular fantasy anime" },
+    { "Horror", "Popular horror anime" }, { "Mahou Shoujo", "Popular mahou shoujo anime" },
+    { "Mecha", "Popular mecha anime" }, { "Music", "Popular music anime" },
+    { "Mystery", "Popular mystery anime" }, { "Psychological", "Popular psychological anime" },
+    { "Romance", "Popular romance anime" }, { "Sci-Fi", "Popular sci-fi anime" },
+    { "Slice of Life", "Popular slice of life anime" }, { "Sports", "Popular sports anime" },
+    { "Supernatural", "Popular supernatural anime" }, { "Thriller", "Popular thriller anime" },
+  };
+  for (size_t i = 0; i < sizeof titles / sizeof *titles; i++)
+    if (!strcmp(titles[i].genre, genre)) {
+      add(o, n, max, T(titles[i].title), AS_AL, AL_ROW_GENRE, genre);
+      return;
+    }
+  add(o, n, max, T1("Popular {genre} anime", "genre", genre), AS_AL, AL_ROW_GENRE, genre);
 }
-int anime_page_down(void) {
+static int anime_page_down(void) {
   return failc >= 2 && okc == 0;
 }
 int anime_page_plan(AnimeRow *o, int max, int *modeOut) {
@@ -134,29 +144,29 @@ int anime_page_plan(AnimeRow *o, int max, int *modeOut) {
 unsigned anime_page_sig(void) {
   AnimeRow r[32];
   int mode, n = anime_page_plan(r, 32, &mode);
-  unsigned h = 2166136261u ^ (unsigned)mode;
+  unsigned h = (2166136261u ^ (unsigned)mode) + (mode == AM_KITSU && anime_addon_ready());
   for (int i = 0; i < n; i++) {
     for (const char *p = r[i].title; *p; p++)
+      h = (h ^ (unsigned char)*p) * 16777619u;
+    for (const char *p = r[i].arg; *p; p++)
       h = (h ^ (unsigned char)*p) * 16777619u;
     h = (h ^ (unsigned)(r[i].src * 31 + r[i].al)) * 16777619u;
   }
   return h;
 }
 void anime_page_open(void) {
-  openAt = (double)time(NULL);
+  if (!openAt)
+    openAt = (double)time(NULL);
   anime_addon_set(1);
   if (recs_on())
     anime_taste_begin();
 }
-unsigned anime_page_version(void) {
-  return ver + anime_taste_version();
-}
-
 /* ---- asking a row ---- */
 typedef struct {
   AlCb cb;
   void *ud;
   int kind;
+  unsigned gen;
 } Ask;
 static void keep8(ItemList *dst, const ItemList *l) {
   itemlist_clear(dst);
@@ -172,16 +182,13 @@ static void keep8(ItemList *dst, const ItemList *l) {
 }
 static void on_al(ItemList *l, int cached, void *ud) {
   Ask *a = ud;
-  if (l->total < 0 && !l->n) {
-    failc++;
-    ver++;
-  } else {
-    okc++;
-    if (failc >= 2 && okc == 1)
-      ver++; /* (it was thought down) */
-    if (a->kind == AL_ROW_TRENDING) {
-      keep8(&trend, l);
-      ver++;
+  if (a->gen == pageGen) {
+    if (l->total < 0 && !l->n)
+      failc++;
+    else {
+      okc++;
+      if (a->kind == AL_ROW_TRENDING)
+        keep8(&trend, l);
     }
   }
   a->cb(l, cached, a->ud);
@@ -193,6 +200,7 @@ typedef struct {
   AlCb cb;
   void *ud;
   int need, got, np;
+  unsigned gen;
   Item pool[80];
 } TopAsk;
 static int pool_rank(const void *a, const void *b) {
@@ -202,6 +210,14 @@ static int pool_rank(const void *a, const void *b) {
 static void on_top_list(ItemList *l, int cached, void *ud) {
   (void)cached;
   TopAsk *t = ud;
+  if (t->gen != pageGen) {
+    itemlist_free(l);
+    if (++t->got == t->need) {
+      t->cb(calloc(1, sizeof(ItemList)), 0, t->ud);
+      free(t);
+    }
+    return;
+  }
   for (int i = 0; i < l->n && t->np < 80; i++) {
     const Item *it = &l->items[i];
     int alid = strncmp(it->id, "anilist:", 8) ? 0 : atoi(it->id + 8);
@@ -231,10 +247,9 @@ static void on_top_list(ItemList *l, int cached, void *ud) {
       out->n = n;
       out->total = n;
       keep8(&top, out);
-      topDone = 1;
-      ver++;
     }
   }
+  topDone = 1;
   t->cb(out, 0, t->ud);
   free(t);
 }
@@ -250,14 +265,14 @@ void anime_page_ask(const AnimeRow *r, AlCb cb, void *ud) {
     TopAsk *t = calloc(1, sizeof *t);
     t->cb = cb;
     t->ud = ud;
-    t->need = 2;
     char g[1][24];
-    if (anime_taste_genres(g, 1) == 1)
-      t->need = 3;
+    int genre = anime_taste_genres(g, 1);
+    t->need = genre ? 3 : 2;
+    t->gen = pageGen;
     topAsked = 1;
     anilist_row(AL_ROW_TRENDING, "", on_top_list, t);
     anilist_row(AL_ROW_POPULAR, "", on_top_list, t);
-    if (t->need == 3)
+    if (genre)
       anilist_row(AL_ROW_GENRE, g[0], on_top_list, t);
     return;
   }
@@ -265,6 +280,7 @@ void anime_page_ask(const AnimeRow *r, AlCb cb, void *ud) {
   a->cb = cb;
   a->ud = ud;
   a->kind = r->al;
+  a->gen = pageGen;
   anilist_row(r->al, r->arg, on_al, a);
 }
 int anime_page_def(const AnimeRow *r, CatalogDef *d) {
@@ -489,6 +505,8 @@ int anime_meta_apply(Item *it) {
 }
 
 void anime_page_close(void) {
+  pageGen++;
+  openAt = 0;
   itemlist_clear(&trend);
   itemlist_clear(&top);
   topAsked = topDone = 0;

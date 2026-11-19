@@ -772,7 +772,8 @@ static int ani_same(const Item *a, const Item *b) {
   return !strcmp(a->id, b->id) || (a->name[0] && !strcasecmp(a->name, b->name));
 }
 /* the items of l that o also has, taken out of l */
-static void ani_take_out(ItemList *l, const ItemList *o) {
+static int ani_take_out(ItemList *l, const ItemList *o) {
+  int old = l->n;
   int k = 0;
   for (int i = 0; i < l->n; i++) {
     int dup = 0;
@@ -782,32 +783,37 @@ static void ani_take_out(ItemList *l, const ItemList *o) {
       l->items[k++] = l->items[i];
   }
   l->n = k;
+  return old != k;
 }
-/* a row came: no title twice in the first six rows (the row nearer the top keeps it), and a row under 8 cards is not
-   shown. Then as any catalog's answer */
+/* Keep the first discovery rows distinct. Continue Watching and My List reflect the library as-is. */
 static void on_anime(ItemList *l, int cached, void *ud) {
   uintptr_t t = (uintptr_t)ud;
   Board *b = &boards[(t >> 28) & 7];
   int row = t & 63;
   if ((b->gen & 0x3fffff) == ((t >> 6) & 0x3fffff) && row < b->n) {
-    if (row < 6)
+    Row *r = &b->rows[row];
+    if (aniPlan[r->alIdx1 - 1].src != AS_LIST && row < 6) {
       for (int j = 0; j < 6 && j < b->n; j++) {
         Row *o = &b->rows[j];
-        if (j == row || !o->items.n)
+        if (j == row || !o->items.n || !o->alIdx1 || aniPlan[o->alIdx1 - 1].src == AS_LIST)
           continue;
         if (j < row)
           ani_take_out(l, &o->items);
-        else {
-          ani_take_out(&o->items, l);
-          o->hidden = o->items.n < 8 && !o->wide;
+        else if (j != b->rowIdx && ani_take_out(&o->items, l)) {
+          prep_free(o);
+          o->hidden = !o->items.n;
           if (o->col >= o->items.n)
             o->col = o->items.n ? o->items.n - 1 : 0;
         }
       }
-    if (l->n < 8)
-      l->n = 0;
+    }
   }
   on_catalog(l, cached, ud);
+  if (cur() == b && row < b->n && b->n && b->rows[b->rowIdx].hidden) {
+    int first = first_visible_row(b, 0, 1);
+    if (first >= 0)
+      b->rowIdx = first;
+  }
 }
 static void ani_ask(Board *b, int ri) {
   Row *r = &b->rows[ri];
@@ -2012,6 +2018,8 @@ void board_disc_type_set(int t) {
 static void enter_disc(const void *p) {
   (void)p;
   board_leave();
+  if (discBoard == B_ANIME && boards[B_ANIME].built)
+    anime_page_open();
   board_enter_k(&boards[discBoard]);
 }
 static void enter_col(const void *p) {
@@ -2359,7 +2367,8 @@ static void ani_tick(Board *b) {
   if (now < aniAskAt)
     return;
   aniAskAt = now + 0.25;
-  anime_taste_begin();
+  if (recs_on())
+    anime_taste_begin();
   if (!b->nfeat)
     ani_feat_fill(b); /* (its lists may have come since) */
   int mem = plat_mem_total_mb(), ahead = mem > 0 && mem <= 1200 ? 2 : 4;
