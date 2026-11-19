@@ -1516,7 +1516,95 @@ int lib_id_is_anime(const char *type, const char *id) {
 int lib_item_is_anime(const cJSON *it) {
   const char *type = js_str(it, "type", ""), *id = js_str(it, "_id", "");
   return lib_id_is_anime(type, id) || lib_id_is_anime(NULL, js_str(js_obj(it, "state"), "video_id", "")) ||
-         meta_is_anime(it) || meta_is_anime(sb_meta_cached(type, id));
+         meta_is_anime(it) || js_bool(store_node("animeLibraryKinds"), id, 0) ||
+         meta_is_anime(sb_meta_cached(type, id));
+}
+/* Old library records often contain just an IMDb ID and artwork. Resolve their in-progress titles in the
+   background and remember the classification on this device. */
+static unsigned animeLibraryVer, animeProbeLibVer;
+static Uint32 animeProbeAt;
+static int animeProbeOffset, animeProbePending;
+unsigned lib_anime_version(void) {
+  return animeLibraryVer;
+}
+static int anime_probe_save(const char *id, const cJSON *meta) {
+  if (!js_str(meta, "country", "")[0] || !js_arr(meta, "genres"))
+    return 0;
+  int anime = meta_is_anime(meta);
+  cJSON *known = store_node("animeLibraryKinds");
+  if (!cJSON_IsObject(known))
+    known = cJSON_CreateObject();
+  cJSON_DeleteItemFromObjectCaseSensitive(known, id);
+  cJSON_AddBoolToObject(known, id, anime);
+  store_set_node("animeLibraryKinds", known);
+  if (anime) {
+    animeLibraryVer++;
+    if (getenv("SB_ROWLOG"))
+      fprintf(stderr, "[anime] classified library title %s\n", id);
+  }
+  return 1;
+}
+typedef struct {
+  char id[64], type[16];
+} AnimeProbe;
+static void anime_probe_cinemeta(int status, const unsigned char *body, size_t len, void *ud) {
+  (void)len;
+  AnimeProbe *probe = ud;
+  cJSON *answer = status == 200 ? net_json(body) : NULL;
+  anime_probe_save(probe->id, js_obj(answer, "meta"));
+  net_json_free(answer);
+  animeProbePending = 0;
+  free(probe);
+}
+static void anime_probe_meta(cJSON *meta, void *ud) {
+  AnimeProbe *probe = ud;
+  if (anime_probe_save(probe->id, meta)) {
+    animeProbePending = 0;
+    free(probe);
+    return;
+  }
+  char url[160];
+  snprintf(url, sizeof url, CINEMETA "/meta/%s/%s.json", probe->type, probe->id);
+  net_get_timeout(url, 6000, anime_probe_cinemeta, probe);
+}
+void lib_anime_tick(void) {
+  if (animeProbePending)
+    return;
+  Uint32 now = SDL_GetTicks();
+  if (animeProbeLibVer != libVer) {
+    animeProbeLibVer = libVer;
+    animeProbeOffset = 0;
+    animeProbeAt = now + 250;
+  }
+  if ((Sint32)(now - animeProbeAt) < 0)
+    return;
+  const cJSON *known = store_node("animeLibraryKinds"), *it;
+  int i = 0;
+  cJSON_ArrayForEach(it, lib_arr()) {
+    if (i++ < animeProbeOffset)
+      continue;
+    const char *type = js_str(it, "type", ""), *id = js_str(it, "_id", "");
+    const cJSON *state = js_obj(it, "state");
+    double progress = js_num(state, "timeOffset", 0), duration = js_num(state, "duration", 0);
+    if ((!sb_is_imdb(id) || id[2] == 0 || id[strspn(id + 2, "0123456789") + 2]) ||
+        (strcmp(type, "movie") && strcmp(type, "series")) || (js_bool(it, "removed", 0) && !js_bool(it, "temp", 0)) ||
+        progress <= 0 || (duration > 0 && progress > duration * 0.96) ||
+        cJSON_IsBool(cJSON_GetObjectItemCaseSensitive(known, id)) ||
+        lib_id_is_anime(NULL, js_str(state, "video_id", "")))
+      continue;
+    AnimeProbe *probe = calloc(1, sizeof *probe);
+    if (!probe)
+      break;
+    copy_str(probe->id, sizeof probe->id, id);
+    copy_str(probe->type, sizeof probe->type, type);
+    animeProbePending = 1;
+    animeProbeOffset = i;
+    animeProbeAt = now + 250;
+    sb_meta(type, id, anime_probe_meta, probe);
+    return;
+  }
+  animeProbeOffset = 0;
+  animeProbeAt = now + 60000;
 }
 int lib_cw_items_k(ItemList *out, int kind) {
   cJSON *lib = lib_arr();
@@ -1568,6 +1656,7 @@ int lib_cw_items_k(ItemList *out, int kind) {
   for (int i = 0; i < n; i++) {
     item_from_lib(&out->items[i], picks[i]);
     out->items[i].cw = 1;
+    out->items[i].anime = base == LIB_CW_ANIME;
   }
   free(picks);
   return n;

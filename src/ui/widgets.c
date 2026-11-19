@@ -584,7 +584,7 @@ void card_prep(CardPrep *cp, const Item *it, int wide, const char *artOverride) 
   }
   /* anime episodes are numbered without seasons: "Name" with "E17 · 9 min left" in the chip, "E6 next" for the next one
    */
-  int anime = lib_id_is_anime(it->type, it->id) && c && ep > 0;
+  int anime = (it->anime || lib_id_is_anime(it->type, it->id)) && c && ep > 0;
   if (anime)
     snprintf(cp->lbl, sizeof cp->lbl, "%s", it->name);
   else if (c && se >= 0)

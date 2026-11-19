@@ -126,6 +126,8 @@ int lib_is_marked_watched(const Item *it);
 void lib_toggle_watched(const Item *it, const cJSON *videos);
 int lib_movie_watched(const cJSON *lit);
 int lib_item_is_anime(const cJSON *lit);
+void lib_anime_tick(void); /* classify older IMDb Continue Watching entries when the Anime tab is enabled */
+unsigned lib_anime_version(void);
 int lib_series_watched(const cJSON *lit, const cJSON *videos);
 void lib_set_eps_watched(cJSON *lit, const cJSON *videos, const char **epIds, int n, int on);
 void lib_set_movie_watched(cJSON *lit, int on);

@@ -118,7 +118,7 @@ typedef struct {
   int dtype; /* what a Discover-kind board holds: 0 everything (phones), 1 Shows, 2 Movies, 3 Catalogue, 4 Anime */
   Row rows[MAXROWS];
   int n, rowIdx, built, winRow;
-  unsigned gen, libVer;
+  unsigned gen, libVer, animeLibVer;
   /* Discover's spotlight: this year's films and the trending series, alternating; it moves on every 4 s */
   Item feat[NFEAT];
   int nfeat, featIdx, featOn, featLoad, featGotM, featGotS;
@@ -774,7 +774,8 @@ static int fy_ok(const Board *b) {
 }
 /* a Shows / Movies board whose page has changed (or just become ready) since it was built */
 static int kind_stale(const Board *b) {
-  return kindb(b) && (b->libVer != lib_version() || (b->recsVer != recs_version() && (b->fy || fy_ok(b))));
+  return kindb(b) && (b->libVer != lib_version() || (b->recsVer != recs_version() && (b->fy || fy_ok(b))) ||
+                      (b->animeLibVer != lib_anime_version() && app_anime_on()));
 }
 static void rows_window(Board *b) {
   b->winRow = b->rowIdx;
@@ -933,6 +934,7 @@ static void ani_rows(Board *b, int keep, const int *oldCols) {
 static double catAt; /* when the Catalogue last built: an empty page says so a moment after */
 #define CATDEFS 60 /* the Catalogue: every installed catalogue of every addon, as many as fit the board's rows */
 static void load_catalog_rows(Board *b, int disc, int keep) {
+  b->animeLibVer = lib_anime_version();
   if (b->kind == 2) {
     col_rows(b, colFolder);
     return;

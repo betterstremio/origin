@@ -2429,6 +2429,8 @@ void app_tick(float dt) {
   sync_tick();
   recs_tick();
   anilist_tick();
+  if (app_splash_done && !player_open() && app_anime_on())
+    lib_anime_tick();
   update_tick(dt);
   best_tick();
   curKey = 0; /* (a page switch later in the frame is not a key's) */
