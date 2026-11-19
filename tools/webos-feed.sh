@@ -3,6 +3,10 @@
 #   <site>/webos/apps.json                                  the Homebrew Channel repository (add https://betterstremio.github.io/webos/apps.json)
 #   <site>/webos/api/apps/<appid>/manifest.json             version, IPK link and SHA-256, notes
 #   <site>/webos/icon.png
+#   <site>/webos/api/apps/tv.stremioorigin.app/manifest.json  the old id's manifest (2.1.12 and before read it), always
+#                                                           naming the newest new-id IPK: their updater checks only that
+#                                                           the link ends in _arm.ipk, installs it beside itself, and
+#                                                           3.0.0's first run imports the old data and removes the old app
 # The app reads the manifest first (GitHub Pages has no hourly limit) and GitHub's release list only when it fails.
 # Older installs (2.1.4 and before) read the same manifest when the release list fails.
 #   tools/webos-feed.sh X.Y.Z NOTES.md SITE_DIR      writes the files from the release on GitHub (its IPK and digest)
@@ -16,11 +20,12 @@ IPK="${APPID}_${V}_arm.ipk"
 DG="$(gh api "repos/$SLUG/releases/tags/v$V" --jq ".assets[] | select(.name == \"$IPK\") | .digest")"
 [[ "$DG" =~ ^sha256:[0-9a-f]{64}$ ]] || die "no $IPK with a digest in release v$V"
 PY="$(command -v python3 || command -v python)" || die "no python"
-mkdir -p "$SITE/webos/api/apps/$APPID"
+OLDID=tv.stremioorigin.app
+mkdir -p "$SITE/webos/api/apps/$APPID" "$SITE/webos/api/apps/$OLDID"
 cp "$ROOT/packaging/webos/icon.png" "$SITE/webos/icon.png"
-"$PY" - "$V" "$NOTES" "$SITE" "$APPID" "$SLUG" "${DG#sha256:}" <<'EOF'
+"$PY" - "$V" "$NOTES" "$SITE" "$APPID" "$SLUG" "${DG#sha256:}" "$OLDID" <<'EOF'
 import json, sys
-v, notes, site, appid, slug, sha = sys.argv[1:]
+v, notes, site, appid, slug, sha, oldid = sys.argv[1:]
 base = "https://betterstremio.github.io/webos"
 desc = "Stremio and Nuvio accounts on your LG TV: artwork, trailers, the best stream in one press, subtitles, torrents. Unofficial."
 md = open(notes, encoding="utf-8").read()
@@ -32,7 +37,9 @@ lst = {"paging": {"page": 1, "count": 1, "maxPage": 1, "itemsTotal": 1},
        "packages": [{"id": appid, "title": "Origin", "iconUri": base + "/icon.png", "pool": "main",
                      "manifestUrl": f"{base}/api/apps/{appid}/manifest.json", "shortDescription": desc,
                      "manifest": man}]}
-for p, o in ((f"{site}/webos/api/apps/{appid}/manifest.json", man), (f"{site}/webos/apps.json", lst)):
+old = dict(man, id=oldid)   # same IPK (new id): installs beside the old app, which the new one then removes
+for p, o in ((f"{site}/webos/api/apps/{appid}/manifest.json", man), (f"{site}/webos/api/apps/{oldid}/manifest.json", old),
+             (f"{site}/webos/apps.json", lst)):
     with open(p, "w", encoding="utf-8", newline="\n") as f: json.dump(o, f, indent=2, ensure_ascii=False); f.write("\n")
 EOF
 echo "webOS listing for $V written to $SITE/webos (IPK sha256 ${DG:7:12}...)"
