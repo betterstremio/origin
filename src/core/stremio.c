@@ -1528,6 +1528,9 @@ int lib_item_is_anime(const cJSON *it) {
 static unsigned animeLibraryVer, animeProbeLibVer;
 static Uint32 animeProbeAt;
 static int animeProbeOffset, animeProbePending;
+void lib_anime_changed(void) {
+  animeLibraryVer++;
+}
 unsigned lib_anime_version(void) {
   return animeLibraryVer;
 }

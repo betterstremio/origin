@@ -1,5 +1,6 @@
 #include "core/anime_taste.h"
 #include "core/anilist.h"
+#include "core/anime_map.h"
 #include "core/json.h"
 #include <math.h>
 #include <stdint.h>
@@ -147,10 +148,13 @@ static int seed_cmp(const void *a, const void *b) {
   return x < y ? 1 : x > y ? -1 : 0;
 }
 void anime_taste_begin(void) {
-  if (begun && libSeen == lib_version())
+  static int mapSeen = -1;
+  int mapIn = anime_map_version() > 0; /* (IMDb-only library titles become seeds once the map is read) */
+  if (begun && libSeen == lib_version() && mapSeen == mapIn)
     return;
   begun = 1;
   libSeen = lib_version();
+  mapSeen = mapIn;
   static Seed old[MAX_SEEDS], fresh[MAX_SEEDS * 4]; /* (main thread only; too big for a stack on a stick) */
   int nold = nseeds, nf = 0;
   memcpy(old, seeds, sizeof old);

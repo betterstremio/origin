@@ -2,6 +2,7 @@
 #include "core/json.h"
 #include "core/net.h"
 #include "core/store.h"
+#include "core/stremio.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -521,7 +522,6 @@ static void on_answer(int status, const unsigned char *body, size_t len, void *u
   if (good) {
     append_answers(r, answers);
     failStreak = 0;
-    backoffUntil = 0;
     fprintf(stderr, "[animemap] asked %d, found %d, missed %d, %lld ms\n", r->n, found, r->n - found, elapsed);
   } else {
     retry_request(r);
@@ -670,6 +670,7 @@ static void on_map_file(int status, const unsigned char *body, size_t len, void 
   (void)ud;
   parse_map(status, body, len);
   loaded = 1;
+  lib_anime_changed(); /* (library titles known as anime only through the map: their rows look again) */
   pending_drop_known();
   version++;
   fprintf(stderr, "[animemap] %d pairs from the disk\n", nentries);

@@ -212,6 +212,7 @@ static int native_hist(const char *id) {
                 js_str(st, "video_id", "")[0]);
 }
 /* history under any native id of the show: every season's AniList id and each Kitsu id */
+/* 2: history under this entry's own ids; 1: under another season's (any alias of the show); 0: none */
 static int map_native_owned(int alid, const char *tt) {
   int al[32], ki[32], n = 0;
   char k[40];
@@ -222,12 +223,12 @@ static int map_native_owned(int alid, const char *tt) {
     if (a > 0) {
       snprintf(k, sizeof k, "anilist:%d", a);
       if (native_hist(k))
-        return 1;
+        return i < 0 ? 2 : 1;
     }
     if (kid > 0) {
       snprintf(k, sizeof k, "kitsu:%d", kid);
       if (native_hist(k))
-        return 1;
+        return i < 0 ? 2 : 1;
     }
   }
   return 0;
@@ -259,8 +260,7 @@ static int map_list(ItemList *l, int dropOwned, int fold) {
       key[i] = a > 0 ? anime_map_imdb(a) : NULL;
       if (!key[i])
         unmapped++;
-      else if (map_native_owned(a, key[i])) {
-        native[i] = 1;
+      else if ((native[i] = (char)map_native_owned(a, key[i]))) {
         keptNative++;
       } else if (dropOwned && lib_has(key[i]))
         gone[i] = 1;
@@ -285,10 +285,10 @@ static int map_list(ItemList *l, int dropOwned, int fold) {
       changed++;
       continue;
     }
-    for (int j = i; fold && j < n; j++)
-      if (!gone[j] && native[j] && key[j] && !strcmp(key[j], key[i])) {
+    for (int j = i, best = 0; fold && j < n; j++) /* (the season whose own ids hold the progress first) */
+      if (!gone[j] && native[j] > best && key[j] && !strcmp(key[j], key[i])) {
         pick = j;
-        break;
+        best = native[j];
       }
     keep[nk++] = pick;
   }

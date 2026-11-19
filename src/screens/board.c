@@ -2492,9 +2492,12 @@ static void ani_tick(Board *b) {
     Row *r = &b->rows[i];
     if (!aniDirty[i] || i == b->rowIdx) /* (not under the focus: no card vanishes there) */
       continue;
-    aniDirty[i] = 0;
-    /* (the rows next to the focus have details out by position: only rewritten in place there, never folded) */
+    /* (the rows next to the focus have details out by position: only rewritten in place there; folded later, once
+       the focus is further away) */
     int near = i >= b->rowIdx - 1 && i <= b->rowIdx + 1;
+    if (near && aniDirty[i] == 2)
+      continue;
+    aniDirty[i] = near ? 2 : 0;
     if (r->items.n > 0 && anime_page_map_list_k(&r->items, !near)) {
       prep_free(r);
       r->hidden = !r->items.n;
