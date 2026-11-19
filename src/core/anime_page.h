@@ -31,6 +31,8 @@ int anime_page_mylist(ItemList *out); /* the anime of the library (My List), new
    into one card, the user's own native-id history kept as it is. In place, never waits. Returns how many cards
    changed or went (0: nothing) */
 int anime_page_map_list(ItemList *l);
+/* the same; fold 0 only rewrites in place (no card moves: for rows with details asked by position) */
+int anime_page_map_list_k(ItemList *l, int fold);
 
 /* the Kitsu meta of a title: the fanart background and logo, the IMDb rating; asked once, kept 7 days */
 typedef struct {

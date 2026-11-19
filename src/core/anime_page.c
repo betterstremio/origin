@@ -170,6 +170,7 @@ void anime_page_open(void) {
   if (!openAt)
     openAt = (double)time(NULL);
   anime_addon_set(1);
+  anime_map_version(); /* (starts reading the map file: usually in before AniList's lists) */
   if (recs_on())
     anime_taste_begin();
 }
@@ -198,19 +199,40 @@ static void keep8(ItemList *dst, const ItemList *l) {
    id as Shows does). The user's own history under the native ids keeps the native card. Seasons of one show fold into
    one card. Never waits: ids not known yet are asked, the list goes on as it is (the board runs this again later). */
 #define MAP_MAX 128
-static int map_native_owned(int alid) {
-  char k[40];
-  snprintf(k, sizeof k, "anilist:%d", alid);
-  if (lib_has(k))
+/* the user's own record under a native id: on My List, or left by playing (a removed/temp record that holds a resume
+   point or watched episodes) */
+static int native_hist(const char *id) {
+  cJSON *r = lib_get(id);
+  if (!r)
+    return 0;
+  if (!js_bool(r, "removed", 1))
     return 1;
-  int kid = anime_map_kitsu(alid);
-  if (kid > 0) {
-    snprintf(k, sizeof k, "kitsu:%d", kid);
-    return lib_has(k);
+  const cJSON *st = js_obj(r, "state");
+  return st && (js_num(st, "timeOffset", 0) > 0 || js_num(st, "timesWatched", 0) > 0 || js_str(st, "watched", "")[0] ||
+                js_str(st, "video_id", "")[0]);
+}
+/* history under any native id of the show: every season's AniList id and each Kitsu id */
+static int map_native_owned(int alid, const char *tt) {
+  int al[32], ki[32], n = 0;
+  char k[40];
+  if (tt)
+    n = anime_map_aliases(tt, al, ki, 32);
+  for (int i = -1; i < n; i++) {
+    int a = i < 0 ? alid : al[i], kid = i < 0 ? anime_map_kitsu(alid) : ki[i];
+    if (a > 0) {
+      snprintf(k, sizeof k, "anilist:%d", a);
+      if (native_hist(k))
+        return 1;
+    }
+    if (kid > 0) {
+      snprintf(k, sizeof k, "kitsu:%d", kid);
+      if (native_hist(k))
+        return 1;
+    }
   }
   return 0;
 }
-static int map_list(ItemList *l, int dropOwned) {
+static int map_list(ItemList *l, int dropOwned, int fold) {
   if (!l || !l->items || l->n <= 0)
     return 0;
   int n = l->n > MAP_MAX ? MAP_MAX : l->n;
@@ -237,7 +259,7 @@ static int map_list(ItemList *l, int dropOwned) {
       key[i] = a > 0 ? anime_map_imdb(a) : NULL;
       if (!key[i])
         unmapped++;
-      else if (map_native_owned(a)) {
+      else if (map_native_owned(a, key[i])) {
         native[i] = 1;
         keptNative++;
       } else if (dropOwned && lib_has(key[i]))
@@ -255,7 +277,7 @@ static int map_list(ItemList *l, int dropOwned) {
       continue;
     }
     int lead = -1, pick = i; /* the first of its group; the card kept: a native one when the group has one */
-    for (int j = 0; j < i && lead < 0; j++)
+    for (int j = 0; fold && j < i && lead < 0; j++)
       if (!gone[j] && key[j] && !strcmp(key[j], key[i]))
         lead = j;
     if (lead >= 0) {
@@ -263,7 +285,7 @@ static int map_list(ItemList *l, int dropOwned) {
       changed++;
       continue;
     }
-    for (int j = i; j < n; j++)
+    for (int j = i; fold && j < n; j++)
       if (!gone[j] && native[j] && key[j] && !strcmp(key[j], key[i])) {
         pick = j;
         break;
@@ -301,7 +323,10 @@ static int map_list(ItemList *l, int dropOwned) {
   return changed;
 }
 int anime_page_map_list(ItemList *l) {
-  return map_list(l, 0);
+  return map_list(l, 0, 1);
+}
+int anime_page_map_list_k(ItemList *l, int fold) {
+  return map_list(l, 0, fold);
 }
 static void on_al(ItemList *l, int cached, void *ud) {
   Ask *a = ud;
@@ -366,7 +391,7 @@ static void on_top_list(ItemList *l, int cached, void *ud) {
     qsort(t->pool, (size_t)t->np, sizeof t->pool[0], pool_rank);
     ItemList pv = { t->pool, t->np,
                     t->np }; /* (ranked by AniList id first; then made Shows cards, the owned ones out) */
-    map_list(&pv, 1);
+    map_list(&pv, 1, 1);
     t->np = pv.n;
     int n = t->np < 20 ? t->np : 20;
     out->items = calloc((size_t)n, sizeof(Item));

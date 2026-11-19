@@ -1255,6 +1255,11 @@ static void on_meta(cJSON *m, void *ud) {
   Item *it = item_at(b, row, col);
   if (!it)
     return;
+  { /* (a late answer never lands on another title: the cards of a row can move while details are out) */
+    const char *mid = js_str(m, "id", ""), *mim = js_str(m, "imdb_id", "");
+    if (mid[0] && strcmp(mid, it->id) && strcmp(mim, it->id) && (sb_is_imdb(it->id) || sb_is_imdb(mid)))
+      return;
+  }
   if (!it->description[0]) {
     const char *d = cJSON_GetStringValue(cJSON_GetObjectItem(m, "description"));
     if (d)
@@ -2488,7 +2493,9 @@ static void ani_tick(Board *b) {
     if (!aniDirty[i] || i == b->rowIdx) /* (not under the focus: no card vanishes there) */
       continue;
     aniDirty[i] = 0;
-    if (r->items.n > 0 && anime_page_map_list(&r->items)) {
+    /* (the rows next to the focus have details out by position: only rewritten in place there, never folded) */
+    int near = i >= b->rowIdx - 1 && i <= b->rowIdx + 1;
+    if (r->items.n > 0 && anime_page_map_list_k(&r->items, !near)) {
       prep_free(r);
       r->hidden = !r->items.n;
       if (r->col >= r->items.n)
