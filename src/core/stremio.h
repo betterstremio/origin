@@ -111,6 +111,7 @@ enum { LIB_CW_ALL = 0, LIB_CW_SERIES = 1, LIB_CW_MOVIES = 2, LIB_CW_ANIME = 3, L
 int lib_id_is_anime(const char *type,
                     const char *id); /* type "anime", or an anime id (kitsu:, anilist:, mal:, anidb:) */
 int lib_cw_items_k(ItemList *out, int kind); /* Continue Watching of one kind, newest first: every one there is */
+int lib_watch_again_items(ItemList *out, int noAnime, int max);
 int lib_cw_items(ItemList *out); /* Continue Watching, newest first (all kinds) */
 typedef struct {
   char vid[80];

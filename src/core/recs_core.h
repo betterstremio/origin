@@ -247,6 +247,7 @@ typedef enum {
 } RecFamily;
 #define RECS_F_RANK 1 /* Top 10 numerals: keep TMDB order, exempt from the "first six cards" rule (still counted) */
 #define RECS_F_KEEP 2 /* keep the order the caller gives (Because you watched, Top picks): no re-ranking by taste */
+#define RECS_F_MULTI_SEASON 4 /* requires at least two seasons in TMDB series details */
 typedef struct {
   unsigned char family;
   char kind; /* RecFamily; 'm', 't' or 0 (mixed: the answer has media_type per entry) */
@@ -286,7 +287,7 @@ int recs_rows_build(const RecRowCtx *cx, RecRowDef *out, int max);
      Because you watched (the kind's seeds Home did not use, none when the kind has < 2 seeds), Binge-worthy series
      (series), language rows, one "Popular {genre} {films|series}" row per genre of the kind in taste order, providers,
      moods of the kind, decades, people (films only: TMDB's discover/tv has no cast filter).
-   Not built: "Watch again" and "My List" (they need the library, which recs_core never sees). */
+   The board adds "Watch again" and "My List" from the local library. */
 int recs_rows_build_kind(const RecRowCtx *cx, char kind, const RecRowDef *home, int nHome, RecRowDef *out, int max);
 /* how many of cx's seeds are of this kind, usable for Because-you-watched (weight > 0, >= 8 recs+similar) */
 int recs_kind_seeds(const RecRowCtx *cx, char kind);

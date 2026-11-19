@@ -25,6 +25,7 @@
 #include "core/colstore.h"
 #include "core/httpd.h"
 #include "core/recs.h"
+#include "core/recs_core.h"
 #include "core/json.h"
 #include "core/pace.h"
 #include "platform/plat.h"
@@ -683,18 +684,43 @@ static void my_list_row(Board *b, int series, int anime) {
   }
   free(pk);
 }
-/* Shows / Movies with For You: the kind's page rows, My List of the kind second to last */
+static void watch_again_row(Board *b, int noAnime, int slot) {
+  ItemList items;
+  if (lib_watch_again_items(&items, noAnime, RECS_PAGE_CARDS) < 8) {
+    itemlist_clear(&items);
+    return;
+  }
+  Row *r = row_add(b, T("Watch again"), 0, 0);
+  if (!r) {
+    itemlist_clear(&items);
+    return;
+  }
+  r->items = items;
+  r->hidden = 0;
+  /* Slot 12 on the full page, ahead of My List even when there are fewer rows. */
+  if (slot < b->n - 1) {
+    Row watch = *r;
+    memmove(b->rows + slot + 1, b->rows + slot, (size_t)(b->n - 1 - slot) * sizeof *r);
+    b->rows[slot] = watch;
+  }
+}
+/* Shows / Movies with For You: the kind's page rows and local library rows. */
 static void kind_recs_rows(Board *b, int pg) {
   int first = b->n;
   recs_page_rows(b, pg);
   if (b->n <= first)
     return;
   int before = b->n;
-  my_list_row(b, pg == RECS_PG_SHOWS, strcmp(store_get("animeTab", "false"), "false") != 0);
+  int anime = strcmp(store_get("animeTab", "false"), "false") != 0;
+  my_list_row(b, pg == RECS_PG_SHOWS, anime);
   if (b->n > before) { /* the new row sits last: it steps in front of the page's last row */
     Row t = b->rows[b->n - 1];
     b->rows[b->n - 1] = b->rows[b->n - 2];
     b->rows[b->n - 2] = t;
+  }
+  if (pg == RECS_PG_MOVIES) {
+    int slot = b->n > before ? before - 1 : before;
+    watch_again_row(b, anime, slot < 11 ? slot : 11);
   }
 }
 /* the window: a For You row holds its cards only within WIN_LOAD rows of the focus and lets them go beyond WIN_DROP
@@ -727,7 +753,7 @@ static int fy_ok(const Board *b) {
 }
 /* a Shows / Movies board whose page has changed (or just become ready) since it was built */
 static int kind_stale(const Board *b) {
-  return kindb(b) && b->recsVer != recs_version() && (b->fy || fy_ok(b));
+  return kindb(b) && (b->libVer != lib_version() || (b->recsVer != recs_version() && (b->fy || fy_ok(b))));
 }
 static void rows_window(Board *b) {
   b->winRow = b->rowIdx;
@@ -3538,6 +3564,7 @@ void board_ph_tick(int kind, int r0, int r1, float dt) {
   }
   if (kind_stale(b)) {
     b->recsVer = recs_version();
+    b->libVer = lib_version();
     load_catalog_rows(b, 1, b->n > 0);
   }
   if (b->kind == 0 && b->libVer != lib_version()) {
