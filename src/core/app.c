@@ -2444,32 +2444,8 @@ void app_tick(float dt) {
   if (app_overlay && app_overlay->tick)
     app_overlay->tick(dt);
 }
-/* the purple glass behind the sign-in page and Search (the page's faded mark lies under its glass there: never seen,
- * not drawn) */
-static Tween glassA;
-static char glassUrl[1100];
+/* (3.0.0: the sign-in has no picture behind it any more; it sits on Home's flat page colour like the rest) */
 static void glass_draw(void) {
-  static int noGlass = -1;
-  if (noGlass < 0)
-    noGlass = getenv("SB_NOGLASS") != NULL; /* read once */
-  if (noGlass)
-    return; /* an experiment: the page without its full-screen layers */
-  int wantGlass = SCR == SCR_LOGIN; /* (Search shares Settings' plain base and its two glows) */
-  tween_to(&glassA, wantGlass ? 1 : 0, 0.4f, EASE_OUT);
-  tween_tick(&glassA, DT);
-  if (!glassUrl[0]) {
-    extern const char *plat_asset_dir(void);
-    snprintf(glassUrl, sizeof glassUrl, "file://%s/splashbg.jpg", plat_asset_dir());
-  }
-  if (glassA.v > 0.001f) {
-    float asp;
-    GLuint t = img_get(glassUrl, 1920, 1080, &asp);
-    if (t) {
-      float u0, v0, u1, v1;
-      img_cover_uv(asp, SB_W / SB_H, 0, &u0, &v0, &u1, &v1);
-      gfx_image(t, 0, 0, SB_W, SB_H, 0, WHITE_A((int)(255 * glassA.v)), u0, v0, u1, v1);
-    }
-  }
 }
 /* Settings' and Search's background, and the guide's: the two glows (ui/orbs.c), on their springs */
 /* the guide over Home (welcome.c) takes the glows for its page (as Settings has them) and draws them over its own
