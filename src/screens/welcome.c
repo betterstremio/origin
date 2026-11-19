@@ -223,8 +223,7 @@ static float rnd(int i) {
   return (x & 0xffff) / 65535.0f;
 }
 static void glow(float cx, float cy, float w, float h, uint32_t c, float a) {
-  if (a > 0.004f)
-    gfx_alpha_tex(gfx_radial_tex(), cx - w / 2, cy - h / 2, w, h, col_alpha(c | 0xff000000u, a));
+  (void)cx, (void)cy, (void)w, (void)h, (void)c, (void)a; /* flat look: no halos */
 }
 /* the picture's clock passed `when` this frame (on a loop of `len` seconds): the glows are pushed then */
 static int ev(float when, float len) {
@@ -234,12 +233,10 @@ static int ev(float when, float len) {
   return b >= a ? when > a && when <= b : when > a || when <= b;
 }
 static void push(float when, float len, int kind, float s) {
-  if (ev(when, len))
-    orbs_push(&orbs[evSlot], kind, s);
+  (void)when, (void)len, (void)kind, (void)s; /* orbs are gone: nothing to feed */
 }
 static void porbs(int layout, float a) {
-  orbs_step(&orbs[evSlot], app_dt(), layout, 1, 2.6f);
-  orbs_draw(&orbs[evSlot], a);
+  (void)layout, (void)a; /* flat look: no orbs */
 }
 
 /* ==== the pictures: the app's own screens, in layout units (1920 x 1080) ==== */
@@ -2007,28 +2004,18 @@ static void measure(void) {
     W.news[i].nx = W.news[i].x[0] ? text_wrap_count(T(W.news[i].x), COLW - CHIP - 24, 3, NX_PX, 500, 0) : 0;
   }
 }
-static void step_label(int i, char *o, size_t n) {
-  if (W.p[i].pv == PV_NEWS) {
-    snprintf(o, n, "%s", T1("Version {v}", "v", W.short_ver));
-    return;
-  }
-  char a[16], b[16];
-  snprintf(a, sizeof a, "%d", i + 1);
-  snprintf(b, sizeof b, "%d", W.n);
-  snprintf(o, n, "%s", T2("{n} of {total}", "n", a, "total", b));
-}
 static float point_h(const Page *p, int b) {
   float h = fmaxf(CHIP, p->nbl[b] * PO_LH);
   return p->ctl && b == p->nb - 1 ? fmaxf(h, CTL_H - 24) + 24 : h + 12;
 }
 static float words_h(const Page *p) {
   if (p->pv == PV_NEWS) {
-    float h = text_line_height(STEP_PX) + 18 + p->nt * TI_LH + 36;
+    float h = p->nt * TI_LH + 36;
     for (int i = 0; i < W.nnews; i++)
       h += fmaxf(CHIP, W.news[i].nt * NT_LH + (W.news[i].nx ? 6 + W.news[i].nx * NX_LH : 0)) + NGAP;
     return h;
   }
-  float h = text_line_height(STEP_PX) + 18 + p->nt * TI_LH + (p->nl ? 20 + p->nl * LE_LH : 0) + 40;
+  float h = p->nt * TI_LH + (p->nl ? 20 + p->nl * LE_LH : 0) + 40;
   for (int b = 0; b < p->nb; b++)
     h += point_h(p, b) + PO_GAP;
   return h;
@@ -2058,10 +2045,6 @@ static void words(int i, float a, float dx) {
     y = 110;
   gfx_opacity_push(a);
   gfx_offset_push(dx, 0);
-  char lb[160];
-  step_label(i, lb, sizeof lb);
-  text_draw(lb, x, y, STEP_PX, 800, ACC2 | 0xff000000u, 1.4f, COLW, al);
-  y += text_line_height(STEP_PX) + 18;
   text_draw_wrapped(T(p->title), x, y, COLW, 2, TI_PX, 800, WHITE_A(255), -1.4f, al, TI_LH);
   y += p->nt * TI_LH;
   if (p->pv == PV_NEWS) {
@@ -2092,21 +2075,9 @@ static void words(int i, float a, float dx) {
       float h = point_h(p, b), k = 1 - fabsf(b - fo);
       k = k < 0 ? 0 : k;
       int ctl = p->ctl && b == p->nb - 1;
-      float L0 = rtl ? x - COLW : x;
-      if (ctl) {
-        gfx_rrect(L0 - 16, y - 12, COLW + 32, h, 26, col_mix(WHITE_A(16), ACC | 0xff000000u, k));
-        if (k > 0.01f)
-          gfx_ring_out(L0 - 16, y - 12, COLW + 32, h, 26, 4, acc_a(0.35f * k));
-      } else if (k > 0.01f) {
-        gfx_rrect(L0 - 16, y - 6, COLW + 32, h, 22, WHITE_A((int)(18 * k)));
-        gfx_rrect(rtl ? x + 8 : x - 22, y + 6, 6, h - 24, 3, col_alpha(ACC2, k));
-      }
       float ph = fmaxf(CHIP, p->nbl[b] * PO_LH), top = ctl ? y - 12 + (h - ph) / 2 : y, cy2 = top + (ph - CHIP) / 2,
             cx = rtl ? x - CHIP : x;
-      uint32_t cbg = ctl ? col_mix(acc_a(0.22f), WHITE_A(60), k) : col_mix(acc_a(0.14f), ACC | 0xff000000u, k),
-               cfg = ctl ? col_mix(ACC2 | 0xff000000u, ACC_FG | 0xff000000u, k)
-                         : col_mix(col_alpha(ACC2, 0.8f), ACC_FG | 0xff000000u, k);
-      gfx_rrect(cx, cy2, CHIP, CHIP, 18, cbg);
+      uint32_t cfg = col_mix(WHITE_A(140), WHITE_A(255), k); /* current point: text and glyph colour alone */
       const char *ic = p->ic[b];
       if (ic[0] == '@') {
         int key = !strcmp(ic, "@red") ? K_RED : !strcmp(ic, "@green") ? K_GREEN : !strcmp(ic, "@ok") ? K_OK : K_BACK;
@@ -2114,10 +2085,10 @@ static void words(int i, float a, float dx) {
         key_hint(cx + CHIP / 2 - kw / 2, cy2 + CHIP / 2, key, NULL, key == K_RED || key == K_GREEN ? WHITE_A(255) : cfg,
                  0);
       } else
-        icon_draw(ic, cx + 15, cy2 + 15, 30, cfg);
+        icon_draw(ic, cx + (CHIP - 34) / 2, cy2 + (CHIP - 34) / 2, 34, cfg);
       float tw = COLW - CHIP - 24 - (ctl ? 90 : 0),
             ty = top + (ph - p->nbl[b] * PO_LH) / 2 + (PO_LH - text_line_height(PO_PX)) / 2;
-      uint32_t tc = ctl ? col_mix(WHITE_A(240), ACC_FG | 0xff000000u, k) : col_mix(WHITE_A(150), WHITE_A(255), k);
+      uint32_t tc = col_mix(WHITE_A(128), WHITE_A(255), k);
       text_draw_wrapped(T(p->b[b]), x + s * (CHIP + 24), ty, tw, 3, PO_PX, 700, tc, -0.2f, al, PO_LH);
       if (ctl)
         ctl_switch(rtl ? x - COLW : x + COLW, y - 12, h, k, rtl);
@@ -2157,8 +2128,7 @@ static void picture(int slot, int i, int st, float t) {
     orbTOk = gfx_target_create(&orbT[0], ow, oh) && gfx_target_create(&orbT[1], ow, oh);
   if (orbTOk > 0) {
     gfx_target_begin(&orbT[slot], PAGE | 0xff000000u);
-    gfx_rrect_v(0, 0, SB_W, SB_H, 0, RGB(0x19, 0x15, 0x26), RGB(0x0b, 0x0a, 0x10));
-    orbs_draw(&orbs[slot], 1);
+    gfx_rrect(0, 0, SB_W, SB_H, 0, PAGE | 0xff000000u);
     gfx_target_end();
     sgOrb = orbT[slot].tex;
   } else
