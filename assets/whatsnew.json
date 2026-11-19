@@ -1,39 +1,21 @@
 {
-  "version": "2.1.0",
+  "version": "3.0.0",
   "items": [
     {
       "icon": "wn_new",
-      "title": "Nuvio accounts and profiles",
-      "text": "Sign in with Stremio or Nuvio. Nuvio profiles keep their own library, addons and picks."
-    },
-    {
-      "icon": "wn_best",
-      "title": "The best stream, picked for you",
-      "text": "Tested on your TV, one press to play.",
-      "text_windows": "Tested on this PC, one press to play."
-    },
-    {
-      "icon": "wn_cast",
-      "title": "Cast from your phone",
-      "text": "Your TV shows up on your phone. Launch the app, play and control it directly.",
-      "needs": "cast"
+      "title": "Origin, moved over",
+      "text": "Origin now installs under its own name, so it can sit beside Stremio Origin. Your sign-in and settings came with it, and the old copy was removed.",
+      "text_android": "Origin now installs under its own name, so it can sit beside Stremio Origin. Your sign-in and settings came with it. Android asks once before it removes the old copy."
     },
     {
       "icon": "wn_people",
-      "title": "People and reviews",
-      "text": "The cast list, reviews and a spotlight of what's new."
+      "title": "A new top bar",
+      "text": "Search, Home, Shows, Movies, Catalogue and My List across the top. Your profile picture opens profiles, Settings and Exit."
     },
     {
-      "icon": "wn_subs",
-      "title": "Subtitles that just fit",
-      "text": "One-press sync, styled as the film made them."
-    },
-    {
-      "icon": "wn_av",
-      "title": "Picture and sound",
-      "text": "Dolby Vision, DTS converted on the TV, USB for P2P.",
-      "text_windows": "Dolby Vision and HDR in the right colours on any monitor. DTS and TrueHD play as they are.",
-      "text_android": "Dolby Vision, on TVs that show it."
+      "icon": "wn_best",
+      "title": "Shows, Movies and Anime",
+      "text": "Each tab opens on a billboard with rows of its own and your Continue Watching first, with no limit on how many it shows. Turn on Anime in Settings > Appearance."
     }
   ],
   "support": {
