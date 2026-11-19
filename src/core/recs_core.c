@@ -1504,8 +1504,7 @@ int recs_rows_build_kind(const RecRowCtx *cx, char kind, const RecRowDef *home, 
   if (!thin)
     byw_rows(b, kind, home, nHome, low ? 3 : 5);
 
-  /* 4. Binge-worthy series: ended series with many votes, in the taste's genres (one list; a season count is not in
-     the list, so "2+ seasons" is not checked) */
+  /* 4. Binge-worthy series: ended series with many votes, in the taste's genres. The worker checks the season count. */
   if (tv) {
     char gs[48] = "", lg[16] = "";
     size_t o = 0;
@@ -1516,7 +1515,8 @@ int recs_rows_build_kind(const RecRowCtx *cx, char kind, const RecRowDef *home, 
     snprintf(path, sizeof path, "/discover/tv?with_status=3&vote_count.gte=800&sort_by=vote_average.desc%s%s%s%s%s",
              gs[0] ? "&with_genres=" : "", gs, excl(b), lg[0] ? "&with_original_language=" : "", lg);
     snprintf(key, sizeof key, "binge|t|%s|%s|%d", gs, lg[0] ? lg : "-", b->likesAnim);
-    if ((r = kind_row(b, home, nHome, key, path, RF_MOOD, 't', 0, NULL, 0.7 + (hist ? 0.2 : 0), RECS_AGE_LIST)))
+    if ((r = kind_row(b, home, nHome, key, path, RF_MOOD, 't', RECS_F_MULTI_SEASON, NULL, 0.7 + (hist ? 0.2 : 0),
+                      RECS_AGE_LIST)))
       snprintf(r->title, sizeof r->title, "%s", trs(b, "Binge-worthy series"));
   }
 

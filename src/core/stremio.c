@@ -1531,6 +1531,49 @@ int lib_cw_items_k(ItemList *out, int kind) {
 int lib_cw_items(ItemList *out) {
   return lib_cw_items_k(out, LIB_CW_ALL);
 }
+int lib_watch_again_items(ItemList *out, int noAnime, int max) {
+  *out = (ItemList){ 0 };
+  const cJSON *lib = lib_arr(), *it;
+  int count = cJSON_GetArraySize(lib);
+  if (count <= 0 || max <= 0)
+    return 0;
+  struct WatchPick {
+    const cJSON *item;
+    double watched;
+  } *picks = calloc((size_t)max, sizeof *picks);
+  if (!picks)
+    return 0;
+  int n = 0;
+  double cutoff = ((double)time(NULL) - 60.0 * 24 * 60 * 60) * 1000;
+  cJSON_ArrayForEach(it, lib) {
+    const char *type = js_str(it, "type", "");
+    const char *id = js_str(it, "_id", "");
+    if (strcmp(type, "movie") || !id[0] || !js_str(it, "name", "")[0] || (noAnime && lib_id_is_anime(type, id)) ||
+        !lib_movie_watched(it))
+      continue;
+    const cJSON *s = js_obj(it, "state");
+    double watched = tms(cJSON_GetObjectItemCaseSensitive(s, "lastWatched"));
+    if (watched <= 0 || watched >= cutoff || (n == max && watched <= picks[n - 1].watched))
+      continue;
+    int at = n < max ? n++ : n - 1;
+    while (at > 0 && watched > picks[at - 1].watched) {
+      picks[at] = picks[at - 1];
+      at--;
+    }
+    picks[at] = (struct WatchPick){ it, watched };
+  }
+  if (n > 0 && (out->items = calloc((size_t)n, sizeof *out->items))) {
+    out->n = out->total = n;
+    for (int i = 0; i < n; i++) {
+      Item *item = &out->items[i];
+      item_from_lib(item, picks[i].item);
+      copy_str(item->videoId, sizeof item->videoId, item->id);
+      item->progress = item->left = 0;
+    }
+  }
+  free(picks);
+  return out->n;
+}
 int lib_cw_info(const Item *it, CwInfo *out) {
   cJSON *l = lib_get(it->id);
   const cJSON *s = js_obj(l, "state");

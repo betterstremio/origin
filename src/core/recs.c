@@ -624,7 +624,8 @@ static void page_save_cur(void) {
 }
 /* a Shows / Movies page also depends on the "Anime tab" switch (anime is left out of them) */
 static unsigned kind_sig(unsigned sig, int pg, int noAnime) {
-  return sig ^ ((unsigned)pg * 0x9e3779b1u) ^ (noAnime ? 0x85ebca6bu : 0);
+  return sig ^ ((unsigned)pg * 0x9e3779b1u) ^ (noAnime ? 0x85ebca6bu : 0) ^
+         (pg == RECS_PG_SHOWS ? 0xc2b2ae35u : 0); /* cached Shows pages predating the two-season gate */
 }
 static Page *page_load(int pg, unsigned sig, long maxAge) {
   char path[1300], name[220];
@@ -1220,6 +1221,46 @@ static void got_row(int i, int status, const unsigned char *b, size_t n, void *u
   }
   cJSON_Delete(j);
 }
+typedef struct {
+  const RecCand *cards;
+  unsigned char eligible[RECS_LIST];
+} SeasonCheck;
+static void got_seasons(int i, int status, const unsigned char *body, size_t size, void *ud) {
+  if (status != 200)
+    return;
+  SeasonCheck *check = ud;
+  cJSON *j = cJSON_ParseWithLength((const char *)body, size);
+  if (j && rjn(j, "number_of_seasons") >= 2) {
+    check->eligible[i] = 1;
+    unsigned num;
+    int dig;
+    const cJSON *external = cJSON_GetObjectItemCaseSensitive(j, "external_ids");
+    if (tt_parse(rjs(external, "imdb_id"), &num, &dig))
+      id_add(ckey('t', check->cards[i].tmdb), num, dig);
+  }
+  cJSON_Delete(j);
+}
+/* Discover omits season counts. Check only the surviving candidates from its one page. */
+static int season_filter(unsigned gen, RecCand *cards, int *count, const RecPrefs *prefs) {
+  int n = recs_filter(cards, *count, prefs, cards, RECS_LIST);
+  *count = 0;
+  if (n < SHOWN_MIN)
+    return 1;
+  SeasonCheck check = { .cards = cards };
+  Req reqs[RECS_LIST];
+  char keys[RECS_LIST][24], paths[RECS_LIST][56];
+  for (int i = 0; i < n; i++) {
+    snprintf(keys[i], sizeof keys[i], "seasons|%d", cards[i].tmdb);
+    snprintf(paths[i], sizeof paths[i], "/tv/%d?append_to_response=external_ids", cards[i].tmdb);
+    reqs[i] = (Req){ paths[i], keys[i], RECS_AGE_SEED };
+  }
+  if (!fetch(gen, reqs, n, got_seasons, &check, 0))
+    return 0;
+  for (int i = 0; i < n; i++)
+    if (check.eligible[i])
+      cards[(*count)++] = cards[i];
+  return 1;
+}
 /* an id found (or a title with none) goes to every card of that title: in the builder's copy before the page is out, in
  * the live page after */
 static void ids_apply(unsigned key, unsigned num, int dig, int noid) {
@@ -1462,6 +1503,9 @@ static int kind_page(const KIn *K, int pg) {
       goto out;
     }
   }
+  for (int d = 0; d < nd; d++)
+    if ((defs[d].flags & RECS_F_MULTI_SEASON) && !season_filter(G, rc[d], &rn[d], &P2))
+      goto out;
   /* the lists of this kind's Because-you-watched rows feed Top picks; a thin history asks a taste list instead */
   int tpd = -1;
   for (int d = 0; d < nd; d++) {
