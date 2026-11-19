@@ -186,6 +186,8 @@ void accent_scope(const char *titleId, const char *poster,
                   const char *logo); /* dynamic modes: this title's colour (NULL = the default) */
 void accent_tint_fetch(const char *id, const char *poster, const char *logo); /* ahead of time, for the focused card */
 int accent_dynamic(void);
+/* Sample colours and their foreground from the preview's poster and solid-colour logo. */
+uint32_t accent_preview(const char *mode, const char *poster, uint32_t logo, uint32_t out[2]);
 int accent_tint_of(const char *id, const char *poster, const char *logo,
                    uint32_t out[4]); /* a title's own accent: 1 ready, 0 being worked out */
 uint32_t acc_a(float a); /* the accent with an alpha */
