@@ -12,7 +12,7 @@ OB="$ORIGIN_BUILD"; SDK="${ANDROID_HOME:-$HOME/android-sdk}"; BA="$BUILD_ROOT/an
 DEV=0; CLEAN=""; for a in "$@"; do case "$a" in --dev) DEV=1;; --clean) CLEAN=--clean;; esac; done
 if [ $DEV = 1 ]; then ABIS="${ABIS:-arm64-v8a armeabi-v7a x86}"; else ABIS="${ABIS:-arm64-v8a armeabi-v7a}"; fi
 VER="${SB_VERSION:-$(cat "$ROOT/VERSION")}"   # SB_VERSION=x.y.z: another version (the updater test builds a newer one)
-APPID=tv.stremioorigin.app; mkdir -p "$BA"; APPINFO="$BA/appinfo.json"
+APPID=io.github.betterstremio.origin; mkdir -p "$BA"; APPINFO="$BA/appinfo.json"
 sed "s/\"version\": \"0.0.0\"/\"version\": \"$VER\"/" "$ROOT/packaging/webos/appinfo.json" > "$APPINFO"
 
 bash "$ROOT/tools/build.sh" android $ABIS $CLEAN

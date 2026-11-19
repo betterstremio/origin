@@ -307,7 +307,7 @@ static int vsyncOn
 #include "stb_image_write.h"
 
 #ifndef SB_APP_ID
-#define SB_APP_ID "tv.stremioorigin.app"
+#define SB_APP_ID "io.github.betterstremio.origin"
 #endif
 #define APP_ID SB_APP_ID /* the package id: tools/build.sh APPID=... */
 

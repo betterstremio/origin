@@ -17,7 +17,7 @@ HERE = os.path.dirname(os.path.abspath(__file__)); REPO = os.path.abspath(os.pat
 SDK = os.environ.get('ANDROID_HOME') or os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Android', 'Sdk')
 ADB = os.path.join(SDK, 'platform-tools', 'adb.exe' if os.name == 'nt' else 'adb')
 EMU = os.path.join(SDK, 'emulator', 'emulator.exe' if os.name == 'nt' else 'emulator')
-PKG = 'tv.stremioorigin.app'; ACT = PKG + '/.MainActivity'
+PKG = 'io.github.betterstremio.origin'; ACT = PKG + '/tv.stremioorigin.app.MainActivity'
 AVD = os.environ.get('SB_AVD', 'sbtv')
 WSL_REPO = '/mnt/' + REPO[0].lower() + REPO[2:].replace('\\', '/') if os.name == 'nt' else REPO
 APKS = ('/root/obuild/%s/android/apk' % os.path.basename(REPO)) if os.name == 'nt' else REPO + '/build/android/apk'   # tools/paths.sh's BUILD_ROOT

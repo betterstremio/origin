@@ -7,8 +7,8 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; REPO="$(cd "$HERE/../../.." && pwd)"
 V="$(tr -d '[:space:]' < "$REPO/VERSION")"; IFS=. read -r a b c <<<"$V"; NEXT="$a.$b.$((c + 1))"
-APPID=tv.stremioorigin.app; T="$(cd "$REPO/.." && pwd)/windows-run/update-test"; PORT=8799
-INST="$LOCALAPPDATA/Programs/Origin"; KEY='HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\tv.stremioorigin.app'
+APPID=io.github.betterstremio.origin; T="$(cd "$REPO/.." && pwd)/windows-run/update-test"; PORT=8799
+INST="$LOCALAPPDATA/Programs/Origin"; KEY='HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\io.github.betterstremio.origin'
 fails=0; ok() { echo "ok   $1"; }; bad() { echo "FAIL $1"; fails=$((fails + 1)); }
 [ ! -e "$INST" ] || { echo "Origin is already installed in $INST: this test needs a PC without it"; exit 1; }
 # the real data folder (the user's own sign-in and settings) must come out of this untouched

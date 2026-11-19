@@ -12,6 +12,6 @@ KEYS="${KEYS:-$ORIGIN_BUILD/keys.env}"
 AB="${AB:-$HOME/abuild}"
 WB="${WB:-$HOME/wbuild}"   # the Windows build's dependencies (tools/windows/build-deps.sh)
 case "$ROOT" in /mnt/*) BUILD_ROOT="${BUILD_ROOT:-$HOME/obuild/$(basename "$ROOT")}";; *) BUILD_ROOT="${BUILD_ROOT:-$ROOT/build}";; esac
-APPID="${APPID:-tv.stremioorigin.app}"
+APPID="${APPID:-io.github.betterstremio.origin}"   # 3.0.0 on; 2.1.12 was the last tv.stremioorigin.app (Stremio Origin's id)
 JOBS="${JOBS:-$(getconf _NPROCESSORS_ONLN)}"
 TP="$ROOT/third_party"

@@ -4,7 +4,7 @@
 import gzip, hashlib, io, json, os, shutil, sys, tarfile, tempfile, time
 
 ROOT, BIN, O, OUT = sys.argv[1:5]
-ID = os.environ.get('APPID') or 'tv.stremioorigin.app'
+ID = os.environ.get('APPID') or 'io.github.betterstremio.origin'
 OLD = os.listdir(O + '/data/usr/palm/applications')[0]   # the official package's id: another APPID renames it while staging
 S = tempfile.mkdtemp(prefix='ipkstage-', dir=os.path.expanduser('~'))
 try:
@@ -32,7 +32,7 @@ try:
     for f in ('icon.png', 'largeIcon.png'):
         shutil.copy(f'{ROOT}/packaging/webos/{f}', f'{A}/{f}')
     info = open(ROOT + '/packaging/webos/appinfo.json', encoding='utf-8').read()
-    if ID != 'tv.stremioorigin.app': info = info.replace('"id": "tv.stremioorigin.app"', '"id": "%s"' % ID)
+    info = info.replace('"id": "io.github.betterstremio.origin"', '"id": "%s"' % ID)
     open(A + '/appinfo.json', 'w', encoding='utf-8', newline='\n').write(info.replace('"version": "0.0.0"', '"version": "%s"' % VER))
     shutil.copy(BIN, A + '/stremioorigin')
 

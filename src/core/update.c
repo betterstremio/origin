@@ -26,7 +26,7 @@ float key_hint(float x, float y, int key, const char *label, uint32_t col,
 #include <time.h>
 #include <unistd.h>
 #ifndef SB_APP_ID
-#define SB_APP_ID "tv.stremioorigin.app"
+#define SB_APP_ID "io.github.betterstremio.origin"
 #endif
 /* the id 3.0.0 and later ship under. A build under the old id (the 2.1.12 bridge) also accepts packages named with it,
    so existing installs move over; a build already under the new id behaves as it always did. */

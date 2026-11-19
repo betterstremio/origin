@@ -25,7 +25,7 @@
 #include <sys/stat.h>
 #include <sys/time.h>
 #ifndef SB_APP_ID
-#define SB_APP_ID "tv.stremioorigin.app"
+#define SB_APP_ID "io.github.betterstremio.origin"
 #endif
 
 #define APPLOG_MAX (400 * 1024)

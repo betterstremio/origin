@@ -1,12 +1,12 @@
 ; Origin's Windows installer (NSIS 3): for the current user, no administrator prompt, into %LOCALAPPDATA%\Programs\Origin.
 ; Built by packaging/windows/pack.sh:  makensis -DVERSION=x.y.z -DSRC=<staged folder> -DICON=<.ico> -DOUT=<setup.exe>
 ; The app's updater runs it as  setup.exe /S /RELAUNCH : silent, and Origin opens again when it is done.
-; Settings, sign-in and caches live in %LOCALAPPDATA%\tv.stremioorigin.app and are never touched by an update.
+; Settings, sign-in and caches live in %LOCALAPPDATA%\io.github.betterstremio.origin and are never touched by an update.
 Unicode true
 ManifestDPIAware true
 RequestExecutionLevel user
 SetCompressor /SOLID lzma
-!define APPID "tv.stremioorigin.app"
+!define APPID "io.github.betterstremio.origin"
 !define NAME "Origin"
 !define UNKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPID}"
 !include "MUI2.nsh"

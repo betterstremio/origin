@@ -195,7 +195,7 @@ static void flash_root(char *o, size_t n) {
   snprintf(o, n, "%s/engine", e ? e : store_data_dir());
 }
 #ifndef SB_APP_ID
-#define SB_APP_ID "tv.stremioorigin.app"
+#define SB_APP_ID "io.github.betterstremio.origin"
 #endif
 static void usb_root(char *o, size_t n, const char *mnt) {
   snprintf(o, n, "%s/%s-engine", mnt, SB_APP_ID);

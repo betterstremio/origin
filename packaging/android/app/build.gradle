@@ -11,7 +11,7 @@ android {
     namespace 'tv.stremioorigin.app'
     compileSdk 35
     defaultConfig {
-        applicationId 'tv.stremioorigin.app'
+        applicationId 'io.github.betterstremio.origin'   // 3.0.0 on (the Java package and namespace stay tv.stremioorigin.app)
         minSdk 24
         targetSdk 35
         versionName appVersion
