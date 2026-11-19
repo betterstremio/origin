@@ -632,9 +632,53 @@ static int curHid; /* the cursor hidden over a film that has the mouse still */
  */
 static SDL_FingerID fingerId;
 static int fingerOn, mouseFinger;
+#ifdef _WIN32
+#define setenv(k, v, o) _putenv_s(k, v)
+#endif
+/* webOS passes the launch parameters as argv[1], a JSON text. {"sbenv":{"SB_UPD_MAN":"http://..."},"sbNoIntro":1}:
+   only keys that start with SB_ are taken (setenv), and sbNoIntro silences the start-up sound (SB_NOINTRO). Development
+   only (the TV test scripts); the same as 3.0.0's scrollin_launch_params. */
+static void launch_params(int argc, char **argv) {
+  if (argc < 2 || !argv[1])
+    return;
+  const char *j = argv[1];
+  if (strstr(j, "\"sbNoIntro\"") && !strstr(j, "\"sbNoIntro\":0"))
+    setenv("SB_NOINTRO", "1", 1);
+  const char *e = strstr(j, "\"sbenv\"");
+  if (!e || !(e = strchr(e + 7, '{')))
+    return;
+  e++;
+  for (;;) {
+    char k[48], v[512];
+    int n = 0;
+    while (*e && *e != '"' && *e != '}')
+      e++;
+    if (*e != '"')
+      return;
+    for (e++; *e && *e != '"' && n < 47; e++)
+      k[n++] = *e;
+    k[n] = 0;
+    if (*e != '"' || !(e = strchr(e, ':')))
+      return;
+    for (e++; *e == ' '; e++)
+      ;
+    int q = *e == '"';
+    if (q)
+      e++;
+    n = 0;
+    for (; *e && n < 511 && (q ? *e != '"' : (*e != ',' && *e != '}')); e++)
+      v[n++] = *e;
+    v[n] = 0;
+    if (q && *e == '"')
+      e++;
+    if (!strncmp(k, "SB_", 3)) {
+      setenv(k, v, 1);
+      fprintf(stderr, "[dev] launch param %s=%s\n", k, v);
+    }
+  }
+}
 int main(int argc, char **argv) {
-  (void)argc;
-  (void)argv;
+  launch_params(argc, argv);
   setlocale(LC_NUMERIC, "C");
 #if SB_PREVIEW
   signal(SIGABRT, on_alarm);
