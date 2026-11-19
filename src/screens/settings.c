@@ -36,7 +36,8 @@
 #include "ui/qr.h"
 #include "ui/support.h"
 #define SUP_H 420.0f
-#define LOOK_H 300.0f
+#define LOOK_H 156.0f
+#define LOOK_PICK_H (LOOK_H + 12.0f)
 #define KEYS_H 446.0f
 static int wnBtn; /* About: What's new, beside the update pill, has the focus (Up from the first row) */
 static Tween supK;
@@ -585,8 +586,7 @@ static void build(void) {
   if (sound_has_intro())
     set_s(&audS[naud++], "introSound", "Startup sound", "A short sound with the logo when the app opens", OO, 2,
           "true");
-  set_s(&lookS[0], "accent", "Accent colour", "Dynamic: the colours of the title you open", ACCENT_OPTS, 20,
-        "logo"); /* first, right under its picture */
+  set_s(&lookS[0], "accent", "Accent colour", "Dynamic: the colours of the title you open", ACCENT_OPTS, 20, "logo");
   set_s(&lookS[1], "catalogueTab", "Catalogue tab",
         "Collections and your addons\xe2\x80\x99 catalogues in their own tab", OO, 2, "true");
   set_s(&lookS[2], "animeTab", "Anime tab", "Anime in its own tab. Uses Anime Kitsu on this device.", OO, 2, "false");
@@ -666,7 +666,8 @@ static void build(void) {
   best_caps_probe(caps_known, NULL); /* (the Dolby Vision row, once the TV has said) */
 }
 static const char *cur_val(const Setting *o) {
-  return store_get(o->k, o->d);
+  const char *v = store_get(o->k, o->d);
+  return o == &lookS[0] && !strcmp(v, "duo") ? "adaptive" : v;
 }
 static int is_switch(const Setting *o) {
   return !o->action && !o->info && o->nopts == 2 && !strcmp(o->opts[0].v, "true") && !strcmp(o->opts[1].v, "false");
@@ -870,11 +871,10 @@ int settings_apply_pref(const char *k, const char *v) {
 }
 static void ab_tick(void) {
   {
-    const char *m = store_get("accent", "logo"),
-               *d = !strcmp(m, "logo") ? "Dynamic: the colours of the logo of the title you open"
-                    : !strcmp(m, "adaptive")
-                        ? "Dynamic: the colours of the poster of the title you open"
-                        : "One colour everywhere in the app"; /* the accent row says what its choice does */
+    const char *m = cur_val(&lookS[0]),
+               *d = !strcmp(m, "logo")       ? "Dynamic: the colours of the logo of the title you open"
+                    : !strcmp(m, "adaptive") ? "Dynamic: the colours of the poster of the title you open"
+                                             : "One colour for highlights and playback controls";
     if (strcmp(lookS[0].ds, d)) {
       snprintf(lookS[0].ds, sizeof lookS[0].ds, "%s", d);
       S.dirty = 1;
@@ -1085,7 +1085,7 @@ static void layout(void) {
             : !strcmp(c->prev, "about") ? about_h() + 14
             : !strcmp(c->prev, "look")  ? LOOK_H + 6
             : !strcmp(c->prev, "keys")  ? KEYS_H + 14
-                                        : 210 + 14; /* (the colour's picture sits right on its row) */
+                                        : 210 + 14;
   y = HEADH + 18 + S.prevH;
   S.optN = c->n < MAXROWS ? c->n : MAXROWS;
   int same = S.raShown == S.shown;
@@ -1558,10 +1558,11 @@ static void tick(float dt) {
             : ACC); /* a greyed row: a quiet glass highlight, not the accent */
   if (S.zone == 2) {
     const Setting *o = &cats[S.cat].opts[S.idx];
+    float height = PKH - (o == &lookS[0] ? LOOK_PICK_H : 0);
     float pb = S.pick * 72.0f + 68, pt = o->nopts * 72.0f - ROWGAP + 28, py = 0;
-    if (pb > PKH - 72) {
-      py = pb - PKH + 72;
-      float mx = pt - PKH;
+    if (pb > height - 72) {
+      py = pb - height + 72;
+      float mx = pt - height;
       if (mx < 0)
         mx = 0;
       if (py > mx)
@@ -1585,13 +1586,7 @@ static uint32_t hexcol(const char *h) {
   unsigned v = (unsigned)strtoul(h + 1, NULL, 16);
   return 0xff000000u | v;
 }
-/* previews are drawn scenes: the subtitle line as it will look over a film-like dusk; the accent on a small mock of
-   the player and its controls */
-/* the previews: a title from Home behind them (its backdrop, framed as the app frames pictures), so they read as the
-   app itself */
-/* the previews' picture: the same film everywhere (every TV, every build, every run), a title from Home if it cannot
- * load */
-/* the app's own demo pictures (assets/guide), for the pictures of its screens */
+/* Bundled preview artwork, with a Home backdrop as a fallback. */
 static const char *demo_art(const char *file) {
   static char b[4][640];
   static int k;
@@ -1620,49 +1615,6 @@ static GLuint prev_backdrop(float w, float h, float *u0, float *v0, float *u1, f
     return 0;
   img_cover_uv(asp, w / h, 0, u0, v0, u1, v1);
   return t;
-}
-/* the preview's picture, lightly blurred, for its glass (as the bar's: made again only when the picture changes) */
-static GfxTarget pvT[3];
-static GLuint pvSrc;
-static float pvW, pvH;
-static GLuint prev_glass(float w, float h) {
-  float u0, v0, u1, v1;
-  GLuint bt = prev_backdrop(w, h, &u0, &v0, &u1, &v1);
-  if (!bt)
-    return 0;
-  if (bt == pvSrc && pvW == w && pvH == h && pvT[1].fbo)
-    return pvT[1].tex;
-  int W = 480, H = (int)(480 * h / w), bw = W / 2, bh = H / 2;
-  if (H < 8)
-    return 0;
-  for (int i = 0; i < 3; i++) {
-    int tw = i ? bw : W, th = i ? bh : H;
-    if (pvT[i].fbo && (pvT[i].w != tw || pvT[i].h != th))
-      gfx_target_free(&pvT[i]);
-    if (!pvT[i].fbo && !gfx_target_create(&pvT[i], tw, th))
-      return 0;
-  }
-  float LH = SB_W * h / w;
-  gfx_target_begin(&pvT[0], PAGE);
-  gfx_image(bt, 0, 0, SB_W, LH, 0, WHITE_A(255), u0, v0, u1, v1);
-  gfx_target_end();
-  gfx_target_begin(&pvT[1], PAGE);
-  gfx_image(pvT[0].tex, 0, 0, SB_W, LH, 0, WHITE_A(255), 0, 1, 1, 0);
-  gfx_target_end();
-  gfx_blur_pass(&pvT[2], pvT[1].tex, bw, bh, 0, 1.0f);
-  gfx_blur_pass(&pvT[1], pvT[2].tex, bw, bh, 1, 1.0f);
-  pvSrc = bt;
-  pvW = w;
-  pvH = h;
-  return pvT[1].tex;
-}
-/* liquid glass over the preview's picture: its part under a box (x0, y0, w0, h0 the preview) */
-static void prev_liquid(GLuint t, float x0, float y0, float w0, float h0, float x, float y, float w, float h,
-                        float pull, float lag) {
-  if (!t)
-    return;
-  float u0 = (x - x0) / w0 + lag, u1 = (x + w - x0) / w0 + lag, v0 = 1 - (y - y0) / h0, v1 = 1 - (y + h - y0) / h0;
-  gfx_liquid(t, x, y, w, h, h / 2, pull, 1, u0, v0, u1, v1);
 }
 static void prev_frame(float x, float y, float w, float h,
                        float dim) { /* the picture, or the page's own dark when it has none */
@@ -1864,268 +1816,41 @@ static void preview_keys(float x, float y, float w, float h) {
   }
   gfx_ring(x, y, w, h, 18, 1.5f, WHITE_A(40));
 }
-/* Appearance: the page in the chosen colour (its two glows, a lit row, the player's bar) over a title from Home, and
-   the colours to choose from on a glass strip, the ring gliding to the one chosen. "From the logo" and "From the
-   artwork": titles from Home in turn, each giving its own colour, a few drops of it flowing from its picture into the
-   page */
-static Tween lookShift; /* the page's row moving aside for the title's picture (the dynamic modes) */
-static Item lookIt[4];
-static char lookLogo[4][512];
-static int lookN = -1;
-static Tween lookSel;
-static int lookSelSet;
-static uint32_t lookFrom[2], lookTo[2];
-static double lookAt;
-static int lookCur = -1;
-static void preview_look(float x, float y, float w, float h) {
-  const char *a = store_get("accent", "logo");
-  int rtl = app_rtl(), dyn = !strcmp(a, "logo") || !strcmp(a, "adaptive"), logoMode = !strcmp(a, "logo");
-  float t = (float)app_now();
-  if (lookN <= 0) {
-    static double tried;
-    if (app_now() - tried > 1.5) {
-      char rn[8];
-      tried = app_now();
-      lookN = board_sample(lookIt, 4, rn, 0);
-      for (int i = 0; i < lookN; i++)
-        sb_logo_of(&lookIt[i], lookLogo[i], sizeof lookLogo[i]);
-    }
-  }
-  /* the colour shown: the accent, or (dynamic) each title's own in turn; a title still being read keeps the last one */
-  static const uint32_t STAND[4][2] = {
-    { 0xffe0634a, 0xffffa38f }, { 0xff3d8bfd, 0xff9cc4ff }, { 0xff19b38a, 0xff7fe3c6 }, { 0xffd4a017, 0xfff3d27a }
-  }; /* (while a title's own colour is read) */
-  uint32_t c1 = ACC | 0xff000000u, c2 = ACC2 | 0xff000000u;
-  int ti = -1;
-  float ph = 0;
-  if (dyn && lookN > 0) {
-    ti = (int)(t / 3.4f) % lookN;
-    ph = fmodf(t, 3.4f) / 3.4f;
-    uint32_t tc[4];
-    if (ti != lookCur) {
-      lookFrom[0] = lookTo[0] ? lookTo[0] : c1;
-      lookFrom[1] = lookTo[1] ? lookTo[1] : c2;
-      lookCur = ti;
-      lookAt = app_now();
-    }
-    if (accent_tint_of(lookIt[ti].id, lookIt[ti].poster, lookLogo[ti], tc)) {
-      lookTo[0] = 0xff000000u | tc[0];
-      lookTo[1] = 0xff000000u | tc[1];
-    } else {
-      lookTo[0] = STAND[ti % 4][0];
-      lookTo[1] = STAND[ti % 4][1];
-    }
-    float e = ease_apply(EASE_IN_OUT, (float)(app_now() - lookAt - 0.6f) / 0.8f);
-    c1 = col_mix(lookFrom[0], lookTo[0], e);
-    c2 = col_mix(lookFrom[1], lookTo[1], e);
-  }
-  prev_frame(x, y, w, h, 0.72f);
-  gfx_clip_push(x, y, w, h);
-  gfx_glow_round(x - w * 0.35f + 30 * sinf(t * 0.6f), y - h * 0.9f, w * 0.9f, h * 2.2f,
-                 col_alpha(col_mix(c1, 0xffffffffu, 0.1f), 0.42f), x, y, w, h, 18); /* (inside the corners) */
-  gfx_glow_round(x + w * 0.45f - 30 * cosf(t * 0.5f), y - h * 0.2f, w * 0.9f, h * 2.2f, col_alpha(c1, 0.3f), x, y, w, h,
-                 18);
-  float sh = 64, sy = y + h - 16 - sh, mid = y + (sy - y) / 2, rh = 56, top = mid - rh / 2, artW = 100,
-        ah = artW * 1.5f;
-  tween_to(&lookShift, ti >= 0 ? 1.0f : 0.0f, 0.4f, GLIDE_EASE);
-  tween_tick(&lookShift, app_dt());
-  float mx = x + 28 + (artW + 30) * lookShift.v * (rtl ? 0 : 1);
-  if (ti >=
-      0) { /* the title whose colour it is (its poster, or its logo), coming in, then its colour flowing out of it */
-    const Item *it = &lookIt[ti];
-    float axp = rtl ? x + w - 28 - artW : x + 28, atop = mid - ah / 2, in = ease_apply(EASE_OUT, ph / 0.1f),
-          out2 = ph > 0.95f ? (ph - 0.95f) / 0.05f : 0, fl = 4 * sinf(t * 1.6f);
-    float top0 = top;
-    top = atop; /* (the picture's own top) */
-    gfx_opacity_push(in * (1 - out2) * lookShift.v);
-    gfx_offset_push((rtl ? 1 : -1) * 24 * (1 - in), fl);
-    if (logoMode) {
-      float asp;
-      GLuint lt = lookLogo[ti][0] ? img_get(lookLogo[ti], 300, 120, &asp) : 0;
-      float lw = artW + 40, lh2 = 0;
-      if (lt && asp > 0) {
-        lh2 = lw / asp;
-        if (lh2 > ah) {
-          lh2 = ah;
-          lw = lh2 * asp;
-        }
-        gfx_image(lt, axp + artW / 2 - lw / 2, top + ah / 2 - lh2 / 2, lw, lh2, 0, WHITE_A(255), 0, 0, 1, 1);
-      } else
-        text_draw_wrapped(it->name, axp + artW / 2, top + ah / 2 - 30, artW + 30, 2, 26, 800, WHITE_A(255), -0.4f,
-                          ALIGN_CENTER, 30);
-    } else {
-      char pu[512];
-      GLuint pt = sb_poster_of(it, pu, sizeof pu)[0] ? img_get_shaped(pu, (int)artW, (int)ah, 10, 0)
-                                                     : 0; /* the poster alone: no badges */
-      gfx_shadow(axp, top + 8, artW, ah, 10, 18, BLACK_A(120));
-      if (!ph_picture(pt, axp, top, artW, ah, 10, WHITE_A(255)))
-        ph_box(axp, top, artW, ah, 10);
-      gfx_ring(axp, top, artW, ah, 10, 2, col_alpha(c1, 0.9f));
-    }
-    gfx_offset_pop();
-    gfx_opacity_pop();
-    float u = (ph - 0.2f) / 0.35f;
-    if (u > 0 && u < 1.3f)
-      for (int k = 0; k < 6; k++) {
-        float uu = u - k * 0.07f;
-        if (uu <= 0 || uu >= 1)
-          continue;
-        float e = ease_apply(EASE_IN_OUT, uu);
-        float sx = axp + artW / 2, sy2 = top + ah / 2, ex = rtl ? axp - 70 : axp + artW + 70, ey = mid,
-              px2 = sx + (ex - sx) * e, py2 = sy2 + (ey - sy2) * e - 44 * sinf(3.14159f * e);
-        gfx_circle(px2, py2, 8 - k, col_alpha(lookTo[0], 1 - 0.14f * k));
-      }
-    top = top0;
-  }
-  /* a small copy of the app in the colour (a picture only: tagged Preview, its pieces small): the tabs with the
-     accent under the current one, then a Play button, a switch, a season chip and the player's bar */
-  float mw = x + w - 28 - mx - (rtl ? (artW + 30) * lookShift.v : 0),
-        pulse = ti >= 0 ? 1 + 0.05f * sinf(3.14159f * (ph < 0.5f                ? 0
-                                                       : (ph - 0.5f) / 0.3f > 1 ? 1
-                                                                                : (ph - 0.5f) / 0.3f))
-                        : 1;
-  {
-    const char *pv = T("Preview");
-    float tw2 = text_width(pv, 18, 700, 1.2f) + 24, tx2 = rtl ? x + 14 : x + w - 14 - tw2; /* (the free corner) */
-    lglass_shell(tx2, y + 12, tw2, 30, 15, BLACK_A(120), 0.9f);
-    text_draw(pv, tx2 + tw2 / 2, y + 27 - text_line_height(18) / 2.0f, 18, 700, WHITE_A(220), 1.2f, 0, ALIGN_CENTER);
-  }
-  /* the bar, as the app draws it: one piece of liquid glass behind the three tabs, a light wandering it and bending the
-     picture under it, and the focus gliding from tab to tab as accent glass that stretches as it goes */
-  static const char *TB[3] = { "Discover", "Home", "Library" };
-  float tbw[3], tot = 0;
-  for (int i = 0; i < 3; i++) {
-    tbw[i] = text_width(T(TB[i]), 20, 700, 0) + 28;
-    tot += tbw[i];
-  }
-  float txx = mx + mw / 2 - tot / 2, tyy = y + 30, ch = 40, cx0 = txx - 6, cwid = tot + 12;
-  GLuint gt = prev_glass(w, h);
-  {
-    float su = 0.5f + 0.4f * (0.55f * sinf(t * 0.27f) + 0.3f * sinf(t * 0.43f + 2.0f) + 0.15f * sinf(t * 0.71f + 4.4f)),
-          svv = 0.32f + 0.1f * sinf(t * 0.33f + 1.0f);
-    gfx_shadow(cx0, tyy - ch / 2 + 6, cwid, ch, ch / 2, 20, BLACK_A(64));
-    if (gt) {
-      gfx_liquid_spot(su, svv, 1.0f);
-      prev_liquid(gt, x, y, w, h, cx0, tyy - ch / 2, cwid, ch, fminf(ch * 0.5f, 16), 0);
-      gfx_rrect(cx0, tyy - ch / 2, cwid, ch, ch / 2, RGBA(10, 10, 16, 18));
-    }
-    lglass_light(su - 0.12f);
-    lglass_shell(cx0, tyy - ch / 2, cwid, ch, ch / 2, 0, 0.85f);
-    lglass_light(0);
-    gfx_rrect(cx0, tyy - ch / 2, cwid, ch, ch / 2, col_alpha(c1, 0.08f));
-  }
-  {
-    static Tween fx, fw;
-    static float sv, lx;
-    static int seen;
-    int fi = (int)(t / 2.2f) % 3;
-    float px = txx;
-    for (int i = 0; i < fi; i++)
-      px += tbw[i]; /* the focus moves on every 2.2 s */
-    if (!seen) {
-      tween_set(&fx, px);
-      tween_set(&fw, tbw[fi]);
-      seen = 1;
-    } else {
-      if (fx.to != px)
-        tween_to(&fx, px, 0.32f, GLIDE_EASE);
-      if (fw.to != tbw[fi])
-        tween_to(&fw, tbw[fi], 0.32f, GLIDE_EASE);
-    }
-    tween_tick(&fx, app_dt());
-    tween_tick(&fw, app_dt());
-    float x0 = lx;
-    lglass_stretch(&sv, &lx, fx.v, app_dt());
-    float dir = fx.v > x0   ? 1
-                : fx.v < x0 ? -1
-                            : 0,
-          sw = fw.v * (1 + 0.22f * sv), sh = 34 * (1 - 0.10f * sv), ppx = fx.v + fw.v / 2 - sw / 2, ppy = tyy - sh / 2;
-    if (gt)
-      prev_liquid(gt, x, y, w, h, ppx, ppy, sw, sh, fminf(sh * 0.6f, 20) * (1 + 0.25f * sv), -dir * sv * 4.0f / w);
-    gfx_rrect_v(ppx, ppy, sw, sh, sh / 2, col_alpha(c2, 0.46f), col_alpha(c1, 0.36f));
-    gfx_rrect_v(ppx, ppy, sw, sh, sh / 2, WHITE_A(40), WHITE_A(0));
-    gfx_ring(ppx, ppy, sw, sh, sh / 2, 1.2f, WHITE_A(70));
-    float tx3 = txx;
-    for (int i = 0; i < 3; i++) {
-      int f = i == fi;
-      text_draw(T(TB[i]), tx3 + tbw[i] / 2, tyy - text_line_height(20) / 2.0f, 20, f ? 700 : 500,
-                f ? WHITE_A(250) : WHITE_A(170), 0, 0, ALIGN_CENTER);
-      tx3 += tbw[i];
-    }
-  }
-  const char *pl = T("Play"), *sn = T1("Season {n}", "n", "1");
-  float plw = 40 + text_width(pl, 20, 700, 0) + 18, snw = text_width(sn, 18, 600, 0) + 30;
-  float ey = mid - 6, eh = 40, ex = mx + mw / 2 - (plw + 18 + 46 + 18 + snw) / 2; /* centred under the tabs */
-  gfx_scale_push(pulse, pulse, mx + mw / 2, ey);
-  {
-    float pw = plw;
-    gfx_rrect(ex, ey - eh / 2, pw, eh, eh / 2, c1);
-    icon_draw("play", ex + 14, ey - 10, 20, WHITE_A(255));
-    text_draw(pl, ex + 40, ey - text_line_height(20) / 2.0f, 20, 700, WHITE_A(255), 0, 0, ALIGN_LEFT);
-    ex += pw + 18;
-  }
-  {
-    gfx_rrect(ex, ey - 13, 46, 26, 13, c1);
-    gfx_circle(ex + 46 - 13, ey, 10, WHITE_A(255));
-    ex += 46 + 18;
-  } /* a switch, on */
-  {
-    float cw2 = snw;
-    gfx_rrect(ex, ey - 16, cw2, 32, 16, WHITE_A(24));
-    gfx_ring(ex, ey - 16, cw2, 32, 16, 2, c2);
-    text_draw(sn, ex + cw2 / 2, ey - text_line_height(18) / 2.0f, 18, 600, WHITE_A(240), 0, 0, ALIGN_CENTER);
-    ex += cw2 + 22;
-  }
-  gfx_scale_pop();
-  /* the player's bar, small: its play mark, the times, the progress in the colour */
-  float by = ey + 46, bx0 = mx, bw0 = mw, bp = 0.3f + 0.5f * (0.5f + 0.5f * sinf(t * 0.8f));
-  icon_draw("p_pause", bx0, by - 9, 18, WHITE_A(220));
-  text_draw("1:02:15", bx0 + 26, by - text_line_height(16) / 2.0f, 16, 600, WHITE_A(200), 0, 0, ALIGN_LEFT);
-  float tbx = bx0 + 100, tbw2 = bw0 - 100 - 64;
-  gfx_rrect(tbx, by - 2, tbw2, 4, 2, WHITE_A(51));
-  gfx_rrect_h(tbx, by - 2, tbw2 * bp, 4, 2, c1, c2);
-  gfx_circle(tbx + tbw2 * bp, by, 6, WHITE_A(255));
-  text_draw("-38:41", bx0 + bw0, by - text_line_height(16) / 2.0f, 16, 600, WHITE_A(170), 0, 0, ALIGN_RIGHT);
-  /* the colours: the ring glides to the one chosen, the chosen one grows */
-  int sel = 0;
-  for (int i = 0; i < 20; i++)
-    if (!strcmp(ACCENT_OPTS[i].v, a))
-      sel = i;
-  if (!lookSelSet) {
-    tween_set(&lookSel, (float)sel);
-    lookSelSet = 1;
-  } else if (lookSel.to != sel)
-    tween_to(&lookSel, (float)sel, 0.32f, GLIDE_EASE);
-  tween_tick(&lookSel, app_dt());
-  gfx_rrect(x + 14, sy, w - 28, sh, 32, RGBA(18, 16, 26, 200));
-  gfx_ring(x + 14, sy, w - 28, sh, 32, 1, WHITE_A(36));
-  float step = (w - 28 - 40) / 20.0f, ccy = sy + sh / 2;
-#define SWX(i) (rtl ? x + w - 34 - step / 2 - (i) * step : x + 34 + step / 2 + (i) * step)
-  for (int i = 0; i < 20; i++) {
-    float near = 1 - fabsf(i - lookSel.v);
-    near = near < 0 ? 0 : near;
-    float ccx = SWX(i), r = 12 + 4 * near;
-    if (i == 0)
-      gfx_rrect_h(ccx - r, ccy - r, 2 * r, 2 * r, r, RGB(0xff, 0xc3, 0x71), RGB(0xff, 0x5f, 0x6d));
-    else if (i == 1)
-      gfx_rrect_h(ccx - r, ccy - r, 2 * r, 2 * r, r, RGB(0xff, 0x8e, 0x6f), RGB(0x76, 0xa8, 0xe8));
-    else if (i == 19) {
-      gfx_rrect_v(ccx - r, ccy - r, 2 * r, 2 * r, r, RGB(0xd8, 0xdd, 0xe6), RGB(0x6a, 0x72, 0x85));
-      gfx_rrect_v(ccx - r * 0.8f, ccy - r * 0.9f, r * 1.6f, r * 0.9f, r * 0.45f, WHITE_A(90), WHITE_A(0));
-      gfx_ring(ccx - r, ccy - r, 2 * r, 2 * r, r, 1, WHITE_A(110));
-    } /* graphite: a little glass */
-    else {
-      extern const uint32_t *settings_accent_rgb(int);
-      gfx_circle(ccx, ccy, r, 0xff000000u | settings_accent_rgb(i - 2)[0]);
-    }
-  }
-  {
-    float rx = SWX(0) + (SWX(19) - SWX(0)) * lookSel.v / 19.0f, r = 16;
-    gfx_ring_out(rx - r, ccy - r, 2 * r, 2 * r, r, 3, WHITE_A(255));
-  } /* the ring, gliding */
-#undef SWX
-  gfx_clip_pop();
-  gfx_ring(x, y, w, h, 18, 1.5f, WHITE_A(40));
+/* A still example of the title-page Play button and the player's progress bar. */
+static void preview_look(float x, float y, float w, const char *mode) {
+  int rtl = app_rtl(), artwork = !strcmp(mode, "adaptive");
+  uint32_t logo = !strcmp(mode, "logo") ? RGB(0xf3, 0xb5, 0x5e) : WHITE_A(255), colors[2];
+  uint32_t ink = accent_preview(mode, demo_art("demo1.poster.webp"), logo, colors);
+  float half = w / 2, details = rtl ? x + half : x, playback = rtl ? x : x + half;
+  prev_frame(x, y, w, LOOK_H, 0.74f);
+  gfx_ring(x, y, w, LOOK_H, 18, 1.5f, WHITE_A(40));
+  gfx_rect(x + half, y + 18, 1, LOOK_H - 36, WHITE_A(36));
+  text_draw(T("Details"), details + half / 2, y + 14, 22, 600, WHITE_A(230), 0, half - 48, ALIGN_CENTER);
+  text_draw(T("Playback"), playback + half / 2, y + 14, 22, 600, WHITE_A(230), 0, half - 48, ALIGN_CENTER);
+
+  const char *play = T("Play");
+  float pw = fminf(text_width(play, 23, 600, 0) + 66, half * 0.46f);
+  float aw = artwork ? 60 : 136, ah = artwork ? 90 : aw * 0.4f, gap = 24;
+  float left = details + (half - aw - gap - pw) / 2, cy = y + 93;
+  float ax = rtl ? left + pw + gap : left, bx = rtl ? left : left + aw + gap;
+  GLuint art = img_get(demo_art(artwork ? "demo1.poster.webp" : "demo1.logo.webp"), (int)aw, (int)ah, NULL);
+  if (art)
+    gfx_image(art, ax, cy - ah / 2, aw, ah, artwork ? 6 : 0, logo, 0, 0, 1, 1);
+  else if (artwork)
+    ph_box(ax, cy - ah / 2, aw, ah, 6);
+  else
+    text_draw("Northern Drift", ax + aw / 2, cy - text_line_height(20) / 2, 20, 700, logo, 0, aw, ALIGN_CENTER);
+  gfx_rrect(bx, cy - 24, pw, 48, 24, colors[0]);
+  icon_draw("play", rtl ? bx + pw - 40 : bx + 18, cy - 11, 22, ink);
+  text_draw(play, rtl ? bx + pw - 49 : bx + 49, cy - text_line_height(23) / 2, 23, 600, ink, 0, pw - 62,
+            rtl ? ALIGN_RIGHT : ALIGN_LEFT);
+
+  float start = playback + 36, track = half - 72, progress = track * 0.36f;
+  text_draw("12:48", start, y + 67, 19, 600, WHITE_A(255), 0, 0, ALIGN_LEFT);
+  text_draw("-23:16", start + track, y + 67, 19, 600, WHITE_A(184), 0, 0, ALIGN_RIGHT);
+  gfx_rrect(start, y + 103, track, 6, 3, WHITE_A(51));
+  gfx_rrect_h(start, y + 103, progress, 6, 3, colors[0], colors[1]);
+  gfx_circle(start + progress, y + 106, 7, WHITE_A(255));
 }
 /* About: the app's icon, name, version and update state, then what the new version brings */
 #define AB_ICO 140.0f
@@ -2710,7 +2435,7 @@ static void draw(void) {
       else if (!strcmp(c->prev, "keys"))
         preview_keys(clx, y, CLW, KEYS_H);
       else
-        preview_look(clx, y, CLW, LOOK_H);
+        preview_look(clx, y, CLW, cur_val(&lookS[0]));
     }
     float vis0 = -S.optsY.v - 120, vis1 = -S.optsY.v + CLH + 20;
     for (int i = 0; i < S.optN; i++) {
@@ -2736,6 +2461,7 @@ static void draw(void) {
   /* ---- the choices of one setting: drilled into, in the panel's place ---- */
   if (S.pkA.v > 0.001f && S.idx < cats[S.cat].n) {
     const Setting *o = &cats[S.cat].opts[S.idx];
+    float previewH = o == &lookS[0] ? LOOK_PICK_H : 0, listY = PKY + previewH, listH = PKH - previewH;
     float a = S.pkA.v, dx = 56 * (1 - S.pkX.v) * (rtl ? -1 : 1);
     if (S.zone == 2) {
       hit_act(0, 0, SB_W, SB_H, pick_outside, 0, 0);
@@ -2746,14 +2472,16 @@ static void draw(void) {
     gfx_rrect(px, WY, PNW, COLH, 24, RGBA(21, 19, 28, 196));
     line(o->raw ? o->lb : T(o->lb), rtl ? clx + CLW - 24 : clx + 24, CLY, HEADH, 38, 700, WHITE_A(255), -0.5f, CLW - 48,
          al);
-    gfx_clip_push(clx, PKY, CLW, PKH);
-    gfx_offset_push(0, PKY + S.pickY.v);
-    hl_draw(&S.hp, clx, CLW, 0);
     const char *cur = cur_val(o);
+    if (previewH)
+      preview_look(clx, PKY, CLW, S.pick >= 0 ? o->opts[S.pick].v : cur);
+    gfx_clip_push(clx, listY, CLW, listH);
+    gfx_offset_push(0, listY + S.pickY.v);
+    hl_draw(&S.hp, clx, CLW, 0);
     float pt = since(S.pickAt);
     for (int j = 0; j < o->nopts; j++) {
       float y = j * 72.0f;
-      if (y + 68 < -S.pickY.v - 10 || y > -S.pickY.v + PKH + 10)
+      if (y + 68 < -S.pickY.v - 10 || y > -S.pickY.v + listH + 10)
         continue;
       float d = pt - stag(j + 2), e = d < 0.26f ? ease_apply(EASE_SNAP, d / 0.26f) : 1;
       if (e <= 0.001f)
@@ -2775,7 +2503,7 @@ static void draw(void) {
       gfx_opacity_pop();
     }
     gfx_offset_pop();
-    edge_fades(clx, PKY, CLW, PKH, S.pickY.v<-0.5f, o->nopts * 72.0f - ROWGAP + 28 + S.pickY.v> PKH + 2);
+    edge_fades(clx, listY, CLW, listH, S.pickY.v<-0.5f, o->nopts * 72.0f - ROWGAP + 28 + S.pickY.v> listH + 2);
     gfx_clip_pop();
     gfx_offset_pop();
     gfx_opacity_pop();

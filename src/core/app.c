@@ -237,9 +237,6 @@ static const uint32_t ACCENTS[18][4] = {
   { 0x6366f1, 0xa5b4fc, 0xc7d2fe, 0x4338ca }, { 0x9aa3b5, 0xd3d8e2, 0xeef0f4, 0x525a6c }
 }; /* (round the wheel, then graphite: a cool glassy grey; purple, the first, is the dynamic modes' default) */
 #define ACC_DEFAULT ACCENTS[0]
-const uint32_t *settings_accent_rgb(int i) {
-  return ACCENTS[i < 0 ? 0 : i > 17 ? 17 : i];
-}
 static const uint32_t TINT_GREY[4] = { 0x9aa6bd, 0xc1c9d8, 0xe1e5ee, 0x5d6880 };
 static uint32_t accFrom[5], accTo[5];
 static Timer1 accFade;
@@ -293,8 +290,7 @@ int accent_dynamic(void) {
   const char *a = accent_mode();
   return !strcmp(a, "adaptive") || !strcmp(a, "logo");
 }
-static const uint32_t *fixed_accent(void) {
-  const char *a = accent_mode();
+static const uint32_t *fixed_accent(const char *a) {
   for (int i = 0; i < 18; i++)
     if (!strcmp(a, ACCENT_KEYS[i]))
       return ACCENTS[i];
@@ -325,6 +321,30 @@ static const Swatch *first_ok(const Palette *p, int withMuted) {
       return &p->darkMuted;
   }
   return NULL;
+}
+static int palette_accent(const Palette *p, int logo, uint32_t out[4]) {
+  const Swatch *s = first_ok(p, !logo);
+  if (!s || (logo && s->s < .3f))
+    return 0;
+  accent_of(s, NULL, out);
+  return 1;
+}
+uint32_t accent_preview(const char *mode, const char *poster, uint32_t logo, uint32_t out[2]) {
+  uint32_t c[4];
+  const uint32_t *rgb = fixed_accent(mode);
+  if (!strcmp(mode, "logo")) {
+    Swatch swatch;
+    rgb2hsl((logo >> 16) & 255, (logo >> 8) & 255, logo & 255, &swatch.h, &swatch.s, &swatch.l);
+    accent_of(&swatch, NULL, c);
+    rgb = c;
+  } else if (!strcmp(mode, "adaptive")) {
+    Palette p;
+    if (img_palette(poster, 264, 396, 0, &p) == 1 && palette_accent(&p, 0, c))
+      rgb = c;
+  }
+  out[0] = 0xff000000u | rgb[0];
+  out[1] = 0xff000000u | rgb[1];
+  return fg_on(rgb[0], rgb[1]);
 }
 /* the colours found for a title, kept across runs (store node "tintMem2": id -> {cover:[..], logo:[..]}) */
 typedef struct {
@@ -357,19 +377,15 @@ static int tint_for(const char *id, uint32_t out[4]) {
 }
 static char scopeId[64], scopePoster[512], scopeLogo[512];
 static void tint_settle(TintJob *j) {
-  const Swatch *ca = first_ok(&j->art, 1), *cl = first_ok(&j->logo_, 0);
   cJSON *e = cJSON_CreateObject();
   uint32_t c[4];
-  if (ca)
-    accent_of(ca, NULL, c);
-  else
+  if (!palette_accent(&j->art, 0, c))
     memcpy(c, TINT_GREY, sizeof c);
   cJSON *arr = cJSON_CreateArray();
   for (int i = 0; i < 4; i++)
     cJSON_AddItemToArray(arr, cJSON_CreateNumber(c[i]));
   cJSON_AddItemToObject(e, "cover", arr);
-  if (cl && cl->s >= .3f) {
-    accent_of(cl, NULL, c);
+  if (palette_accent(&j->logo_, 1, c)) {
     arr = cJSON_CreateArray();
     for (int i = 0; i < 4; i++)
       cJSON_AddItemToArray(arr, cJSON_CreateNumber(c[i]));
@@ -467,7 +483,7 @@ void accent_apply(void) {
   if (accent_dynamic())
     accent_scope(scopeId[0] ? scopeId : NULL, scopePoster, scopeLogo);
   else
-    set_accent(fixed_accent());
+    set_accent(fixed_accent(accent_mode()));
 }
 /* Dynamic accents ("From the logo", "From the artwork") belong to ONE title: they show on that title's
    page and in its player; everywhere else the app keeps the default (purple). */
@@ -481,7 +497,7 @@ void accent_scope(const char *id, const char *poster, const char *logo) {
       scopeId[0] = 0;
   }
   if (!accent_dynamic()) {
-    set_accent(fixed_accent());
+    set_accent(fixed_accent(accent_mode()));
     return;
   }
   uint32_t c[4];
