@@ -581,9 +581,6 @@ static void build(void) {
           "Auto finds out what this TV plays. Convert if you are not sure. Off leaves it to the TV", DTSM, 3, "auto");
   set_s(&audS[naud++], "uiSound", "Interface sounds", "A soft click as you move between titles", OO, 2, "false");
   set_s(&audS[naud++], "uiSoundVol", "Interface sound level", "Of the TV\xe2\x80\x99s volume", SVOL, 10, "30");
-  if (sound_has_intro())
-    set_s(&audS[naud++], "introSound", "Startup sound", "A short sound with the logo when the app opens", OO, 2,
-          "true");
   set_s(&lookS[0], "accent", "Accent colour", "Dynamic: the colours of the title you open", ACCENT_OPTS, 20,
         "logo"); /* first, right under its picture */
   set_s(&lookS[1], "ssDelay", "Screensaver", "After a while without a key, the titles of the moment fill the screen",

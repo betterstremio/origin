@@ -572,7 +572,7 @@ static void toast_draw(void) {
     float px = SB_W / 2 - pw / 2, py = phone_bottom() - 60 + 16 * (1 - a);
     gfx_opacity_push(a);
     gfx_shadow(px, py + 8, pw, 44, 22, 24, BLACK_A(110));
-    gfx_rrect(px, py, pw, 44, 22, RGB(0x2a, 0x27, 0x35));
+    gfx_rrect(px, py, pw, 44, 22, RGB(42, 42, 44));
     text_draw(toastMsg, SB_W / 2, py + 22 - text_line_height(14) / 2.0f, 14, 600, WHITE_A(240), 0, pw - 28,
               ALIGN_CENTER);
     gfx_opacity_pop();
@@ -580,7 +580,7 @@ static void toast_draw(void) {
   }
   gfx_opacity_push(a);
   gfx_shadow(x, y + 16, w, h, 18, 40, BLACK_A(115));
-  gfx_rrect(x, y, w, h, 18, RGB(0x1f, 0x1c, 0x28));
+  gfx_rrect(x, y, w, h, 18, RGB(34, 34, 36)); /* neutral grey (was violet) */
   gfx_ring(x, y, w, h, 18, 1, WHITE_A(15));
   float cx = rtl ? x + w - 28 : x + 28; /* the pen: left to right, or right to left */
   if (toastKind) {
@@ -2398,13 +2398,6 @@ void app_tick(float dt) {
   welcome_tick();
   lift_tick(dt);
   tabs_warm_tick();
-  {
-    static int greeted;
-    if (!greeted && app_splash_done) {
-      greeted = 1;
-      sound_play(SND_START);
-    }
-  } /* start-up: one very faint sound */
   {
     static int wasP;
     int po = player_open();

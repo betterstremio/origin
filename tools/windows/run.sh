@@ -12,7 +12,6 @@ python -I - "$DATA/state.json" <<'PY'
 import json, os, sys
 p = sys.argv[1]
 j = json.load(open(p, encoding="utf-8")) if os.path.isfile(p) else {}
-j["introSound"] = "false"
 wn = json.load(open(os.path.join(os.path.dirname(os.path.dirname(p)), "assets", "whatsnew.json"), encoding="utf-8")).get("version", "")
 if not os.environ.get("KEEP_GUIDE"): j["guideSeen"] = "1"; j["whatsNewSeen"] = wn   # scripts start on Home (KEEP_GUIDE=1: the first-start tour)
 json.dump(j, open(p, "w", encoding="utf-8"))

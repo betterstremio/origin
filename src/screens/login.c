@@ -679,7 +679,7 @@ static void draw(void) {
     if (cw > qrW)
       qrW = cw;
   }
-  float boxW = qrW + 90 + 1 + 90 + fW, boxH = qrH > fH ? qrH : fH, bx = SB_W / 2 - boxW / 2, by = SB_H / 2 - boxH / 2;
+  float boxW = qrW + 90 + 1 + 90 + fW, boxH = qrH > fH ? qrH : fH, bx = rtl ? SB_W / 2 - fW - 90 : SB_W / 2 - qrW - 90, by = SB_H / 2 - boxH / 2;
   by -= L.osk.a.v * (osk_height() + 30) / 2; /* the keyboard below: the box moves up to share the screen */
   float doneK =
       L.done ? ease_apply(EASE_OUT, timer_x(&L.doneT) * 0.6f / 0.45f > 1 ? 1 : timer_x(&L.doneT) * 0.6f / 0.45f) : 0;
@@ -700,14 +700,13 @@ static void draw(void) {
       gfx_opacity_push(k1 < 0.004f ? 0.004f : k1);
       float nx = foc ? nudge_x(&L.nudge) : 0, ny = foc ? nudge_y(&L.nudge) : 0;
       lpill(sx + nx, sy + ny, 2 * sw, sh, sh / 2, 0, 7);
-      if (foc)
-        gfx_ring(sx - 5 + nx, sy - 5 + ny, 2 * sw + 10, sh + 10, (sh + 10) / 2, 3, WHITE_A(235));
       for (int i = 0; i < 2; i++) {
         float x = sx + i * sw;
-        if (L.svc == i)
-          gfx_rrect(x + 6 + nx, sy + 6 + ny, sw - 12, sh - 12, (sh - 12) / 2, WHITE_A(235));
+        int sel = L.svc == i;
+        if (sel)
+          gfx_rrect(x + 6 + nx, sy + 6 + ny, sw - 12, sh - 12, (sh - 12) / 2, foc ? WHITE_A(255) : WHITE_A(40));
         text_draw(N[i], x + sw / 2 + nx, sy + sh / 2 - text_line_height(30) / 2 + ny, 30, 700,
-                  L.svc == i ? RGB(14, 14, 22) : WHITE_A(210), 0, 0, ALIGN_CENTER);
+                  sel && foc ? INK : sel ? WHITE_A(255) : WHITE_A(150), 0, 0, ALIGN_CENTER);
         hit_add(x, sy, sw, sh, NULL, sw_act, i, 0);
       }
       gfx_opacity_pop();

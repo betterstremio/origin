@@ -186,7 +186,6 @@ static struct {
   Tween tipK; /* the thank-you's codes: which shows (0 the coffee, 1 GitHub); OK turns it over */
 } W;
 static Screen card;
-static SGlass glass; /* Home behind, frosted */
 static GfxTarget pic[2];
 static int picOk = -1; /* the pictures: the one shown, the one leaving */
 static Orbs orbs[2];
@@ -2032,17 +2031,30 @@ static void ctl_switch(float x, float y, float h, float k, int rtl) {
     }
     return;
   }
-  float kk = W.knob.v;
-  lglass_switch(sx, sy, 72, 40, rtl ? 1 - kk : kk, kk, k > 0.5f); /* the app's glass switch */
+  float kk = W.knob.v, p = rtl ? 1 - kk : kk;
+  (void)k;
+  gfx_rrect(sx, sy, 72, 40, 20, col_mix(WHITE_A(46), ACC | 0xff000000u, kk));
+  gfx_circle(sx + 20 + 32 * p, sy + 20, 16, WHITE_A(255)); /* flat: the track in the accent when on, a white knob; no
+                                                              halo (the row's words show the focus) */
 }
 static void words(int i, float a, float dx) {
   if (a <= 0.004f || i < 0 || i >= W.n)
     return;
   const Page *p = &W.p[i];
   int rtl = app_rtl(), al = rtl ? ALIGN_RIGHT : ALIGN_LEFT;
-  float x = colX(), y = FY + FH / 2 - words_h(p) / 2, s = rtl ? -1 : 1;
+  float x = colX(), y = FY - 8, s = rtl ? -1 : 1;
+  if (p->pv != PV_NEWS) {
+    float mh = 0;
+    for (int q = 0; q < W.n; q++)
+      if (W.p[q].pv != PV_NEWS && words_h(&W.p[q]) > mh)
+        mh = words_h(&W.p[q]);
+    if (FY + FH / 2 - mh / 2 < y)
+      y = FY + FH / 2 - mh / 2;
+  } else if (FY + FH / 2 - words_h(p) / 2 < y)
+    y = FY + FH / 2 - words_h(p) / 2;
   if (y < 110)
-    y = 110;
+    y = 110; /* the title at one height on every page of the tour (level with the picture's top, or higher when the
+                tallest page needs it), so turning a page never moves it */
   gfx_opacity_push(a);
   gfx_offset_push(dx, 0);
   text_draw_wrapped(T(p->title), x, y, COLW, 2, TI_PX, 800, WHITE_A(255), -1.4f, al, TI_LH);
@@ -2245,7 +2257,6 @@ static void finish(void) {
   app_ambient_guide(0);
   if (app_overlay == &card)
     app_overlay = NULL;
-  sglass_free(&glass);
   for (int s = 0; s < 2; s++)
     gfx_target_free(&pic[s]);
   picOk = -1;
@@ -2456,7 +2467,6 @@ static void tick(float dt) {
   tween_tick(&W.focus, dt);
   tween_tick(&W.tipK, dt);
   nudge_tick(&W.nudge, dt);
-  sglass_tick(&glass, dt);
   float want = best_on() ? 1 : 0;
   if (W.knob.to != want)
     tween_to(&W.knob, want, 0.24f, EASE_OUT);
@@ -2504,11 +2514,9 @@ static void draw(void) {
   gfx_opacity_push(base);
   if (W.fromSignIn)
     login_backdrop_draw(); /* straight from signing in: its very background, carrying on */
-  else {
-    sglass_draw(&glass, 0, 0, SB_W, SB_H, 0);
-    gfx_rect(0, 0, SB_W, SB_H, col_alpha(PAGE, 0.88f));
-    login_glows_draw();
-  }
+  else
+    gfx_rect(0, 0, SB_W, SB_H, PAGE | 0xff000000u); /* Home's flat page colour (no frosted Home under it: one
+                                                     full-screen blur less) */
   gfx_opacity_pop(); /* the sign-in's glows, on their one clock: the same from signing in through every page here, never
                         placed again */
   float a = ck * co;
@@ -2844,7 +2852,6 @@ static void open_guide(int tour) {
   W.tipWant = 0;
   tween_set(&W.tipK, 0);
   timer_start(&W.in, 0.9f);
-  sglass_bake(&glass, 0, 0, SB_W, SB_H);
   app_ambient_guide(1);
   app_overlay = &card;
 }

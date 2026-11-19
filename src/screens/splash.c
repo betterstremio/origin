@@ -3,7 +3,6 @@
 #include "core/app.h"
 #include "ui/gfx.h"
 #include "ui/text.h"
-#include "ui/sound.h"
 #include "platform/plat.h"
 #include "screens/login.h"
 #include "screens/welcome.h"
@@ -49,8 +48,6 @@ void splash_start(int waitForHome, double signedInAt) {
     f = getenv("SB_SPLASH_X");
     frozenX = f ? (float)atof(f) : -1;
   } /* development: held at this moment, for pictures of it */
-  if (!justSignedIn && waitForHome)
-    sound_intro();
 }
 static void splash_end(void) {
   if (gone)
@@ -117,6 +114,20 @@ static void arc_draw(float cx, float cy, float r0, float r1, float a0, float a1,
    behind it. Returns the word's width */
 static float word_draw(float ox, float oy, int px, float draw, float rev, uint32_t c) {
   float R = O_R * px, Ri = O_IN * px, top = -1.5707963f;
+  float wr = text_width("rigin", px, 700, 0), x = ox - R + (O_ADV - O_LSB) * px;
+  if (rev > 0) {
+    const SbLine *l = text_line("rigin", px, 700, 0, 0);
+    if (l) {
+      float y = oy + O_MID * px - l->baseline;
+      gfx_clip_push(ox, y - px, wr + 3 * px, 3 * px);
+      gfx_opacity_push(rev);
+      text_draw("rigin", x - (1 - rev) * 0.55f * wr, y, px, 700, c, 0, 0, ALIGN_LEFT);
+      gfx_opacity_pop();
+      gfx_clip_pop();
+    }
+    if (rev < 1)
+      gfx_circle(ox, oy, R - 0.5f, BG | 0xff000000u);
+  } /* the letters come out from behind the O: its disc hides them until they pass its rim */
   if (draw >= 1)
     arc_draw(ox, oy, Ri, R, 0, 2 * 3.14159265f, c);
   else if (draw > 0) {
@@ -125,18 +136,6 @@ static float word_draw(float ox, float oy, int px, float draw, float rev, uint32
     gfx_circle(ox + m * cosf(top), oy + m * sinf(top), h, c);
     gfx_circle(ox + m * cosf(e), oy + m * sinf(e), h, c);
   } /* (round ends while it draws; they meet when it closes) */
-  float wr = text_width("rigin", px, 700, 0), x = ox - R + (O_ADV - O_LSB) * px;
-  if (rev > 0) {
-    const SbLine *l = text_line("rigin", px, 700, 0, 0);
-    if (l) {
-      float y = oy + O_MID * px - l->baseline;
-      gfx_clip_push(ox + R, y - px, wr + 2 * px, 3 * px);
-      gfx_opacity_push(rev);
-      text_draw("rigin", x - (1 - rev) * 0.55f * wr, y, px, 700, c, 0, 0, ALIGN_LEFT);
-      gfx_opacity_pop();
-      gfx_clip_pop();
-    }
-  }
   return x + wr - (ox - R);
 }
 float splash_wordmark_draw(float x, float y, int px, uint32_t c) {
@@ -163,9 +162,7 @@ void splash_draw(void) {
       firstDraw = n;
     if (!animStart && frames >= 2 && (n - lastDraw < 0.04 || n - firstDraw > 0.45)) {
       animStart = n;
-      if (signedAt <= 0)
-        sound_intro_go();
-    } /* the clock and the music wait for smooth frames (Home is built on this thread over the first few, 150-400 ms on
+    } /* the clock waits for smooth frames (Home is built on this thread over the first few, 150-400 ms on
          the TV): otherwise the opening would be lost in that */
     if (lastDraw > 0 && !gone && animStart && animStart != n && n - lastDraw > worstGap) {
       worstGap = n - lastDraw;
