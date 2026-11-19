@@ -88,7 +88,7 @@ fi
 B="$W/build-$TARGET"
 SSL=(-DCMAKE_DISABLE_FIND_PACKAGE_OpenSSL=ON); SSLLIB=()
 if [ "$TARGET" = mac ]; then OSSL="$(brew --prefix openssl@3)"; SSL=(-DOPENSSL_ROOT_DIR="$OSSL"); SSLLIB=("$OSSL/lib/libssl.a" "$OSSL/lib/libcrypto.a"); export PKG_CONFIG_PATH="$OSSL/lib/pkgconfig"; fi   # the engine needs it on macOS (system trust store)
-FL="-ffunction-sections -fdata-sections -fvisibility=hidden -fvisibility-inlines-hidden -D_LARGEFILE64_SOURCE -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64 -ffile-prefix-map=$HOME=/src -ffile-prefix-map=$ROOT=/app"   # no local paths in the library (source names in asserts)
+FL="-ffunction-sections -fdata-sections -fvisibility=hidden -fvisibility-inlines-hidden -D_LARGEFILE64_SOURCE -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64 -ffile-prefix-map=$W=/engine -ffile-prefix-map=$HOME=/src -ffile-prefix-map=$ROOT=/app"   # no local paths in the library (source names in asserts)
 if [[ "$TARGET" == android-* ]]; then FL="$FL -fexperimental-library"; fi   # the NDK's libc++ 18 keeps std::stop_token behind it
 if [ "$TARGET" = windows ]; then FL="$FL -DESTALE=10070"; fi   # (mingw has no ESTALE: Winsock's WSAESTALE; it only marks a vanished drive)
 if [ "$TARGET" = mac ]; then mkdir -p "$W/ossl3"; ln -sfn "$OSSL/include/openssl" "$W/ossl3/openssl"; FL="$FL -I$W/ossl3"; fi   # OpenSSL 3 ahead of the compiler's own /opt/homebrew/include (OpenSSL 4 there does not build the pinned libtorrent; the same folder given twice is dropped, hence the link)
@@ -108,10 +108,16 @@ if [ "$TARGET" = windows ]; then   # a DLL that exports sbe_get alone (the .def)
   "$TC/c++" -std=c++20 -Os $CXXFL -shared -I"$SRC/include" -I"$ROOT/src" "$ROOT/tools/engine/sbengine.cpp" "$TC/sbengine.def" \
     "$B/nuvio_engine.a" "$LT" -static -static-libgcc -static-libstdc++ -Wl,--gc-sections -s \
     -lws2_32 -lmswsock -liphlpapi -lbcrypt -lcrypt32 -ladvapi32 -ldbghelp -o "$OUT"
-elif [ "$TARGET" = webos ] || [[ "$TARGET" == android-* ]]; then
+elif [ "$TARGET" = webos ]; then   # symbols kept in libsbengine.so.dbg (an engine crash's pc resolves against it; zig keeps the symbol table only with -g), the same link stripped beside it
+  echo '{ global: sbe_get; local: *; };' > "$TC/exports.map"
+  "$TC/c++" -std=c++20 -Os -fPIC $FL -g -shared -I"$SRC/include" -I"$ROOT/src" "$ROOT/tools/engine/sbengine.cpp" \
+    "$B/libnuvio_engine.a" "$LT" -Wl,--gc-sections -Wl,-T,"$ROOT/tools/webos-relocs.ld" -Wl,--version-script="$TC/exports.map" -Wl,-soname,libsbengine.so -lpthread -o "$OUT.dbg"
+  python3 "$ROOT/tools/elfstrip.py" "$OUT.dbg" "$OUT" && chmod +x "$OUT"
+  python3 "$ROOT/tools/relocs-check.py" "$OUT"   # (webOS 3 starts it only with its two relocation tables together)
+elif [[ "$TARGET" == android-* ]]; then
   echo '{ global: sbe_get; local: *; };' > "$TC/exports.map"
   "$TC/c++" -std=c++20 -Os -fPIC $FL -shared -I"$SRC/include" -I"$ROOT/src" "$ROOT/tools/engine/sbengine.cpp" \
-    "$B/libnuvio_engine.a" "$LT" -Wl,--gc-sections -Wl,--version-script="$TC/exports.map" -Wl,--strip-all -Wl,-soname,libsbengine.so $([[ "$TARGET" == android-* ]] && echo "-static-libstdc++ -Wl,-z,max-page-size=16384" || echo -lpthread) -o "$OUT"
+    "$B/libnuvio_engine.a" "$LT" -Wl,--gc-sections -Wl,--version-script="$TC/exports.map" -Wl,--strip-all -Wl,-soname,libsbengine.so -static-libstdc++ -Wl,-z,max-page-size=16384 -o "$OUT"
 else
   "$TC/c++" -std=c++20 -Os $FL -shared -I"$SRC/include" -I"$ROOT/src" "$ROOT/tools/engine/sbengine.cpp" \
     "$B/libnuvio_engine.a" "$LT" "${SSLLIB[@]}" -framework Security -framework CoreFoundation -framework SystemConfiguration \

@@ -6,7 +6,9 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageInstaller;
+import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.provider.Settings;
@@ -33,6 +35,7 @@ public final class SbUpdater {
     static File ready;                 // a checked APK waiting for the permission
     static boolean waitingPermission;
     static BroadcastReceiver receiver;
+    static volatile String otherPkg;   // the APK's package when it is not ours (the 2.1.12 bridge): opened once installed
 
     public static String poll() { return state; }
 
@@ -88,8 +91,13 @@ public final class SbUpdater {
         try {
             PackageInstaller pi = a.getPackageManager().getPackageInstaller();
             PackageInstaller.SessionParams p = new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
-            p.setAppPackageName(a.getPackageName()); p.setSize(f.length());
-            if (Build.VERSION.SDK_INT >= 31) p.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED);
+            // the APK's own package: the new-id app (src/core/update.c) is installed beside this one, not over it
+            PackageInfo ai = a.getPackageManager().getPackageArchiveInfo(f.getAbsolutePath(), 0);
+            String pkg = ai != null && ai.packageName != null ? ai.packageName : a.getPackageName();
+            otherPkg = pkg.equals(a.getPackageName()) ? null : pkg;
+            if (otherPkg != null) Log.i(TAG, "update: installing " + pkg + " beside this app");
+            p.setAppPackageName(pkg); p.setSize(f.length());
+            if (Build.VERSION.SDK_INT >= 31 && otherPkg == null) p.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED);
             int id = pi.createSession(p);
             try (PackageInstaller.Session s = pi.openSession(id)) {
                 try (InputStream in = new FileInputStream(f); OutputStream o = s.openWrite("base.apk", 0, f.length())) {
@@ -112,12 +120,27 @@ public final class SbUpdater {
                 Intent confirm = in.getParcelableExtra(Intent.EXTRA_INTENT);
                 if (confirm != null) { confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); cx.startActivity(confirm); }
                 state = "1|Confirm the update on screen";
-            } else if (st == PackageInstaller.STATUS_SUCCESS) { state = "1|Installed: open the app again"; busy = false; }
+            } else if (st == PackageInstaller.STATUS_SUCCESS) {
+                state = "1|Installed: open the app again"; busy = false;
+                if (otherPkg != null) openOther(cx, otherPkg);
+            }
             else if (st == PackageInstaller.STATUS_FAILURE_ABORTED) fail("cancelled");
             else fail(msg != null ? msg : "the installer said no (" + st + ")");
         } };
         IntentFilter flt = new IntentFilter(ACTION);
         if (Build.VERSION.SDK_INT >= 33) c.registerReceiver(receiver, flt, Context.RECEIVER_NOT_EXPORTED); else c.registerReceiver(receiver, flt);
+    }
+    // the new-id app, on a TV (leanback launcher) or a phone; if the system will not start it from here, its own icon is there
+    static void openOther(Context cx, String pkg) {
+        try {
+            PackageManager pm = cx.getPackageManager();
+            Intent i = pm.getLeanbackLaunchIntentForPackage(pkg);
+            if (i == null) i = pm.getLaunchIntentForPackage(pkg);
+            if (i == null) { Log.w(TAG, "update: no launch intent for " + pkg); return; }
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            cx.startActivity(i);
+            state = "1|Installed: the new app opens";
+        } catch (Exception e) { Log.w(TAG, "update: could not open " + pkg, e); }
     }
     static void onResume(Activity a) {
         if (!waitingPermission || ready == null) return;

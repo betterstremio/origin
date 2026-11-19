@@ -230,7 +230,7 @@ static int setup(void) {
      then a media-client name, which the developer-mode role allows (for com.webos.media only) */
   const char *app = getenv("APPID");
   if (!app)
-    app = "tv.stremioorigin.app";
+    app = SB_APP_ID; /* (tools/build.sh -DSB_APP_ID) */
   const char *shortId = strrchr(app, '.') ? strrchr(app, '.') + 1 : app;
   char name[160];
   snprintf(name, sizeof name, "com.webos.media.client.%s.sys%d", shortId, (int)getpid());

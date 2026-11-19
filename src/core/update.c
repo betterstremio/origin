@@ -28,6 +28,12 @@ float key_hint(float x, float y, int key, const char *label, uint32_t col,
 #ifndef SB_APP_ID
 #define SB_APP_ID "tv.stremioorigin.app"
 #endif
+/* the id 3.0.0 and later ship under. A build under the old id (the 2.1.12 bridge) also accepts packages named with it,
+   so existing installs move over; a build already under the new id behaves as it always did. */
+#ifndef SB_NEW_APP_ID
+#define SB_NEW_APP_ID "io.github.betterstremio.origin"
+#endif
+#define SB_BRIDGE (strcmp(SB_APP_ID, SB_NEW_APP_ID) != 0)
 /* this build's own package kind among the release's files: <appid>_<x.y.z><PKG_KIND> */
 #define PKG_KIND SB_PKG_KIND
 #define PKG_KIND_LEN (sizeof PKG_KIND - 1)
@@ -43,6 +49,7 @@ typedef struct {
   char ver[24], url[512], sha[72];
   char notes[5][256];
   int nnotes;
+  int newId; /* the package is under SB_NEW_APP_ID (only ever set by the bridge) */
 } Rel;
 static struct {
   char cur[24], appinfo[1200];
@@ -249,16 +256,51 @@ static double nextAt;
 static int forceCheck, pillPend; /* the next check while the app stays open; a check that skips the 6-hour rest; a
                                     notice that waits for the film to end */
 static int reached; /* the release list answered: finding nothing for this package then means nothing newer */
+/* the new-id app's appinfo.json: this app's own with the id swapped in its path (both live under
+   .../usr/palm/applications/<id>/); 0 when this app's path does not hold its id */
+static int new_appinfo(char *out, size_t cap) {
+  char old[96];
+  snprintf(old, sizeof old, "/%s/", SB_APP_ID);
+  const char *at = U.appinfo[0] ? strstr(U.appinfo, old) : NULL;
+  if (!at)
+    return 0;
+  snprintf(out, cap, "%.*s/%s/%s", (int)(at - U.appinfo), U.appinfo, SB_NEW_APP_ID, at + strlen(old));
+  return 1;
+}
+/* the new-id app already installed at this version or later (webOS): nothing to offer, it is there to open */
+static int new_app_has(const char *ver) {
+  char p[1200], b[4096];
+  if (!new_appinfo(p, sizeof p))
+    return 0;
+  FILE *f = fopen(p, "rb");
+  if (!f)
+    return 0;
+  size_t n = fread(b, 1, sizeof b - 1, f);
+  fclose(f);
+  b[n] = 0;
+  cJSON *j = cJSON_Parse(b), *v = cJSON_GetObjectItemCaseSensitive(j, "version");
+  int has = cJSON_IsString(v) && v->valuestring && ver_cmp(v->valuestring, ver) >= 0;
+  cJSON_Delete(j);
+  return has;
+}
 static void done(const Rel *best, int manual) {
   char at[32];
   snprintf(at, sizeof at, "%.0f", now_ms());
   store_set("updAt", at);
+  if (best && best->newId && new_app_has(best->ver)) {
+    fprintf(stderr, "[update] %s is already installed as %s: nothing to offer\n", best->ver, SB_NEW_APP_ID);
+    best = NULL;
+    reached = 1; /* (an answer, and nothing newer for this app: "up to date", not "could not check") */
+  }
   if (best && U.cur[0] && ver_cmp(best->ver, U.cur) > 0) {
     U.avail = *best;
     U.has = 1;
     U.state = UPD_AVAIL;
     store_set("updVer", best->ver);
     fprintf(stderr, "[update] %s available (running %s)\n", best->ver, U.cur);
+    if (best->newId)
+      fprintf(stderr, "[update] %s is under the new app id %s: installing it beside this one\n", best->ver,
+              SB_NEW_APP_ID);
     if (!manual) {
       if (player_open())
         pillPend = 1;
@@ -295,6 +337,9 @@ static void on_manifest(int st, const unsigned char *body, size_t len, void *ud)
         !strcmp(u->valuestring + ul - PKG_KIND_LEN,
                 PKG_KIND)) { /* the listing may name another build under the same id: only this package's kind */
       ok = 1;
+      const char *fn = strrchr(u->valuestring, '/');
+      fn = fn ? fn + 1 : u->valuestring;
+      r.newId = SB_BRIDGE && !strncmp(fn, SB_NEW_APP_ID "_", sizeof SB_NEW_APP_ID);
       snprintf(r.ver, sizeof r.ver, "%s", v->valuestring);
       snprintf(r.url, sizeof r.url, "%s", u->valuestring);
       snprintf(r.sha, sizeof r.sha, "%s", h->valuestring);
@@ -330,8 +375,6 @@ static void on_releases(int st, const unsigned char *body, size_t len, void *ud)
   int has = 0;
   memset(&best, 0, sizeof best);
   cJSON *list = st == 200 ? cJSON_Parse((const char *)body) : NULL, *r, *a;
-  const char *pre = SB_APP_ID "_";
-  size_t pl = strlen(pre);
   cJSON *arr = cJSON_IsArray(list) ? list : NULL;
   reached = arr != NULL;
   cJSON_ArrayForEach(r, arr) {
@@ -344,7 +387,11 @@ static void on_releases(int st, const unsigned char *body, size_t len, void *ud)
       if (!cJSON_IsString(nm) || !cJSON_IsString(dg) || !cJSON_IsString(du))
         continue;
       const char *n = nm->valuestring;
-      int x, y, z, used = 0;
+      int x, y, z, used = 0, nw = 0;
+      const char *pre = SB_APP_ID "_";
+      if (SB_BRIDGE && !strncmp(n, SB_NEW_APP_ID "_", sizeof SB_NEW_APP_ID))
+        pre = SB_NEW_APP_ID "_", nw = 1;
+      size_t pl = strlen(pre);
       if (strncmp(n, pre, pl) || sscanf(n + pl, "%d.%d.%d%n", &x, &y, &z, &used) != 3 ||
           strcmp(n + pl + used, PKG_KIND))
         continue; /* ^<appid>_(\d+\.\d+\.\d+)_arm\.ipk$ (_android.apk on Android) */
@@ -360,10 +407,12 @@ static void on_releases(int st, const unsigned char *body, size_t len, void *ud)
         continue;
       char ver[24];
       snprintf(ver, sizeof ver, "%.*s", used, n + pl);
-      if (has && ver_cmp(ver, best.ver) <= 0)
-        continue;
+      int c = has ? ver_cmp(ver, best.ver) : 1;
+      if (c < 0 || (c == 0 && !(nw && !best.newId)))
+        continue; /* newest wins; on the same version the new id does */
       memset(&best, 0, sizeof best);
       has = 1;
+      best.newId = nw;
       snprintf(best.ver, sizeof best.ver, "%s", ver);
       snprintf(best.url, sizeof best.url, "%s", du->valuestring);
       snprintf(best.sha, sizeof best.sha, "%s", dg->valuestring + 7);
@@ -409,6 +458,18 @@ static void relaunch_cancel(void) {
 static void relaunch_arm(void) {
   if (!U.appinfo[0])
     return;
+  /* the app to wait for and open: this one, or the new-id app that lands beside it (its appinfo.json sits in the same
+     place with the id swapped in the path) */
+  const char *id = SB_APP_ID;
+  char info[1200];
+  snprintf(info, sizeof info, "%s", U.appinfo);
+  if (U.avail.newId) {
+    if (!new_appinfo(info, sizeof info)) {
+      fprintf(stderr, "[update] no relaunch waiter: %s has no /%s/ in it\n", U.appinfo, SB_APP_ID);
+      return;
+    }
+    id = SB_NEW_APP_ID;
+  }
   char *sh = shPath;
   snprintf(sh, sizeof shPath, "%s/relaunch.sh", plat_data_dir());
   snprintf(waitPath, sizeof waitPath, "%s/relaunch.wait", plat_data_dir());
@@ -424,7 +485,7 @@ static void relaunch_arm(void) {
       "M='%s'\ni=0\nwhile [ $i -lt 150 ] && [ -f \"$M\" ]; do\n  sleep 2; i=$((i+1))\n"
       "  if grep -q '\"version\": *\"%s\"' '%s' 2>/dev/null; then rm -f \"$M\"; sleep 2; luna-send -n 1 -f luna://com.webos.applicationManager/launch '{\"id\":\"%s\"}' >/dev/null 2>&1; exit 0; fi\n"
       "done\nrm -f \"$M\"\n",
-      waitPath, U.avail.ver, U.appinfo, SB_APP_ID);
+      waitPath, U.avail.ver, info, id);
   fclose(f);
   char cmd[1400];
   snprintf(cmd, sizeof cmd, "setsid sh '%s' >/dev/null 2>&1 </dev/null &", sh);
@@ -503,7 +564,7 @@ void update_install(void) {
   cJSON *p = cJSON_CreateObject();
   cJSON_AddStringToObject(p, "ipkUrl", U.avail.url);
   cJSON_AddStringToObject(p, "ipkHash", U.avail.sha);
-  cJSON_AddStringToObject(p, "id", SB_APP_ID);
+  cJSON_AddStringToObject(p, "id", U.avail.newId ? SB_NEW_APP_ID : SB_APP_ID);
   cJSON_AddTrueToObject(p, "subscribe");
   char *ps = cJSON_PrintUnformatted(p);
   cJSON_Delete(p);
