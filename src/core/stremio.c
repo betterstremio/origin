@@ -1,6 +1,8 @@
 #include <ctype.h>
+#include "core/anime_map.h"
 #include "core/stremio.h"
 #include "core/bgtrailer.h"
+#include "core/app.h"
 #include <strings.h>
 #include "core/net.h"
 #include "core/store.h"
@@ -1510,8 +1512,9 @@ int lib_id_is_anime(const char *type, const char *id) {
     return 1;
   if (!id)
     return 0;
-  return !strncmp(id, "kitsu:", 6) || !strncmp(id, "anilist:", 8) || !strncmp(id, "mal:", 4) ||
-         !strncmp(id, "anidb:", 6);
+  if (!strncmp(id, "kitsu:", 6) || !strncmp(id, "anilist:", 8) || !strncmp(id, "mal:", 4) || !strncmp(id, "anidb:", 6))
+    return 1;
+  return !strncmp(id, "tt", 2) && app_anime_on() && anime_map_alid(id) > 0;
 }
 #define ANIME_LIBRARY_KINDS "animeLibraryCinemeta"
 int lib_item_is_anime(const cJSON *it) {

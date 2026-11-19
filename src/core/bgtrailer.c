@@ -1,4 +1,5 @@
 #include "core/bgtrailer.h"
+#include "core/anilist.h"
 #include "core/trailer.h"
 #include "core/store.h"
 #include "core/net.h"
@@ -216,7 +217,19 @@ static void on_meta(cJSON *m, void *ud) {
   char imdb[24], yt[128];
   trailer_imdb_id(m, tid, imdb, sizeof imdb);
   trailer_yt_ids(m, yt, sizeof yt);
-  if (!m || !idleOn || (!imdb[0] && !yt[0])) {
+  if (!idleOn) {
+    st = S_OFF;
+    return;
+  }
+  if (!imdb[0] && !yt[0] && !strncmp(tid, "anilist:", 8)) {
+    AlFacts f;
+    if (anilist_facts(atoi(tid + 8), &f) && f.yt[0]) {
+      st = S_FIND;
+      tok = trailer_find(NULL, f.yt, 1, on_found, (void *)(uintptr_t)gen);
+      return;
+    }
+  }
+  if (!m || (!imdb[0] && !yt[0])) {
     st = S_OFF;
     return;
   }

@@ -1,6 +1,7 @@
 /* AniList rows, ids and taste data (see anilist.h). Main thread only: the network and the disk are reached through
    net_post_hdr_t and net_file, whose workers parse the JSON. */
 #include "core/anilist.h"
+#include "core/anime_map.h"
 #include "core/json.h"
 #include "core/net.h"
 #include "core/store.h"
@@ -9,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <time.h>
 
@@ -24,7 +26,7 @@
 #define MF                                                                                                   \
   "id idMal format episodes seasonYear status title{english romaji} genres averageScore popularity "         \
   "coverImage{extraLarge} bannerImage description(asHtml:false) startDate{year} nextAiringEpisode{episode} " \
-  "studios(isMain:true){nodes{name}}"
+  "studios(isMain:true){nodes{name}} trailer{id site}"
 
 enum { JK_ROW, JK_INFO, JK_MAL };
 
@@ -305,6 +307,9 @@ static int fill_media(Item *it, const cJSON *m) {
   const cJSON *sn = js_arr(js_obj(m, "studios"), "nodes");
   if (sn && cJSON_GetArraySize(sn))
     snprintf(f.studio, sizeof f.studio, "%s", js_str(cJSON_GetArrayItem(sn, 0), "name", ""));
+  const cJSON *tr = js_obj(m, "trailer");
+  if (!strcasecmp(js_str(tr, "site", ""), "youtube"))
+    snprintf(f.yt, sizeof f.yt, "%s", js_str(tr, "id", ""));
   facts_put(&f);
   anilist_meta_line(&f, NULL, it->metaLine, sizeof it->metaLine);
   return 1;
@@ -635,6 +640,10 @@ static void on_kitsu(int status, const unsigned char *body, size_t len, void *ud
 void anilist_resolve(const char *id, AlIdCb cb, void *ud) {
   if (!cb)
     return;
+  if (id && !strncmp(id, "tt", 2)) {
+    cb(anime_map_alid(id), ud);
+    return;
+  }
   const char *colon = id ? strchr(id, ':') : NULL;
   int n = colon ? atoi(colon + 1) : 0;
   if (n <= 0) {
@@ -736,8 +745,38 @@ static void dev_hook(void) {
   }
 }
 
+static void anime_map_test(void) {
+  static const int ids[] = { 16498, 20958, 113415, 145064, 1, 999999 };
+  static long long t0;
+  static int on = -1, started, printed;
+  if (on < 0)
+    on = getenv("SB_ANIME_MAP_TEST") != NULL;
+  if (!on)
+    return;
+  long long now = now_ms();
+  if (!t0)
+    t0 = now;
+  if (!started && now - t0 > 10000) {
+    started = 1;
+    anime_map_want(ids, (int)(sizeof ids / sizeof ids[0]));
+    fprintf(stderr, "[animemap-test] asked %d ids\n", (int)(sizeof ids / sizeof ids[0]));
+  }
+  if (started && !printed) {
+    for (size_t i = 0; i < sizeof ids / sizeof ids[0]; i++)
+      if (!anime_map_known(ids[i]))
+        return;
+    printed = 1;
+    for (size_t i = 0; i < sizeof ids / sizeof ids[0]; i++)
+      fprintf(stderr, "[animemap-test] %d: imdb %s, kitsu %d, season %d\n", ids[i],
+              anime_map_imdb(ids[i]) ? anime_map_imdb(ids[i]) : "-", anime_map_kitsu(ids[i]), anime_map_season(ids[i]));
+    fprintf(stderr, "[animemap-test] tt2560140 -> %d\n", anime_map_alid("tt2560140"));
+  }
+}
+
 void anilist_tick(void) {
   if (qh)
     pump();
   dev_hook();
+  anime_map_test();
+  anime_map_tick();
 }

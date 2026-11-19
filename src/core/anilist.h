@@ -53,6 +53,7 @@ typedef struct {
   char genres[3][24];
   int ng;
   char studio[40];
+  char yt[16]; /* the YouTube trailer id, when AniList supplied one */
 } AlFacts;
 int anilist_facts(int id, AlFacts *out); /* 1 when known */
 /* the Anime tab's details line from facts (imdb: "8.9" or NULL): parts separated by 0x1f, as widgets.c draws them */
