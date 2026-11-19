@@ -635,10 +635,11 @@ static Page *page_load(int pg, unsigned sig, long maxAge) {
     return NULL;
   PHdr h;
   Page *p = NULL;
+  int mem = plat_mem_total_mb();
+  int rowLimit = pg != RECS_PG_HOME && mem > 0 && mem <= 1200 ? 20 : RECS_PAGE_MAX;
   if (fread(&h, sizeof h, 1, f) != 1 || h.magic != PG_MAGIC || h.ver != 1 || h.sig != sig || h.nrows < 0 ||
-      h.nrows > RECS_PAGE_MAX || h.ncards < 0 || h.ncards > PG_CARDS || h.nbill < 0 || h.nbill > h.ncards ||
-      h.blobLen < 2 || h.blobLen > (8u << 20) || h.at > (long long)time(NULL) + 86400 ||
-      (long long)time(NULL) - h.at > maxAge)
+      h.nrows > rowLimit || h.ncards < 0 || h.ncards > PG_CARDS || h.nbill < 0 || h.nbill > h.ncards || h.blobLen < 2 ||
+      h.blobLen > (8u << 20) || h.at > (long long)time(NULL) + 86400 || (long long)time(NULL) - h.at > maxAge)
     goto out;
   p = page_alloc(h.nrows, h.ncards, h.blobLen);
   if (!p)
@@ -2187,7 +2188,7 @@ static void run_post(void) {
   c->noAnime = recs_no_anime();
   {
     int mb = plat_mem_total_mb();
-    c->lowMem = mb > 0 && mb < 1200;
+    c->lowMem = mb > 0 && mb <= 1200;
   }
   c->nseeds = gN < RECS_MAX_SEEDS ? gN : RECS_MAX_SEEDS;
   memcpy(c->seeds, gAll, sizeof(GSeed) * (size_t)c->nseeds);

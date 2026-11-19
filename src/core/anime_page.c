@@ -305,7 +305,7 @@ int anime_page_def(const AnimeRow *r, CatalogDef *d) {
 int anime_page_billboard(ItemList *out) {
   const ItemList *src = NULL;
   int foryou = recs_on() && anime_taste_seeds() > 0;
-  if (top.n >= 3)
+  if (foryou && top.n >= 3)
     src = &top;
   else if (trend.n >= 3 && (!foryou || !topAsked || (topDone && top.n < 3) || anime_page_down()))
     src = &trend;
@@ -527,6 +527,7 @@ int anime_meta_apply(Item *it) {
 void anime_page_close(void) {
   pageGen++;
   openAt = 0;
+  anime_taste_close();
   itemlist_clear(&trend);
   itemlist_clear(&top);
   topAsked = topDone = 0;

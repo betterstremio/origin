@@ -907,7 +907,10 @@ static void ani_rows(Board *b, int keep, const int *oldCols) {
     aniReq0 = anilist_request_count(); /* (counted from the first time the tab is opened) */
   aniLogAt = aniT0 + 9;
   board_cw_row_kind(b, LIB_CW_ANIME);
-  int n = anime_page_plan(aniPlan, cap - b->n, &aniMode);
+  int previousMode = aniMode, n = anime_page_plan(aniPlan, cap - b->n, &aniMode);
+  if (aniMode != previousMode) {
+    b->nfeat = b->featLoad = b->bill = b->featIdx = 0;
+  }
   aniSig = anime_page_sig();
   for (int i = 0; i < n; i++) {
     Row *r = row_add(b, aniPlan[i].title, 0, 0);
@@ -1738,6 +1741,11 @@ static int bill_hi(void) {
 static const char *bill_src(const Item *it, char *bu, size_t cap) {
   return bill_hi() ? sb_bg_large(it, bu, cap) : sb_bg_mid(it, bu, cap);
 }
+static GLuint bill_art(const char *url) {
+  return url[0] ? img_get_shaped(url, bill_hi() ? (int)BILL_W : 1280, bill_hi() ? (int)BILL_H : 573,
+                                 bill_hi() ? 28 : 20, 2)
+                : 0;
+}
 #if SB_WINDOWED
 static void bill_focus(int i, int c) {
   (void)c;
@@ -1768,8 +1776,6 @@ static void bill_draw(Board *b) {
   const Item *it = &b->feat[b->featIdx % b->nfeat];
   char bu[512];
   bill_src(it, bu, sizeof bu);
-  int tw = bill_hi() ? (int)W : 1280, th = bill_hi() ? (int)H : 573;
-  float tr = bill_hi() ? 28 : 20;
   /* (fit 2: a 16:9 picture is wider-cropped from the bottom only: faces are near the top of a backdrop, and the words
    * cover its bottom) */
   if (strcmp(bu, b->billCur)) {
@@ -1781,22 +1787,23 @@ static void bill_draw(Board *b) {
   /* the picture at the size it is drawn, from the largest there is (a TV short of memory: 1280 wide, scaled up); the
    * last one under it while the new fades in */
   float k = clampf((float)((app_now() - b->billSwitch) / 0.45), 0, 1);
-  GLuint cur = b->billCur[0] ? img_get_shaped(b->billCur, tw, th, tr, 2) : 0;
+  GLuint cur = bill_art(b->billCur);
   if (cur && k >= 1 && b->nfeat > 1) {
     char nu[512];
-    if (bill_src(&b->feat[(b->featIdx + 1) % b->nfeat], nu, sizeof nu)[0])
-      img_get_shaped(nu, tw, th, tr, 2);
+    bill_art(bill_src(&b->feat[(b->featIdx + 1) % b->nfeat], nu, sizeof nu));
   } /* the next title's, decoded before it turns */
   if (!cur)
     k = 0;
-  else if (k < 1 && b->billPrev[0]) {
-    GLuint pv = img_get_shaped(b->billPrev, tw, th, tr, 2);
-    if (pv)
-      ph_picture(pv, X, Y, W, H, 28, WHITE_A(255));
+  if (k < 1) {
+    GLuint under = bill_art(b->billPrev);
+    char small[512];
+    if (!under && !cur && b->kind == 1 && sb_bg_small(it, small, sizeof small)[0] && strcmp(small, bu))
+      under = img_get_shaped(small, 320, 144, 5, 2);
+    if (under)
+      ph_picture(under, X, Y, W, H, 28, WHITE_A(255));
     else
       ph_surface(X, Y, W, H, 28);
-  } else if (!b->billPrev[0] && !cur)
-    ph_surface(X, Y, W, H, 28);
+  }
   if (cur) {
     if (k < 1)
       gfx_opacity_push(ease_apply(EASE_CSS_EASE, k));
@@ -3604,7 +3611,11 @@ static int board_warm(Board *b) {
       img_prefetch_pri(u, 520, 175);
       pics = pics && (img_loaded(u) || img_failed(u));
     }
-    if (sb_bg_mid(it, u, sizeof u)[0]) {
+    if (b->cine && spotOn(b)) {
+      bill_src(it, u, sizeof u);
+      GLuint art = bill_art(u);
+      pics = pics && (!u[0] || art || img_failed(u));
+    } else if (sb_bg_mid(it, u, sizeof u)[0]) {
       img_get(u, 1280, 720, NULL);
       pics = pics && (img_loaded(u) || img_failed(u));
     } /* at the size the backdrop draws it */

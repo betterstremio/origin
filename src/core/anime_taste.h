@@ -7,9 +7,8 @@
 #include "core/stremio.h"
 
 void anime_taste_begin(void); /* start or continue (cheap when the library has not changed since the last call) */
-unsigned anime_taste_version(void); /* bumps when all the answers of a round are in */
+void anime_taste_close(void); /* ignore pending results when leaving the Anime tab disabled */
 int anime_taste_seeds(void); /* anime seeds whose genres are known */
-int anime_taste_pending(void); /* answers still on their way */
 /* the genres the user leans to, heaviest first; returns how many */
 int anime_taste_genres(char g[][24], int max);
 /* the most recently watched anime with an AniList id, newest first: its id and library name; returns how many */

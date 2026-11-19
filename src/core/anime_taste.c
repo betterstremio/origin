@@ -25,7 +25,7 @@ typedef struct {
 } Key;
 static Seed seeds[MAX_SEEDS];
 static int nseeds, pending;
-static unsigned libSeen, ver, gen = 1;
+static unsigned libSeen, gen = 1;
 static Key gk[MAX_KEYS];
 static int ngk;
 static char topStudio[48];
@@ -98,7 +98,6 @@ static void settle(void) {
   if (pending > 0)
     return;
   rebuild_weights();
-  ver++;
   char gs[160] = "";
   int shown = 0, withInfo = 0;
   for (int i = 0; i < ngk && shown < 3; i++)
@@ -206,17 +205,16 @@ void anime_taste_begin(void) {
   if (!pending)
     settle();
 }
-unsigned anime_taste_version(void) {
-  return ver;
+void anime_taste_close(void) {
+  gen++;
+  begun = nseeds = pending = nhas = ngk = 0;
+  topStudio[0] = 0;
 }
 int anime_taste_seeds(void) {
   int n = 0;
   for (int i = 0; i < nseeds; i++)
     n += seeds[i].st == S_INFO;
   return n;
-}
-int anime_taste_pending(void) {
-  return pending;
 }
 int anime_taste_genres(char g[][24], int max) {
   int n = 0;
