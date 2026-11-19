@@ -2482,6 +2482,7 @@ static void draw(void) {
     if (fz && fp >= 0 && fp < W.n) {
       W.cur = fp;
       W.step = fs;
+      tween_set(&W.dot, (float)fp); /* (the dots on its page too) */
       W.sw.on = 0;
       sw = 0;
       picture(0, fp, fs, ft);
