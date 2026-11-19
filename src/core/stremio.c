@@ -760,10 +760,22 @@ void sb_meta_line(const cJSON *m, char *out, size_t cap) {
   snprintf(out, cap, "%s%s%s%s%s%s", yr, (*yr && (*rt || *irs)) ? "   " : "", rt, (*rt && *irs) ? "   " : "",
            *irs ? "IMDb " : "", irs);
 }
+static int meta_is_anime(const cJSON *m) {
+  if (js_bool(m, "anime", 0))
+    return 1;
+  if (!strstr(js_str(m, "country", ""), "Japan"))
+    return 0;
+  const cJSON *g;
+  cJSON_ArrayForEach(g, js_arr(m, "genres"))
+    if (cJSON_IsString(g) && !strcmp(g->valuestring, "Animation"))
+      return 1;
+  return 0;
+}
 void sb_fill_item(Item *it, const cJSON *m, const char *type) {
   memset(it, 0, sizeof *it);
   copy_str(it->id, sizeof it->id, js_str(m, "id", js_str(m, "_id", "")));
   copy_str(it->type, sizeof it->type, js_str(m, "type", type ? type : ""));
+  it->anime = lib_id_is_anime(it->type, it->id) || meta_is_anime(m);
   copy_str(it->name, sizeof it->name, js_str(m, "name", ""));
   copy_str(it->poster, sizeof it->poster, js_str(m, "poster", ""));
   copy_str(it->background, sizeof it->background, js_str(m, "background", ""));
@@ -807,11 +819,23 @@ static ItemList *list_from_metas(const cJSON *metas, const char *type, int max) 
 }
 typedef struct {
   char url[ADDON_URL_MAX + 256], type[16], key[ADDON_URL_MAX + 270];
-  int n, nocache; /* key: "cat:" + the whole address (cut short, every catalog of one addon shared one file) */
+  int n, nocache, noAnime;
   void (*cb)(ItemList *, int, void *);
   void *ud;
   char *cachedJson;
 } CatReq;
+static void exclude_anime(ItemList *l) {
+  int n = 0;
+  for (int i = 0; i < l->n; i++)
+    if (!l->items[i].anime)
+      l->items[n++] = l->items[i];
+  l->n = n;
+}
+static void cat_answer(const CatReq *r, ItemList *l, int cached) {
+  if (r->noAnime)
+    exclude_anime(l);
+  r->cb(l, cached, r->ud);
+}
 static void on_catalog(int st, const unsigned char *b, size_t len, void *ud) {
   CatReq *r = ud;
   Uint32 tq0 = SDL_GetTicks();
@@ -835,6 +859,8 @@ static void on_catalog(int st, const unsigned char *b, size_t len, void *ud) {
       cJSON_AddStringToObject(o, "logo", it->logo);
       cJSON_AddStringToObject(o, "description", it->description);
       cJSON_AddStringToObject(o, "metaLine", it->metaLine);
+      if (it->anime)
+        cJSON_AddBoolToObject(o, "anime", 1);
       cJSON_AddItemToArray(slim, o);
     }
     char *txt = cJSON_PrintUnformatted(slim);
@@ -854,7 +880,7 @@ static void on_catalog(int st, const unsigned char *b, size_t len, void *ud) {
     } /* how long the addon says it holds */
     Uint32 tq2 = SDL_GetTicks();
     if (!same && !fresh)
-      r->cb(l, 0, r->ud);
+      cat_answer(r, l, 0);
     else
       itemlist_free(l);
     if (getenv("SB_SLOWLOG"))
@@ -874,12 +900,15 @@ static void on_catalog(int st, const unsigned char *b, size_t len, void *ud) {
   free(r->cachedJson);
   free(r);
 }
-void sb_catalog_url(const char *url, const char *type, int n, void (*cb)(ItemList *, int, void *), void *ud) {
+static void catalog_url(const char *url, const char *type, int n, int noAnime, void (*cb)(ItemList *, int, void *),
+                        void *ud) {
   CatReq *r = calloc(1, sizeof *r);
   copy_str(r->url, sizeof r->url, url);
   copy_str(r->type, sizeof r->type, type);
-  snprintf(r->key, sizeof r->key, "cat:%s", url);
+  /* Older slim lists lack anime metadata. Keep Home's cache and build a separate typed copy as needed. */
+  snprintf(r->key, sizeof r->key, "%s:%s", noAnime ? "cat2" : "cat", url);
   r->n = n;
+  r->noAnime = noAnime;
   r->cb = cb;
   r->ud = ud;
   size_t cl;
@@ -888,7 +917,7 @@ void sb_catalog_url(const char *url, const char *type, int n, void (*cb)(ItemLis
     cJSON *c = cJSON_Parse((const char *)t);
     if (cJSON_IsArray(c) && cJSON_GetArraySize(c)) {
       r->cachedJson = (char *)t;
-      cb(list_from_metas(c, type, n), 1, ud);
+      cat_answer(r, list_from_metas(c, type, n), 1);
     } else
       free(t);
     cJSON_Delete(c);
@@ -909,6 +938,12 @@ void sb_catalog_url(const char *url, const char *type, int n, void (*cb)(ItemLis
   }
   net_get(url, on_catalog, r);
 }
+void sb_catalog_url(const char *url, const char *type, int n, void (*cb)(ItemList *, int, void *), void *ud) {
+  catalog_url(url, type, n, 0, cb, ud);
+}
+void sb_catalog_url_no_anime(const char *url, const char *type, int n, void (*cb)(ItemList *, int, void *), void *ud) {
+  catalog_url(url, type, n, 1, cb, ud);
+}
 /* a search's catalog: no disk copy read or written (one-off queries; Search keeps its own in memory), asked on the
    quick lane or (bg) the previews' lane, which sits idle while Search is up; 10 s at most. The request's id, for
    net_cancel */
@@ -924,11 +959,12 @@ unsigned sb_search_catalog(const char *url, const char *type, int n, int bg, voi
   return bg ? net_get_bg(url, 10000, on_catalog, r) : net_get_timeout(url, 10000, on_catalog, r);
 }
 void sb_catalog(const CatalogDef *d, void (*cb)(ItemList *, int, void *), void *ud) {
-  sb_catalog_url(d->url, d->type, 16, cb, ud);
+  catalog_url(d->url, d->type, 16, d->noAnime, cb, ud);
 }
 /* a further page: the extra the catalog is shown with, and skip */
 typedef struct {
   char type[16];
+  int noAnime;
   void (*cb)(ItemList *, int, void *);
   void *ud;
 } PageReq;
@@ -941,8 +977,10 @@ static void on_page(int st, const unsigned char *b, size_t len, void *ud) {
   int more = cJSON_IsBool(hm) ? cJSON_IsTrue(hm) : -1;
   if (st == 200 && !j)
     fprintf(stderr, "[addon] a catalog page that is not JSON\n");
-  r->cb(st == 200 || st == 404 ? list_from_metas(metas, r->type, 200) : NULL, more,
-        r->ud); /* (a 404 or no metas: the end) */
+  ItemList *l = st == 200 || st == 404 ? list_from_metas(metas, r->type, 200) : NULL;
+  if (l && r->noAnime)
+    exclude_anime(l);
+  r->cb(l, more, r->ud);
   net_json_free(j);
   free(r);
 }
@@ -955,6 +993,7 @@ void sb_catalog_page(const CatalogDef *d, int skip, void (*cb)(ItemList *, int, 
   addon_join(url, sizeof url, d->path, t);
   PageReq *r = calloc(1, sizeof *r);
   copy_str(r->type, sizeof r->type, d->type);
+  r->noAnime = d->noAnime;
   r->cb = cb;
   r->ud = ud;
   net_get(url, on_page, r);
@@ -1474,6 +1513,11 @@ int lib_id_is_anime(const char *type, const char *id) {
   return !strncmp(id, "kitsu:", 6) || !strncmp(id, "anilist:", 8) || !strncmp(id, "mal:", 4) ||
          !strncmp(id, "anidb:", 6);
 }
+int lib_item_is_anime(const cJSON *it) {
+  const char *type = js_str(it, "type", ""), *id = js_str(it, "_id", "");
+  return lib_id_is_anime(type, id) || lib_id_is_anime(NULL, js_str(js_obj(it, "state"), "video_id", "")) ||
+         meta_is_anime(it) || meta_is_anime(sb_meta_cached(type, id));
+}
 int lib_cw_items_k(ItemList *out, int kind) {
   cJSON *lib = lib_arr();
   int base = kind & 7, noAnime = kind & LIB_CW_NO_ANIME;
@@ -1492,7 +1536,7 @@ int lib_cw_items_k(ItemList *out, int kind) {
       continue;
     if (!js_str(it, "name", "")[0])
       continue;
-    int anime = lib_id_is_anime(ty, js_str(it, "_id", ""));
+    int anime = (noAnime || base == LIB_CW_ANIME) && lib_item_is_anime(it);
     int want;
     if (base == LIB_CW_SERIES)
       want = !strcmp(ty, "series") && !(noAnime && anime);
@@ -1548,7 +1592,7 @@ int lib_watch_again_items(ItemList *out, int noAnime, int max) {
   cJSON_ArrayForEach(it, lib) {
     const char *type = js_str(it, "type", "");
     const char *id = js_str(it, "_id", "");
-    if (strcmp(type, "movie") || !id[0] || !js_str(it, "name", "")[0] || (noAnime && lib_id_is_anime(type, id)) ||
+    if (strcmp(type, "movie") || !id[0] || !js_str(it, "name", "")[0] || (noAnime && lib_item_is_anime(it)) ||
         !lib_movie_watched(it))
       continue;
     const cJSON *s = js_obj(it, "state");

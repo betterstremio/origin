@@ -43,16 +43,27 @@ static int genre_used(char used[][24], int n, const char *g) {
   return 0;
 }
 static void add_genre(AnimeRow *o, int *n, int max, const char *genre) {
-  static const struct { const char *genre, *title; } titles[] = {
-    { "Action", "Popular action anime" }, { "Adventure", "Popular adventure anime" },
-    { "Comedy", "Popular comedy anime" }, { "Drama", "Popular drama anime" },
-    { "Ecchi", "Popular ecchi anime" }, { "Fantasy", "Popular fantasy anime" },
-    { "Horror", "Popular horror anime" }, { "Mahou Shoujo", "Popular mahou shoujo anime" },
-    { "Mecha", "Popular mecha anime" }, { "Music", "Popular music anime" },
-    { "Mystery", "Popular mystery anime" }, { "Psychological", "Popular psychological anime" },
-    { "Romance", "Popular romance anime" }, { "Sci-Fi", "Popular sci-fi anime" },
-    { "Slice of Life", "Popular slice of life anime" }, { "Sports", "Popular sports anime" },
-    { "Supernatural", "Popular supernatural anime" }, { "Thriller", "Popular thriller anime" },
+  static const struct {
+    const char *genre, *title;
+  } titles[] = {
+    { "Action", "Popular action anime" },
+    { "Adventure", "Popular adventure anime" },
+    { "Comedy", "Popular comedy anime" },
+    { "Drama", "Popular drama anime" },
+    { "Ecchi", "Popular ecchi anime" },
+    { "Fantasy", "Popular fantasy anime" },
+    { "Horror", "Popular horror anime" },
+    { "Mahou Shoujo", "Popular mahou shoujo anime" },
+    { "Mecha", "Popular mecha anime" },
+    { "Music", "Popular music anime" },
+    { "Mystery", "Popular mystery anime" },
+    { "Psychological", "Popular psychological anime" },
+    { "Romance", "Popular romance anime" },
+    { "Sci-Fi", "Popular sci-fi anime" },
+    { "Slice of Life", "Popular slice of life anime" },
+    { "Sports", "Popular sports anime" },
+    { "Supernatural", "Popular supernatural anime" },
+    { "Thriller", "Popular thriller anime" },
   };
   for (size_t i = 0; i < sizeof titles / sizeof *titles; i++)
     if (!strcmp(titles[i].genre, genre)) {
@@ -346,8 +357,7 @@ int anime_page_mylist(ItemList *out) {
     return 0;
   const cJSON *it;
   cJSON_ArrayForEach(it, lib) {
-    if (js_bool(it, "removed", 0) || !js_str(it, "name", "")[0] ||
-        !lib_id_is_anime(js_str(it, "type", ""), js_str(it, "_id", "")))
+    if (js_bool(it, "removed", 0) || js_bool(it, "temp", 0) || !js_str(it, "name", "")[0] || !lib_item_is_anime(it))
       continue;
     pk[n].it = it;
     pk[n++].at = mtime_ms(cJSON_GetObjectItemCaseSensitive(it, "_mtime"));
@@ -377,6 +387,10 @@ typedef struct {
   AnimeMeta m;
   int st; /* 0 free, 1 asked, 2 answered */
 } MetaEnt;
+typedef struct {
+  char id[64], type[16];
+  unsigned gen;
+} MetaAsk;
 static MetaEnt meta[NMETA];
 static int metaNext;
 static MetaEnt *meta_find(const char *id) {
@@ -406,12 +420,15 @@ static void meta_key(const char *id, char *k, size_t cap) {
   snprintf(k, cap, "animemeta:%s", id);
 }
 static void on_meta(cJSON *m, void *ud) {
-  char *id = ud;
+  MetaAsk *a = ud;
+  if (a->gen != pageGen) {
+    free(a);
+    return;
+  }
+  const char *id = a->id;
   if (!m) {
-    MetaEnt *e = meta_find(id);
-    if (e)
-      e->st = 0; /* (asked again later: the addon may not be in yet) */
-    free(id);
+    meta_store(id, NULL, NULL, NULL); /* Use AniList art for this title on this visit. */
+    free(a);
     return;
   }
   const char *bg = js_str(m, "background", ""), *lg = js_str(m, "logo", "");
@@ -433,40 +450,43 @@ static void on_meta(cJSON *m, void *ud) {
   if (s)
     cache_write(k, (const unsigned char *)s, strlen(s));
   free(s);
-  free(id);
+  free(a);
 }
-typedef struct {
-  char id[64], type[16];
-} DiskAsk;
 static void on_meta_disk(int st, const unsigned char *b, size_t n, void *ud) {
   (void)n;
-  DiskAsk *d = ud;
+  MetaAsk *d = ud;
+  if (d->gen != pageGen) {
+    free(d);
+    return;
+  }
   cJSON *j = st == 200 ? net_json(b) : NULL;
   if (cJSON_IsObject(j)) {
     meta_store(d->id, js_str(j, "bg", ""), js_str(j, "logo", ""), js_str(j, "imdb", ""));
     net_json_free(j);
   } else {
     net_json_free(j);
-    MetaEnt *e = meta_find(d->id);
-    if (e)
-      e->st = 0;
+    sb_meta(d->type, d->id, on_meta, d);
+    return;
   }
   free(d);
 }
 void anime_meta_ask(const char *type, const char *id) {
-  if (!id || !id[0] || !anime_addon_ready() || meta_find(id))
+  if (!id || strncmp(id, "anilist:", 8) || !anime_addon_ready() || meta_find(id))
     return;
+  MetaAsk *d = calloc(1, sizeof *d);
+  if (!d)
+    return;
+  d->gen = pageGen;
+  snprintf(d->id, sizeof d->id, "%s", id);
+  snprintf(d->type, sizeof d->type, "%s", type && type[0] ? type : "series");
   meta_new(id);
   char k[100], p[1200];
   meta_key(id, k, sizeof k);
   if (cache_file(k, 7L * 86400L, p, sizeof p)) {
-    DiskAsk *d = calloc(1, sizeof *d);
-    snprintf(d->id, sizeof d->id, "%s", id);
-    snprintf(d->type, sizeof d->type, "%s", type);
     net_file(p, on_meta_disk, d);
     return;
   }
-  sb_meta(type && type[0] ? type : "series", id, on_meta, strdup(id));
+  sb_meta(d->type, d->id, on_meta, d);
 }
 int anime_meta_get(const char *id, AnimeMeta *m) {
   MetaEnt *e = meta_find(id);

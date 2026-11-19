@@ -17,6 +17,7 @@ void board_invalidate(void); /* the library changed: Home and Library rebuild wh
 void board_rebuild(void); /* the board on screen reloads its rows in place, focus kept */
 int board_disc_type(void); /* 0 Discover (phones), 1 Shows, 2 Movies, 3 Catalogue, 4 Anime */
 void board_anime_off(void); /* the Anime tab went off: its rows and what its page keeps are let go */
+void board_anime_changed(void); /* typed tabs and Catalogue need the new anime preference */
 void board_disc_type_set(int t); /* (a change: it builds afresh the next time it is entered) */
 int board_spot_up(void);
 float board_open_wait(void); /* how much longer than its quickest the focused cinematic card waits to open */

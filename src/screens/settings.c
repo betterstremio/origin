@@ -813,6 +813,7 @@ static void anime_tab_changed(void) {
   topnav_relayout();
   anime_addon_set(on);
   recs_set_no_anime(on);
+  board_anime_changed();
   if (!on) {
     if (board_disc_type() == 4)
       board_disc_type_set(1);

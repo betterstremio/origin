@@ -15,7 +15,7 @@ typedef struct {
   char videoId[80];
   float progress, left;
   int cw;
-  int ep;
+  int ep, anime;
   char epName[256]; /* an episode card on a title page: its menu offers the streams */
 } Item;
 typedef struct {
@@ -28,7 +28,7 @@ typedef struct {
    first page is asked with (a required property's first option, or none), skip: the catalog takes "skip" (pages) */
 typedef struct {
   char title[96], type[16], url[ADDON_URL_MAX + 256], key[48], path[ADDON_URL_MAX], extra[200];
-  int skip;
+  int skip, noAnime;
 } CatalogDef;
 
 int sb_init(void);
@@ -72,6 +72,7 @@ int sb_kind_defs(CatalogDef *out, int max, const char *type,
 void sb_catalog(const CatalogDef *def, void (*cb)(ItemList *list, int cached, void *ud), void *ud);
 void sb_catalog_url(const char *url, const char *type, int n, void (*cb)(ItemList *list, int cached, void *ud),
                     void *ud);
+void sb_catalog_url_no_anime(const char *url, const char *type, int n, void (*cb)(ItemList *, int, void *), void *ud);
 /* a search's catalog: never cached on disk; bg: on the previews' lane; returns the request's id */
 unsigned sb_search_catalog(const char *url, const char *type, int n, int bg,
                            void (*cb)(ItemList *list, int cached, void *ud), void *ud);
@@ -124,6 +125,7 @@ int lib_item_watched(const Item *it); /* the badge */
 int lib_is_marked_watched(const Item *it);
 void lib_toggle_watched(const Item *it, const cJSON *videos);
 int lib_movie_watched(const cJSON *lit);
+int lib_item_is_anime(const cJSON *lit);
 int lib_series_watched(const cJSON *lit, const cJSON *videos);
 void lib_set_eps_watched(cJSON *lit, const cJSON *videos, const char **epIds, int n, int on);
 void lib_set_movie_watched(cJSON *lit, int on);

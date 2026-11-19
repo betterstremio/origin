@@ -122,6 +122,7 @@ typedef struct {
   /* Discover's spotlight: this year's films and the trending series, alternating; it moves on every 4 s */
   Item feat[NFEAT];
   int nfeat, featIdx, featOn, featLoad, featGotM, featGotS;
+  unsigned featGen;
   ItemList featM, featS;
   double featAt;
   Tween spotY, rowsA, spotA, dotsA, dotW[NFEAT];
@@ -164,6 +165,7 @@ typedef struct {
   /* the cinematic Home: its billboard (the Top picks in feat[]), the button in focus on it, its picture crossfading */
   int bill, cine, billBtn;
   unsigned recsVer;
+  double tabReadyAt;
   int fy; /* Shows / Movies built from their For You page (else Cinemeta rows) */
   Tween topY;
   char billCur[512], billPrev[512];
@@ -451,9 +453,9 @@ static int cw_cmp(const void *a, const void *b) {
   return x < y ? 1 : x > y ? -1 : 0;
 }
 static void board_cw_row_kind(Board *b, int kind) {
-  int anime = strcmp(store_get("animeTab", "false"), "false") != 0;
+  int noAnime = kind != LIB_CW_ANIME && app_anime_on();
   ItemList cw;
-  if (lib_cw_items_k(&cw, kind | (anime ? LIB_CW_NO_ANIME : 0)) > 0) {
+  if (lib_cw_items_k(&cw, kind | (noAnime ? LIB_CW_NO_ANIME : 0)) > 0) {
     Row *r = row_add(b, "Continue Watching", 1, 0);
     if (r) {
       r->items = cw;
@@ -662,7 +664,7 @@ static void my_list_row(Board *b, int series, int anime) {
     if (strcmp(ty, series ? "series" : "movie") || js_bool(it, "removed", 0) || js_bool(it, "temp", 0) ||
         !js_str(it, "name", "")[0])
       continue;
-    if (anime && lib_id_is_anime(ty, js_str(it, "_id", "")))
+    if (anime && lib_item_is_anime(it))
       continue;
     pk[n].it = it;
     pk[n++].at = mtime_ms(cJSON_GetObjectItemCaseSensitive(it, "_mtime"));
@@ -719,7 +721,7 @@ static void kind_recs_rows(Board *b, int pg) {
   if (b->n <= first)
     return;
   int before = b->n;
-  int anime = strcmp(store_get("animeTab", "false"), "false") != 0;
+  int anime = app_anime_on();
   my_list_row(b, pg == RECS_PG_SHOWS, anime);
   if (b->n > before) { /* the new row sits last: it steps in front of the page's last row */
     Row t = b->rows[b->n - 1];
@@ -756,14 +758,18 @@ static void kind_ask(Board *b, int ri) {
   if (!r->hasDef || r->asked)
     return;
   r->asked = 1;
-  sb_catalog_url(r->def.url, r->def.type, 20, on_catalog, tok(b, ri));
+  if (r->def.noAnime)
+    sb_catalog_url_no_anime(r->def.url, r->def.type, 20, on_catalog, tok(b, ri));
+  else
+    sb_catalog_url(r->def.url, r->def.type, 20, on_catalog, tok(b, ri));
 }
 static int kindb(const Board *b) {
   return b->kind == 1 && (b->dtype == 1 || b->dtype == 2 || b->dtype == 4);
 }
 /* Shows / Movies with For You on, a TMDB key and the kind's page built: its rows come from that page */
 static int fy_ok(const Board *b) {
-  return kindb(b) && recs_on() && tmdb_has_key() && recs_page_ready(b->dtype == 1 ? RECS_PG_SHOWS : RECS_PG_MOVIES);
+  return (b->dtype == 1 || b->dtype == 2) && recs_on() && tmdb_has_key() &&
+         recs_page_ready(b->dtype == 1 ? RECS_PG_SHOWS : RECS_PG_MOVIES);
 }
 /* a Shows / Movies board whose page has changed (or just become ready) since it was built */
 static int kind_stale(const Board *b) {
@@ -838,18 +844,6 @@ static unsigned aniSig, aniMetaV;
 static double aniT0, aniPlanAt, aniAskAt, aniLogAt;
 static int aniReq0 = -1;
 static const char *const ANI_MODE[] = { "foryou", "popular", "kitsu" };
-static void ani_cw_row(Board *b) {
-  ItemList cw;
-  if (lib_cw_items_k(&cw, LIB_CW_ANIME) > 0) {
-    Row *r = row_add(b, "Continue Watching", 1, 0);
-    if (r) {
-      r->items = cw;
-      r->hidden = 0;
-      return;
-    }
-  }
-  itemlist_clear(&cw);
-}
 /* an anime title whose Kitsu meta (fanart, logo) is still on its way: its box picture waits for it, so the AniList
    banner is not fetched for nothing */
 static int ani_hold(const Item *it) {
@@ -896,11 +890,6 @@ static void on_anime(ItemList *l, int cached, void *ud) {
     }
   }
   on_catalog(l, cached, ud);
-  if (cur() == b && row < b->n && b->n && b->rows[b->rowIdx].hidden) {
-    int first = first_visible_row(b, 0, 1);
-    if (first >= 0)
-      b->rowIdx = first;
-  }
 }
 static void ani_ask(Board *b, int ri) {
   Row *r = &b->rows[ri];
@@ -916,7 +905,7 @@ static void ani_rows(Board *b, int keep, const int *oldCols) {
   if (aniReq0 < 0)
     aniReq0 = anilist_request_count(); /* (counted from the first time the tab is opened) */
   aniLogAt = aniT0 + 9;
-  ani_cw_row(b);
+  board_cw_row_kind(b, LIB_CW_ANIME);
   int n = anime_page_plan(aniPlan, cap - b->n, &aniMode);
   aniSig = anime_page_sig();
   for (int i = 0; i < n; i++) {
@@ -1032,6 +1021,8 @@ static void load_catalog_rows(Board *b, int disc, int keep) {
     int mem = plat_mem_total_mb();
     int low = mem > 0 && mem <= 1200;
     nd = sb_kind_defs(defs, (low ? 20 : 36) - b->n, b->dtype == 1 ? "series" : "movie", low);
+    for (int i = 0, hide = app_anime_on(); i < nd; i++)
+      defs[i].noAnime = hide;
   } else
     nd = !disc ? sb_home_defs(defs, 12) : b->dtype == 3 ? sb_all_defs(defs, CATDEFS) : sb_disc_defs(defs, 12, NULL, 0);
   for (int d = 0; d < nd; d++) {
@@ -1135,9 +1126,10 @@ static void feat_done(Board *b) {
 }
 static void on_feat(ItemList *l, int cached, void *ud) {
   (void)cached;
-  Board *b = &boards[(uintptr_t)ud >> 1];
-  int series = (int)((uintptr_t)ud & 1);
-  if (b->nfeat || (series ? b->featGotS : b->featGotM)) {
+  uintptr_t token = (uintptr_t)ud;
+  Board *b = &boards[(token >> 1) & 7];
+  int series = (int)(token & 1);
+  if ((b->featGen & 0xfffffff) != token >> 4 || b->nfeat || (series ? b->featGotS : b->featGotM)) {
     itemlist_free(l);
     return;
   }
@@ -1199,9 +1191,11 @@ static void feat_fill(Board *b) {
   localtime_r(&t, &tm);
   char u[200];
   snprintf(u, sizeof u, CINEMETA "/catalog/movie/year/genre=%d.json", tm.tm_year + 1900);
-  sb_catalog_url(u, "movie", 20, on_feat, (void *)(uintptr_t)((b - boards) << 1));
-  sb_catalog_url(CINEMETA "/catalog/series/top.json", "series", 20, on_feat,
-                 (void *)(uintptr_t)(((b - boards) << 1) | 1));
+  uintptr_t token = ((uintptr_t)(b->featGen & 0xfffffff) << 4) | ((uintptr_t)(b - boards) << 1);
+  void (*ask)(const char *, const char *, int, void (*)(ItemList *, int, void *), void *) =
+      b->dtype && app_anime_on() ? sb_catalog_url_no_anime : sb_catalog_url;
+  ask(u, "movie", 20, on_feat, (void *)token);
+  ask(CINEMETA "/catalog/series/top.json", "series", 20, on_feat, (void *)(token | 1));
 }
 static void feat_arm(Board *b) {
   if (spotk(b))
@@ -1215,6 +1209,7 @@ static void feat_go(Board *b, int step) {
   hero_soon(b, 1);
   feat_arm(b);
 }
+static int first_cards(Board *b, int count);
 static int first_visible_row(Board *b, int from, int dir) {
   for (int i = from; i >= 0 && i < b->n; i += dir)
     if (!b->rows[i].hidden && !b->rows[i].closing)
@@ -2040,6 +2035,8 @@ static void hero_draw(Board *b) {
 
 /* ---- the screen ---- */
 static void board_enter_k(Board *b) {
+  if (getenv("SB_TABLOG") && (b->kind == 0 || b->dtype == 1 || b->dtype == 2 || b->dtype == 4))
+    b->tabReadyAt = app_now();
   int fresh =
           !b->built || (b->kind == 0 && (b->libVer != lib_version() || b->recsVer != recs_version())) || kind_stale(b),
       keep = b->n > 0;
@@ -2507,13 +2504,37 @@ void board_anime_off(void) {
   b->heroSet = 0;
   anime_page_close();
 }
+void board_anime_changed(void) {
+  Board *typed[] = { &boards[1], &boards[3] };
+  for (size_t i = 0; i < sizeof typed / sizeof *typed; i++) {
+    Board *b = typed[i];
+    itemlist_clear(&b->featM);
+    itemlist_clear(&b->featS);
+    b->featGen++;
+    b->gen++;
+    b->built = b->nfeat = b->featLoad = b->bill = 0;
+  }
+  boards[B_CATALOGUE].built = 0;
+}
 static void board_tick(float dt) {
   Board *b = cur();
   if (!b)
     return;
-  card_open_tick(b, dt);
   if (b->kind == 1 && b->dtype == 4)
     ani_tick(b);
+  if (kindb(b) && b->n && b->rows[b->rowIdx].hidden) {
+    int first = first_visible_row(b, 0, 1);
+    if (first >= 0) {
+      b->rowIdx = first;
+      hero_soon(b, 0);
+    }
+  }
+  if (b->tabReadyAt && first_cards(b, 1)) {
+    static const char *const names[] = { "Home", "Shows", "Movies", "Catalogue", "Anime" };
+    fprintf(stderr, "[tabs] %s first row ready in %.0f ms\n", names[b->dtype], (app_now() - b->tabReadyAt) * 1000);
+    b->tabReadyAt = 0;
+  }
+  card_open_tick(b, dt);
   timer_tick(&b->fade, dt);
   nudge_tick(&b->nudge, dt);
   if (b->kind == 0 || (b->kind == 1 && b->dtype)) {
