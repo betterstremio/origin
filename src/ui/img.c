@@ -298,14 +298,17 @@ static void done_push(Img *im) {
 static Img *done_pop(void) { /* the order of the loading: a backdrop, what is on screen (in its order), title art, the rest */
   Img **pp = &doneHead;
   int bc = -1;
+  int returning = 0;
   for (Img **q = &doneHead; *q; q = &(*q)->dnext) {
     int c = q_class(*q);
-    if (c > bc || (c == bc && q_before(*q, c, *pp))) {
+    int back = c == 3 && (*q)->shown;
+    if (c > bc || (c == bc && (back > returning || (back == returning && q_before(*q, c, *pp))))) {
       bc = c;
+      returning = back;
       pp = q;
     }
   }
-  if (*pp && bc == 3) { /* on screen: one asked before it and still loading is waited for a moment, so a row shows in order */
+  if (*pp && bc == 3 && !returning) { /* new art fills in order; a returning texture can go up as soon as it is ready */
     const Img *im = *pp;
     int ahead = 0;
     for (int i = 0; i < qn && !ahead; i++)
@@ -486,9 +489,6 @@ static int etc_load(Img *im) {
   int caps = gfx_etc_caps();
   if (!caps || (im->wantPal && !im->palReady))
     return 0; /* (the colours are made from RGBA: the old way) */
-  float focal = -1;
-  if (im->fit == 3 && (focal = focal_read(im->src)) < 0)
-    return 0; /* (a crop without its subject's place: made again from the picture) */
   char key[2400];
   snprintf(key, sizeof key, "etc:%dx%d:%s", im->w, im->h, im->url);
   size_t len = 0;
@@ -505,7 +505,8 @@ static int etc_load(Img *im) {
     memcpy(&corner, d + 24, 4);
   }
   if (len <= ETC_HDR || memcmp(d, ETC_MAGIC, 6) || (fmt != 1 && fmt != 2) || (fmt == 2 && !(caps & 1)) || pw < 4 ||
-      ph < 4 || pw > 4096 || ph > 4096 || len != ETC_HDR + etc_size(pw, ph, fmt == 2) || !(aspect > 0) || !(corner >= 0 && corner < 2000)) {
+      ph < 4 || pw > 4096 || ph > 4096 || len != ETC_HDR + etc_size(pw, ph, fmt == 2) || !(aspect > 0) ||
+      !(corner >= 0 && corner < 2000) || (im->fit == 3 && !(hf >= 0 && hf <= 1))) {
     free(d);
     return 0;
   }
@@ -516,7 +517,7 @@ static int etc_load(Img *im) {
   im->ph = ph;
   im->pch = fmt == 2 ? 4 : 3;
   im->aspect = aspect;
-  im->focal = im->fit == 3 ? focal : hf;
+  im->focal = hf; /* already stored in the compressed copy, including older ETC files */
   im->cornerPx = corner; /* (the picture has no corners of its own: the shader rounds them) */
   im->fromSm = 1;
   return 1;
@@ -537,8 +538,8 @@ static Img *ejob[ENC_JOBS];
 static int ejn;
 static Img *edone; /* encoded, waiting for the main thread to swap the texture */
 static pthread_cond_t ecv = PTHREAD_COND_INITIALIZER;
-static int etc_eligible(const Img *im) { /* a raw picture, up to 1280x720, not a backdrop, that has a small copy */
-  return gfx_etc_caps() && !im->fmt && !im->encTried && !im->urgent && im->pw >= 4 && im->ph >= 4 &&
+static int etc_eligible(const Img *im) { /* a raw picture up to 1280x720 that has a small copy */
+  return gfx_etc_caps() && !im->fmt && !im->encTried && (!im->urgent || im->fit == 1) && im->pw >= 4 && im->ph >= 4 &&
          im->pw * im->ph >= 64 * 64 && im->pw * im->ph <= 1280 * 720 && strncmp(im->src, "file://", 7);
 }
 static void enc_queue(Img *im) { /* main thread */
@@ -1102,10 +1103,10 @@ int img_back_shaped(const char *url, int w, int h, float radius, int fit) {
   if (!ok) {
     snprintf(sk, sizeof sk, "sm:%dx%d:%s", sw, sh, k);
     ok = cache_known(sk, 14 * 86400);
-  }
-  if (ok && fit == 3) {
-    snprintf(sk, sizeof sk, "fx:%s", url);
-    ok = cache_known(sk, 14 * 86400);
+    if (ok && fit == 3) {
+      snprintf(sk, sizeof sk, "fx:%s", url);
+      ok = cache_known(sk, 14 * 86400);
+    }
   }
   if (!ok) {
     no[hs % 128].h = hs;
@@ -1196,6 +1197,8 @@ const char *img_src_of(GLuint tex) {
 /* the picture the screen is waiting on (the backdrop of the focused title): out of the stacks into the slot taken
    next, so a fast scroll's posters, asked after it, never hold it back; the one it replaces goes back on top */
 static void urgent_move(Img *im) {
+  if (im->tex)
+    return;
   im->urgent = 1;
   if (im->state != 0 || im == urg)
     return;
@@ -1309,6 +1312,8 @@ static void up_log(const char *what, long bytes, Uint64 t0) {
 static void up_done(Img *im) {
   im->tex = im->upTex;
   im->upTex = 0;
+  int compress = etc_eligible(im); /* a focused landscape card can be urgent and still compress after upload */
+  im->urgent = 0; /* urgency belongs to this upload, not the next visit to the title */
   /* a picture shown before, or one that came from its small copy within 100 ms of the ask, appears at once: a fade
      over the grey placeholder made every return look like a reload */
   int fade = !(im->shown || (im->fromSm && mono_s() - im->askAt < 0.1));
@@ -1332,7 +1337,7 @@ static void up_done(Img *im) {
   free(im->px);
   im->px = NULL;
   im->lastUse = frameNo;
-  if (etc_eligible(im)) /* (shown as RGBA: compressed in the background, swapped in when ready) */
+  if (compress) /* (shown as RGBA: compressed in the background, swapped in when ready) */
     enc_queue(im);
 }
 static long up_band(Img *im, long budget) { /* rows up to the budget, in whole 16-row blocks; what was sent */
