@@ -104,7 +104,7 @@ From 3.0.0 the app id is `io.github.betterstremio.origin`. Origin and Stremio Or
 
 - **Updating from 2.1.12:** the update installs the new app and opens it. On its first start it copies your sign-in, profiles and settings from the old Origin, then removes the old app and its torrent folder. Android asks you once to confirm the removal.
 - **webOS on 2.1.11 or older:** the update installs 3.0.0 beside the old app. Open the new one once and it imports your data the same way.
-- **Android and Windows on 2.1.11 or older:** update to 2.1.12 first. If you install 3.0.0 by hand on Android instead, sign in again.
+- **Android and Windows on 2.1.11 or older:** the app updates to 2.1.12 first, then to 3.0.0. If you install 3.0.0 by hand on Android instead, sign in again.
 - **Windows portable:** the old `Origin.exe` stays where it was. Delete it once 3.0.0 runs.
 - Origin only imports from its own older versions. It never reads or changes Stremio Origin's data.
 
