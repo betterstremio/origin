@@ -64,8 +64,8 @@ and indexes nothing, and has no built-in keys.
 ## Brand Commitments
 
 - Name: Origin, formerly Better Stremio (and Stremio Origin before that). Package id `tv.stremioorigin.app`.
-- Logo and art: `docs/logo-pill.png`, `docs/header-rounded.png`, `assets/logo.png`, `assets/splashicon.png`,
-  `assets/splashbg.jpg`.
+- Logo and art: `docs/logo-pill.png`, `docs/header-rounded.png`, `assets/logo.png`, `assets/splashicon.png`. The start
+  screen draws the name with its O as a ring (`src/screens/splash.c`), white on Home's page colour.
 - Every public page carries the notice that Stremio and Nuvio are the names of their owners and that the project is
   independent and unofficial. No Stremio or Nuvio logos, including in the startup animation, without written
   permission.

@@ -590,7 +590,7 @@ static void toast_draw(void) {
     float px = SB_W / 2 - pw / 2, py = phone_bottom() - 60 + 16 * (1 - a);
     gfx_opacity_push(a);
     gfx_shadow(px, py + 8, pw, 44, 22, 24, BLACK_A(110));
-    gfx_rrect(px, py, pw, 44, 22, RGB(0x2a, 0x27, 0x35));
+    gfx_rrect(px, py, pw, 44, 22, RGB(42, 42, 44));
     text_draw(toastMsg, SB_W / 2, py + 22 - text_line_height(14) / 2.0f, 14, 600, WHITE_A(240), 0, pw - 28,
               ALIGN_CENTER);
     gfx_opacity_pop();
@@ -598,7 +598,7 @@ static void toast_draw(void) {
   }
   gfx_opacity_push(a);
   gfx_shadow(x, y + 16, w, h, 18, 40, BLACK_A(115));
-  gfx_rrect(x, y, w, h, 18, RGB(0x1f, 0x1c, 0x28));
+  gfx_rrect(x, y, w, h, 18, RGB(34, 34, 36)); /* neutral grey (was violet) */
   gfx_ring(x, y, w, h, 18, 1, WHITE_A(15));
   float cx = rtl ? x + w - 28 : x + 28; /* the pen: left to right, or right to left */
   if (toastKind) {
@@ -2459,13 +2459,6 @@ void app_tick(float dt) {
   lift_tick(dt);
   tabs_warm_tick();
   {
-    static int greeted;
-    if (!greeted && app_splash_done) {
-      greeted = 1;
-      sound_play(SND_START);
-    }
-  } /* start-up: one very faint sound */
-  {
     static int wasP;
     int po = player_open();
     if (po != wasP) {
@@ -2504,32 +2497,8 @@ void app_tick(float dt) {
   if (app_overlay && app_overlay->tick)
     app_overlay->tick(dt);
 }
-/* the purple glass behind the sign-in page and Search (the page's faded mark lies under its glass there: never seen,
- * not drawn) */
-static Tween glassA;
-static char glassUrl[1100];
+/* (3.0.0: the sign-in has no picture behind it any more; it sits on Home's flat page colour like the rest) */
 static void glass_draw(void) {
-  static int noGlass = -1;
-  if (noGlass < 0)
-    noGlass = getenv("SB_NOGLASS") != NULL; /* read once */
-  if (noGlass)
-    return; /* an experiment: the page without its full-screen layers */
-  int wantGlass = SCR == SCR_LOGIN; /* (Search shares Settings' plain base and its two glows) */
-  tween_to(&glassA, wantGlass ? 1 : 0, 0.4f, EASE_OUT);
-  tween_tick(&glassA, DT);
-  if (!glassUrl[0]) {
-    extern const char *plat_asset_dir(void);
-    snprintf(glassUrl, sizeof glassUrl, "file://%s/splashbg.jpg", plat_asset_dir());
-  }
-  if (glassA.v > 0.001f) {
-    float asp;
-    GLuint t = img_get(glassUrl, 1920, 1080, &asp);
-    if (t) {
-      float u0, v0, u1, v1;
-      img_cover_uv(asp, SB_W / SB_H, 0, &u0, &v0, &u1, &v1);
-      gfx_image(t, 0, 0, SB_W, SB_H, 0, WHITE_A((int)(255 * glassA.v)), u0, v0, u1, v1);
-    }
-  }
 }
 /* Settings' and Search's background, and the guide's: the two glows (ui/orbs.c), on their springs */
 /* the guide over Home (welcome.c) takes the glows for its page (as Settings has them) and draws them over its own
@@ -2545,8 +2514,8 @@ void app_glow_kick(void) {
   orbs_pulse(ORB_PHONE, 1);
 }
 static void ambient_draw(void) {
-  int srch = SCR == SCR_SEARCH && !ambGuide, want = ambGuide == 1; /* 3.0.0: Search and Settings sit on the plain page
-                                                                        (no drifting glows); the guide keeps its own */
+  int srch = SCR == SCR_SEARCH && !ambGuide, want = 0; /* 3.0.0: Search, Settings and the guide all sit on the plain
+                                                           page (no drifting glows) */
   Orbs *o = orbs_app();
   if (want && !ambIn) {
     ambIn = 1;

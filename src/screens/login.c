@@ -491,24 +491,14 @@ static void zone_focus(int z, int b) {
 }
 static double glowT0 = -1; /* the glows' own clock: kept past signing in, the start screen carries them on */
 void login_glows_draw(void) {
-  if (glowT0 < 0)
-    glowT0 = app_now();
-  float t = (float)(app_now() - glowT0);
-  float a = fmodf(t / 22, 2), b = fmodf(t / 27, 2);
-  a = a > 1 ? 2 - a : a;
-  b = b > 1 ? 2 - b : b;
-  a = ease_apply(EASE_IN_OUT, a);
-  b = ease_apply(EASE_IN_OUT, b);
-  if (!getenv("SB_NOGLASS")) {
-    blob(-380 + 550 + 760 * a, -420 + 550 + 300 * a, RGB(140, 92, 255), 0.55f);
-    blob(SB_W + 420 - 550 - 820 * b, SB_H + 480 - 550 - 260 * b, RGB(96, 140, 255), 0.42f);
-  }
-}
+} /* 3.0.0: the first screens sit on Home's flat page colour, no glows (kept: the guide calls it) */
 /* the glows, small, for the glass over them (made in the tick each frame: they move; never while drawing, no target is
  * nested) */
 static GfxTarget glowT;
 static int glowOk = -1, glowFresh;
 void login_glow_bake(void) {
+  if (glowOk < 1)
+    return; /* nothing under the controls to bend any more: no target, no bake (one GPU target switch less) */
   int w, h;
   gfx_screen_target_size(384, 216, &w, &h);
   if (glowT.fbo && (glowT.w != w || glowT.h != h)) {
@@ -535,29 +525,14 @@ GLuint login_glow_tex(void) {
 }
 /* the liquid glass over the glows (the bar's), and the accent's glass lit over it when focused */
 static void lpill(float x, float y, float w, float h, float r, int foc, int seed) {
-  lglass_liquid(login_glow_tex(), x, y, w, h, r, x / SB_W, 1 - y / SB_H, (x + w) / SB_W, 1 - (y + h) / SB_H,
-                foc ? 1.15f : 0.85f, 0, seed, w < 300);
-  if (foc) {
-    gfx_rrect_v(x, y, w, h, r, col_alpha(ACC2 | 0xff000000u, 0.46f), col_alpha(ACC | 0xff000000u, 0.36f));
-    gfx_rrect_v(x, y, w, h, r, WHITE_A(40), WHITE_A(0));
-    gfx_ring(x, y, w, h, r, 1.2f, WHITE_A(70));
-  }
-  lglass_light(0);
-}
+  (void)seed;
+  gfx_rrect(x, y, w, h, r, foc ? WHITE_A(255) : WHITE_A(22));
+} /* a field, a button or the switch's track: a flat light-grey shape at rest, white with dark words when focused (the
+     top bar's focus) */
+#define INK (PAGE | 0xff000000u) /* the words on a focused, white control */
 void login_backdrop_draw(void) {
-  static char url[600];
-  if (!url[0])
-    snprintf(url, sizeof url, "file://%s/splashbg.jpg", plat_asset_dir());
   gfx_rect(0, 0, SB_W, SB_H, PAGE | 0xff000000u);
-  float asp;
-  GLuint t = img_get(url, 1920, 1080, &asp);
-  if (t) {
-    float u0, v0, u1, v1;
-    img_cover_uv(asp, SB_W / SB_H, 0, &u0, &v0, &u1, &v1);
-    gfx_image(t, 0, 0, SB_W, SB_H, 0, WHITE_A(255), u0, v0, u1, v1);
-  }
-  login_glows_draw();
-}
+} /* Home's own page colour, flat: the sign-in, Who's watching, the guide and the loading after signing in */
 
 /* ---- a phone (core/form.h): one column, typed on the system's keyboard. "Sign in with your browser" opens the
    service's own page for the code on this phone; once it is approved there the app goes on by itself (the same
@@ -684,7 +659,6 @@ static void draw(void) {
     draw_phone();
     return;
   }
-  login_glows_draw();
   int rtl = app_rtl();
   /* the box: QR half | divider | form half, centred */
   float h2 = text_line_height(40), qrH = h2 + 10 + text_line_height(24) + 26 + 300 + 20 + text_line_height(46) +
@@ -705,7 +679,7 @@ static void draw(void) {
     if (cw > qrW)
       qrW = cw;
   }
-  float boxW = qrW + 90 + 1 + 90 + fW, boxH = qrH > fH ? qrH : fH, bx = SB_W / 2 - boxW / 2, by = SB_H / 2 - boxH / 2;
+  float boxW = qrW + 90 + 1 + 90 + fW, boxH = qrH > fH ? qrH : fH, bx = rtl ? SB_W / 2 - fW - 90 : SB_W / 2 - qrW - 90, by = SB_H / 2 - boxH / 2;
   by -= L.osk.a.v * (osk_height() + 30) / 2; /* the keyboard below: the box moves up to share the screen */
   float doneK =
       L.done ? ease_apply(EASE_OUT, timer_x(&L.doneT) * 0.6f / 0.45f > 1 ? 1 : timer_x(&L.doneT) * 0.6f / 0.45f) : 0;
@@ -726,16 +700,21 @@ static void draw(void) {
       gfx_opacity_push(k1 < 0.004f ? 0.004f : k1);
       float nx = foc ? nudge_x(&L.nudge) : 0, ny = foc ? nudge_y(&L.nudge) : 0;
       lpill(sx + nx, sy + ny, 2 * sw, sh, sh / 2, 0, 7);
-      if (foc)
-        gfx_ring(sx - 5 + nx, sy - 5 + ny, 2 * sw + 10, sh + 10, (sh + 10) / 2, 3, WHITE_A(235));
       for (int i = 0; i < 2; i++) {
         float x = sx + i * sw;
-        if (L.svc == i)
-          gfx_rrect(x + 6 + nx, sy + 6 + ny, sw - 12, sh - 12, (sh - 12) / 2, WHITE_A(235));
+        int sel = L.svc == i;
+        if (sel)
+          gfx_rrect(x + 6 + nx, sy + 6 + ny, sw - 12, sh - 12, (sh - 12) / 2, foc ? WHITE_A(255) : WHITE_A(40));
         text_draw(N[i], x + sw / 2 + nx, sy + sh / 2 - text_line_height(30) / 2 + ny, 30, 700,
-                  L.svc == i ? RGB(14, 14, 22) : WHITE_A(210), 0, 0, ALIGN_CENTER);
+                  sel && foc ? INK : sel ? WHITE_A(255) : WHITE_A(150), 0, 0, ALIGN_CENTER);
         hit_add(x, sy, sw, sh, NULL, sw_act, i, 0);
       }
+      gfx_opacity_pop();
+    }
+    { /* the name, at the top start corner (as Home's bar has its picture there), coming in with the form */
+      float ww = splash_wordmark_width(48);
+      gfx_opacity_push(k1);
+      splash_wordmark_draw(rtl ? SB_W - 96 - ww : 96, 72, 48, WHITE_A(255));
       gfx_opacity_pop();
     }
     /* QR half */
@@ -784,17 +763,17 @@ static void draw(void) {
         snprintf(shown, sizeof shown, "%s", v);
       float nx = foc ? nudge_x(&L.nudge) : 0, ny = foc ? nudge_y(&L.nudge) : 0;
       hit_add(fx, y, fW, lin, zone_focus, NULL, f, 0);
-      lpill(fx + nx, y + ny, fW, lin, lin / 2, foc, 4 + f);
+      lpill(fx + nx, y + ny, fW, lin, 14, foc, 4 + f);
       if (shown[0])
-        text_draw(shown, rtl ? fx + fW - 26 + nx : fx + 26 + nx, y + 18 + ny, 28, 400, WHITE_A(255), 0, fW - 52,
-                  rtl ? ALIGN_RIGHT : ALIGN_LEFT);
+        text_draw(shown, rtl ? fx + fW - 26 + nx : fx + 26 + nx, y + 18 + ny, 28, foc ? 500 : 400,
+                  foc ? INK : WHITE_A(255), 0, fW - 52, rtl ? ALIGN_RIGHT : ALIGN_LEFT);
       else
         text_draw(T(f ? "Password" : "Email"), rtl ? fx + fW - 26 + nx : fx + 26 + nx, y + 18 + ny, 28, 400,
-                  WHITE_A(133), 0, fW - 52, rtl ? ALIGN_RIGHT : ALIGN_LEFT);
+                  foc ? col_alpha(INK, 0.6f) : WHITE_A(150), 0, fW - 52, rtl ? ALIGN_RIGHT : ALIGN_LEFT);
       if (foc && L.editing && ((int)(app_now() * 2) & 1)) {
-        float cw = text_width(shown, 28, 400, 0);
+        float cw = text_width(shown, 28, 500, 0);
         gfx_rect((rtl ? fx + fW - 26 - cw - 3 : fx + 26 + cw + 2) + nx, y + 18 + 2 + ny, 3, text_line_height(28) - 4,
-                 WHITE_A(255));
+                 INK);
       }
       y += lin + 16;
     }
@@ -806,7 +785,7 @@ static void draw(void) {
       float nx = foc ? nudge_x(&L.nudge) : 0, ny = foc ? nudge_y(&L.nudge) : 0;
       hit_add(bxx, y, bw, bh, zone_focus, NULL, 2, 0);
       lpill(bxx + nx, y + ny, bw, bh, bh / 2, foc, 6);
-      text_draw(lbl, bxx + bw / 2 + nx, y + 16 + ny, 29, 700, WHITE_A(255), 0.2f, 0, ALIGN_CENTER);
+      text_draw(lbl, bxx + bw / 2 + nx, y + 16 + ny, 29, 700, foc ? INK : WHITE_A(255), 0.2f, 0, ALIGN_CENTER);
       y += bh + 16;
     }
     if (L.err[0])
@@ -836,8 +815,8 @@ void login_loading_draw(double since, float a) {
   gfx_clip_push(lx, ly, 380, 4);
   float ph = fmodf((float)(app_now() - since) / 1.25f, 1), p = ease_apply(EASE_IN_OUT, ph),
         sx = lx + 380 * 0.42f * (-1 + 3.4f * p);
-  gfx_rrect_h(sx, ly, 380 * 0.21f, 4, 2, col_alpha(ACC2, 0), ACC2);
-  gfx_rrect_h(sx + 380 * 0.21f, ly, 380 * 0.21f, 4, 2, ACC2, col_alpha(ACC2, 0));
+  gfx_rrect_h(sx, ly, 380 * 0.21f, 4, 2, WHITE_A(0), WHITE_A(255));
+  gfx_rrect_h(sx + 380 * 0.21f, ly, 380 * 0.21f, 4, 2, WHITE_A(255), WHITE_A(0));
   gfx_clip_pop();
   gfx_opacity_pop();
 }

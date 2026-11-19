@@ -39,7 +39,7 @@ reg query "$KEY" //v DisplayVersion 2>/dev/null | grep -q "$V" && ok "listed in 
 python -I - "$T/data/state.json" "$REPO/assets/whatsnew.json" <<'PY'
 import json, sys
 wn = json.load(open(sys.argv[2], encoding="utf-8")).get("version", "")
-json.dump({"introSound": "false", "guideSeen": "1", "whatsNewSeen": wn}, open(sys.argv[1], "w", encoding="utf-8"))
+json.dump({"guideSeen": "1", "whatsNewSeen": wn}, open(sys.argv[1], "w", encoding="utf-8"))
 PY
 export SB_DATA="$(cygpath -m "$T/data")" SB_UPD_GH="http://127.0.0.1:$PORT/releases.json" SB_UPD_AUTOINSTALL=1 SB_SKIP_LOGIN=1 SB_TOPMOST=1 SB_WINDOW=1280x720 SB_MUTE=1 SB_NO_MPV=1
 "$INST/Origin.exe" </dev/null >/dev/null 2> "$T/first.log" &

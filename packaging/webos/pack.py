@@ -19,7 +19,7 @@ try:
         shutil.rmtree(f'{A}/assets/{sub}', ignore_errors=True)
         shutil.copytree(f'{ROOT}/assets/{sub}', f'{A}/assets/{sub}')
     for f in os.listdir(ROOT + '/assets'):
-        if f in ('icon.png', 'logo.png', 'splashicon.png', 'splashbg.jpg', 'cacert.pem', 'whatsnew.json') or (f.startswith('icons') and f.endswith('.json')):
+        if f in ('icon.png', 'logo.png', 'splashicon.png', 'cacert.pem', 'whatsnew.json') or (f.startswith('icons') and f.endswith('.json')):
             shutil.copy(f'{ROOT}/assets/{f}', f'{A}/assets/{f}')
     shutil.rmtree(A + '/licenses')
     shutil.copytree(ROOT + '/third_party/licenses', A + '/licenses')

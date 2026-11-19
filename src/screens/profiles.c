@@ -355,7 +355,8 @@ static void draw(void) {
     gfx_rect(0, 0, SB_W, SB_H,
              (P.mode == PF_START && current_locked()) || P.pinMode || P.addMode
                  ? PAGE | 0xff000000u
-                 : RGBA(8, 8, 14, 225)); /* a locked profile's Home shows nothing until its PIN */
+                 : RGBA(14, 14, 16, 230)); /* a locked profile's Home shows nothing until its PIN; (the scrim: the
+                                              page's own neutral grey, no blue) */
   if (P.open)
     hit_shield(0, 0, SB_W, SB_H);
   if (P.addMode) {
