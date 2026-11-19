@@ -18,6 +18,7 @@ typedef struct {
   int kitsu;
   int season;
   long long stamp;
+  int imdbNext;
 } MapEntry;
 
 typedef struct {
@@ -25,6 +26,7 @@ typedef struct {
   int any;
   int best;
   int bestSeason;
+  int head;
 } ImdbSlot;
 
 typedef struct {
@@ -47,6 +49,7 @@ static int *alHash;
 static unsigned alHashCap;
 static ImdbSlot *imdbHash;
 static unsigned imdbHashCap;
+static int loadStarted;
 static int loaded;
 static unsigned version;
 
@@ -121,20 +124,44 @@ static int entry_find(int alid) {
   }
 }
 
-static void rebuild_indexes(void) {
+static int rebuild_al_hash(unsigned cap) {
+  int *p = calloc(cap, sizeof *p);
+  if (!p)
+    return 0;
+  for (int i = 0; i < nentries; i++) {
+    unsigned at = hash_id(entries[i].alid) & (cap - 1);
+    while (p[at])
+      at = (at + 1) & (cap - 1);
+    p[at] = i + 1;
+  }
   free(alHash);
-  alHash = NULL;
-  alHashCap = hash_cap_for((unsigned)nentries + 1);
-  alHash = calloc(alHashCap, sizeof *alHash);
-  if (!alHash)
+  alHash = p;
+  alHashCap = cap;
+  return 1;
+}
+
+static int ensure_al_hash(unsigned needed) {
+  unsigned cap = alHashCap ? alHashCap : 16;
+  while (cap <= needed * 2)
+    cap <<= 1;
+  return cap == alHashCap || rebuild_al_hash(cap);
+}
+
+static void al_hash_insert(int atEntry) {
+  if (!alHashCap)
+    return;
+  unsigned at = hash_id(entries[atEntry].alid) & (alHashCap - 1);
+  while (alHash[at])
+    at = (at + 1) & (alHashCap - 1);
+  alHash[at] = atEntry + 1;
+}
+
+static void rebuild_indexes(void) {
+  if (!ensure_al_hash((unsigned)nentries)) {
+    free(alHash);
+    alHash = NULL;
     alHashCap = 0;
-  if (alHash)
-    for (int i = 0; i < nentries; i++) {
-      unsigned at = hash_id(entries[i].alid) & (alHashCap - 1);
-      while (alHash[at])
-        at = (at + 1) & (alHashCap - 1);
-      alHash[at] = i + 1;
-    }
+  }
 
   free(imdbHash);
   imdbHash = NULL;
@@ -146,6 +173,7 @@ static void rebuild_indexes(void) {
   }
   for (int i = 0; i < nentries; i++) {
     MapEntry *e = &entries[i];
+    e->imdbNext = -1;
     if (!e->imdb[0])
       continue;
     unsigned at = hash_text(e->imdb) & (imdbHashCap - 1);
@@ -157,18 +185,25 @@ static void rebuild_indexes(void) {
       s->any = e->alid;
       s->best = e->season > 0 ? e->alid : 0;
       s->bestSeason = e->season;
+      s->head = -1;
     } else if (e->season > 0 && (!s->best || e->season < s->bestSeason)) {
       s->best = e->alid;
       s->bestSeason = e->season;
     }
+    int *link = &s->head;
+    while (*link >= 0 &&
+           (entries[*link].season > 0 ? entries[*link].season : 0x7fffffff) <=
+               (e->season > 0 ? e->season : 0x7fffffff))
+      link = &entries[*link].imdbNext;
+    e->imdbNext = *link;
+    *link = i;
   }
 }
 
 static void entry_set(int alid, const char *imdb, int kitsu, int season, long long stamp) {
   int at = entry_find(alid);
-  if (at < 0)
-    at = entry_find_linear(alid);
   if (at < 0) {
+    int hashed = ensure_al_hash((unsigned)nentries + 1);
     if (nentries == capentries) {
       int next = capentries ? capentries * 2 : 256;
       MapEntry *p = realloc(entries, sizeof *entries * (size_t)next);
@@ -178,12 +213,21 @@ static void entry_set(int alid, const char *imdb, int kitsu, int season, long lo
       capentries = next;
     }
     at = nentries++;
+    entries[at].alid = alid; /* (before it is hashed: the hash reads it) */
+    if (hashed)
+      al_hash_insert(at);
+    else {
+      free(alHash);
+      alHash = NULL;
+      alHashCap = 0;
+    }
   }
   entries[at].alid = alid;
   snprintf(entries[at].imdb, sizeof entries[at].imdb, "%s", imdb ? imdb : "");
   entries[at].kitsu = kitsu > 0 ? kitsu : 0;
   entries[at].season = season > 0 ? season : 0;
   entries[at].stamp = stamp;
+  entries[at].imdbNext = -1;
 }
 
 static void write_header(void) {
@@ -202,40 +246,67 @@ static void write_header(void) {
     remove(t);
 }
 
-static void load(void) {
-  if (loaded)
+static void on_map_file(int status, const unsigned char *body, size_t len, void *ud);
+
+static void start_load(void) {
+  if (loadStarted)
     return;
-  loaded = 1;
-  char p[1100], line[128];
+  loadStarted = 1;
+  char p[1100];
   snprintf(p, sizeof p, "%s/almap.txt", store_data_dir());
-  FILE *f = fopen(p, "rb");
+  net_file(p, on_map_file, NULL);
+}
+
+static void clear_entries(void) {
+  free(entries);
+  entries = NULL;
+  nentries = 0;
+  capentries = 0;
+  free(alHash);
+  alHash = NULL;
+  alHashCap = 0;
+  free(imdbHash);
+  imdbHash = NULL;
+  imdbHashCap = 0;
+}
+
+static void parse_map(int status, const unsigned char *body, size_t len) {
+  clear_entries();
   int valid = 0;
-  if (f) {
-    if (fgets(line, sizeof line, f)) {
-      line[strcspn(line, "\r\n")] = 0;
+  size_t pos = 0;
+  int lineNo = 0;
+  while (status == 200 && body && pos < len) {
+    size_t end = pos;
+    while (end < len && body[end] != '\n')
+      end++;
+    size_t n = end - pos;
+    char line[128];
+    if (n >= sizeof line)
+      n = sizeof line - 1;
+    memcpy(line, body + pos, n);
+    line[n] = 0;
+    line[strcspn(line, "\r")] = 0;
+    if (!lineNo++)
       valid = !strcmp(line, "almap 1");
-    }
-    if (valid)
-      while (fgets(line, sizeof line, f)) {
-        int alid, kitsu, season;
-        long long stamp;
-        char imdb[32];
-        if (sscanf(line, "%d %31s %d %d %lld", &alid, imdb, &kitsu, &season, &stamp) != 5 || alid <= 0)
-          continue;
+    else if (valid) {
+      int alid, kitsu, season;
+      long long stamp;
+      char imdb[32];
+      if (sscanf(line, "%d %31s %d %d %lld", &alid, imdb, &kitsu, &season, &stamp) == 5 && alid > 0) {
         if (strcmp(imdb, "-") && !valid_imdb(imdb))
           imdb[0] = 0;
         else if (!strcmp(imdb, "-"))
           imdb[0] = 0;
         entry_set(alid, imdb, kitsu, season, stamp);
       }
-    fclose(f);
+    }
+    if (end == len)
+      break;
+    pos = end + 1;
   }
-  if (!valid) {
-    nentries = 0;
+  if (!valid)
     write_header();
-  }
   rebuild_indexes();
-  fprintf(stderr, "[animemap] %d pairs from the disk\n", nentries);
 }
 
 static int known_entry(const MapEntry *e) {
@@ -344,6 +415,19 @@ static void pending_take(int n) {
   }
 }
 
+static void pending_drop_known(void) {
+  int keep = 0;
+  for (int i = 0; i < npending; i++) {
+    int alid = pending[pendingHead + i];
+    int at = entry_find(alid);
+    if (!known_entry(at >= 0 ? &entries[at] : NULL))
+      pending[pendingHead + keep++] = alid;
+  }
+  pendingHead = 0;
+  npending = keep;
+  pending_rebuild(hash_cap_for((unsigned)npending + 1));
+}
+
 static int imdb_lookup(const char *imdb) {
   if (imdbHashCap) {
     unsigned at = hash_text(imdb) & (imdbHashCap - 1);
@@ -391,6 +475,11 @@ static void append_answers(Request *r, const Answer *answers) {
   version++;
 }
 
+static void retry_request(Request *r) {
+  for (int i = 0; i < r->n; i++)
+    pending_add(r->id[i]);
+}
+
 static void remove_flight(Request *r) {
   for (int i = 0; i < MAX_FLIGHT; i++)
     if (flights[i] == r) {
@@ -435,6 +524,7 @@ static void on_answer(int status, const unsigned char *body, size_t len, void *u
     backoffUntil = 0;
     fprintf(stderr, "[animemap] asked %d, found %d, missed %d, %lld ms\n", r->n, found, r->n - found, elapsed);
   } else {
+    retry_request(r);
     int delay = ++failStreak >= 2 ? 600 : 60;
     backoffUntil = now_ms() + (long long)delay * 1000;
     fprintf(stderr, "[animemap] failed (status %d), backing off %d s\n", status, delay);
@@ -443,16 +533,16 @@ static void on_answer(int status, const unsigned char *body, size_t len, void *u
   free(r);
 }
 
-static void send_one(int n) {
+static int send_one(int n) {
   Request *r = calloc(1, sizeof *r);
   if (!r)
-    return;
+    return 0;
   r->n = n;
   size_t cap = 4 + (size_t)n * 28;
   r->body = malloc(cap);
   if (!r->body) {
     free(r);
-    return;
+    return 0;
   }
   size_t o = 0;
   r->body[o++] = '[';
@@ -461,7 +551,6 @@ static void send_one(int n) {
     o += (size_t)snprintf(r->body + o, cap - o, "%s{\"anilist\":%d}", i ? "," : "", r->id[i]);
   }
   snprintf(r->body + o, cap - o, "]");
-  pending_take(n);
   r->askedAt = now_ms();
   int slot = -1;
   for (int i = 0; i < MAX_FLIGHT; i++)
@@ -469,46 +558,87 @@ static void send_one(int n) {
       slot = i;
       break;
     }
+  if (slot < 0) {
+    free(r->body);
+    free(r);
+    return 0;
+  }
+  pending_take(n);
   flights[slot] = r;
   inflight++;
   if (getenv("SB_ANIME_MAP_OFF")) {
     on_answer(0, NULL, 0, r);
-    return;
+    return 1;
   }
   net_post_hdr_t(ARM_URL, r->body, "application/json", NULL, 10000, on_answer, r);
+  return 1;
 }
 
 const char *anime_map_imdb(int alid) {
-  load();
+  start_load();
+  if (!loaded)
+    return NULL;
   int at = entry_find(alid);
   return at >= 0 && known_entry(&entries[at]) && entries[at].imdb[0] ? entries[at].imdb : NULL;
 }
 
 int anime_map_known(int alid) {
-  load();
+  start_load();
+  if (!loaded)
+    return 0;
   int at = entry_find(alid);
   return at >= 0 && known_entry(&entries[at]);
 }
 
 int anime_map_kitsu(int alid) {
-  load();
+  start_load();
+  if (!loaded)
+    return 0;
   int at = entry_find(alid);
   return at >= 0 && known_entry(&entries[at]) ? entries[at].kitsu : 0;
 }
 
 int anime_map_season(int alid) {
-  load();
+  start_load();
+  if (!loaded)
+    return 0;
   int at = entry_find(alid);
   return at >= 0 && known_entry(&entries[at]) ? entries[at].season : 0;
 }
 
 int anime_map_alid(const char *imdb) {
-  load();
+  start_load();
+  if (!loaded)
+    return 0;
   return valid_imdb(imdb) ? imdb_lookup(imdb) : 0;
 }
 
+int anime_map_aliases(const char *imdb, int *alids, int *kitsus, int max) {
+  start_load();
+  if (!loaded || !valid_imdb(imdb) || max <= 0 || !imdbHashCap)
+    return 0;
+  unsigned at = hash_text(imdb) & (imdbHashCap - 1);
+  for (;;) {
+    ImdbSlot *s = &imdbHash[at];
+    if (!s->key[0])
+      return 0;
+    if (!strcmp(s->key, imdb)) {
+      int n = 0;
+      for (int i = s->head; i >= 0 && n < max; i = entries[i].imdbNext) {
+        if (alids)
+          alids[n] = entries[i].alid;
+        if (kitsus)
+          kitsus[n] = entries[i].kitsu;
+        n++;
+      }
+      return n;
+    }
+    at = (at + 1) & (imdbHashCap - 1);
+  }
+}
+
 void anime_map_want(const int *alids, int n) {
-  load();
+  start_load();
   for (int i = 0; alids && i < n; i++)
     if (alids[i] > 0 && !anime_map_known(alids[i]))
       pending_add(alids[i]);
@@ -516,7 +646,7 @@ void anime_map_want(const int *alids, int n) {
 }
 
 unsigned anime_map_version(void) {
-  load();
+  start_load();
   return version;
 }
 
@@ -529,6 +659,18 @@ void anime_map_tick(void) {
   }
   if (now_ms() < backoffUntil)
     return;
-  while (npending && inflight < MAX_FLIGHT)
-    send_one(npending < MAX_ASK ? npending : MAX_ASK);
+  while (npending && inflight < MAX_FLIGHT && now_ms() >= backoffUntil) /* (a failure answered at once sets it) */
+    if (!send_one(npending < MAX_ASK ? npending : MAX_ASK)) {
+      backoffUntil = now_ms() + 5000;
+      break;
+    }
+}
+
+static void on_map_file(int status, const unsigned char *body, size_t len, void *ud) {
+  (void)ud;
+  parse_map(status, body, len);
+  loaded = 1;
+  pending_drop_known();
+  version++;
+  fprintf(stderr, "[animemap] %d pairs from the disk\n", nentries);
 }

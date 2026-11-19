@@ -1951,7 +1951,9 @@ static void ep_encode(cJSON *s, const cJSON *videos, const int *flags) {
 }
 void lib_set_eps_watched(cJSON *lit, const cJSON *videos, const char **epIds, int n, int on) {
   int nv = cJSON_GetArraySize(videos);
-  static int flags[1024];
+  int *flags = calloc(nv ? nv : 1, sizeof *flags);
+  if (!flags)
+    return;
   lib_ep_watched_map(lit, videos, flags);
   int k = 0;
   const cJSON *v;
@@ -1997,7 +1999,7 @@ void lib_set_eps_watched(cJSON *lit, const cJSON *videos, const char **epIds, in
         cJSON_AddNumberToObject(s, "timeOffset", 0);
       }
   }
-  (void)nv;
+  free(flags);
   lib_save(lit);
 }
 void lib_set_movie_watched(cJSON *lit, int on) {
@@ -2043,7 +2045,10 @@ int lib_series_watched(const cJSON *l, const cJSON *videos) {
     return 0;
   if (!videos || !cJSON_GetArraySize(videos))
     return 0;
-  static int flags[1024];
+  int nv = cJSON_GetArraySize(videos);
+  int *flags = calloc(nv ? nv : 1, sizeof *flags);
+  if (!flags)
+    return 0;
   lib_ep_watched_map(l, videos, flags);
   int k = 0, n = 0;
   const cJSON *v;
@@ -2067,10 +2072,13 @@ int lib_series_watched(const cJSON *l, const cJSON *videos) {
       continue;
     }
     n++;
-    if (!flags[k])
+    if (!flags[k]) {
+      free(flags);
       return 0;
+    }
     k++;
   }
+  free(flags);
   return n > 0;
 }
 /* the badge is asked for every card in every frame and a series' answer decodes its bitfield against every episode:
@@ -2132,15 +2140,22 @@ int lib_is_marked_watched(const Item *it) {
     const cJSON *videos = js_arr(m, "videos");
     if (!videos)
       return 0;
-    static int flags[1024];
+    int nv = cJSON_GetArraySize(videos);
+    int *flags = calloc(nv ? nv : 1, sizeof *flags);
+    if (!flags)
+      return 0;
     lib_ep_watched_map(l, videos, flags);
     int k = 0;
     const cJSON *v;
     cJSON_ArrayForEach(v, videos) {
-      if (!strcmp(js_str(v, "id", ""), it->videoId))
-        return flags[k];
+      if (!strcmp(js_str(v, "id", ""), it->videoId)) {
+        int on = flags[k];
+        free(flags);
+        return on;
+      }
       k++;
     }
+    free(flags);
     return 0;
   }
   return lib_movie_watched(l);
@@ -2200,7 +2215,11 @@ static int lib_migrate_legacy(void) {
         cJSON_Delete(own);
         continue;
       }
-      int *flags = calloc(n, sizeof *flags);
+      int *flags = calloc(n ? n : 1, sizeof *flags);
+      if (!flags) {
+        cJSON_Delete(own);
+        continue;
+      }
       lib_ep_watched_map(it, vids, flags);
       ep_encode(s, vids, flags);
       free(flags);
