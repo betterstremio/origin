@@ -76,6 +76,7 @@ Section "${NAME}"
   RMDir /r "$INSTDIR\fallback"
   File /r "${SRC}/*"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
+  DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\tv.stremioorigin.app"   ; the old app id: one entry in Installed apps
   CreateShortCut "$SMPROGRAMS\${NAME}.lnk" "$INSTDIR\Origin.exe"
   IfSilent +2
     CreateShortCut "$DESKTOP\${NAME}.lnk" "$INSTDIR\Origin.exe"

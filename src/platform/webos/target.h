@@ -3,6 +3,7 @@
 #ifndef SB_TARGET_H
 #define SB_TARGET_H
 #define SB_PKG_KIND "_arm.ipk"
+#define SB_MIGRATE_WEBOS 1 /* first run: import the old app id's data (core/migrate.c) */
 #define SB_DL_SUFFIX ".so"
 #define SB_HAS_USB 1 /* an optional USB drive for the P2P cache */
 #define SB_HAS_CAST 1 /* the cast receiver */

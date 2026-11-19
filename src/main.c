@@ -291,6 +291,7 @@ static int vsyncOn
 #endif
 #include "core/net.h"
 #include "core/store.h"
+#include "core/migrate.h"
 #include "core/i18n.h"
 #include "core/stremio.h"
 #include "screens/board.h"
@@ -694,6 +695,7 @@ int main(int argc, char **argv) {
   }
   SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
   SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 0);
+  migrate_run(plat_data_dir()); /* the first run of a new app id imports the old one's data; else one stat */
   store_init(plat_data_dir()); /* before the window: the drawing size is a setting */
   int memMb = plat_mem_total_mb();
   int w, h;
