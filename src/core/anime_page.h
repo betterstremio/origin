@@ -27,6 +27,10 @@ int anime_page_def(const AnimeRow *r, CatalogDef *d);
 void anime_page_close(void); /* the tab went off: what the page keeps is let go */
 int anime_page_billboard(ItemList *out); /* top picks (or trending without a taste): up to 8; 0 = not yet */
 int anime_page_mylist(ItemList *out); /* the anime of the library (My List), newest first */
+/* the AniList cards of a list made IMDb cards where the map knows the id (see anime_map.h), seasons of one show folded
+   into one card, the user's own native-id history kept as it is. In place, never waits. Returns how many cards
+   changed or went (0: nothing) */
+int anime_page_map_list(ItemList *l);
 
 /* the Kitsu meta of a title: the fanart background and logo, the IMDb rating; asked once, kept 7 days */
 typedef struct {

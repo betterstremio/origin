@@ -33,6 +33,7 @@
 #include "core/anime_page.h"
 #include "core/anime_taste.h"
 #include "core/anime_addon.h"
+#include "core/anime_map.h"
 #include <strings.h>
 
 #define MAXROWS 64 /* (a catalog answer packs its row in 6 bits: 64 is the most) */
@@ -374,6 +375,10 @@ static void prep_free(Row *r) {
 static void row_clear(Row *r) {
   itemlist_clear(&r->items);
   prep_free(r);
+}
+/* the name at a card's foot: a row that asks for it, or an AniList cover in an Anime row (no logo to carry the name) */
+static int row_label(const Row *r, const Item *it) {
+  return r->label || (!r->poster && r->alIdx1 && !strncmp(it->id, "anilist:", 8));
 }
 static Row *row_add(Board *b, const char *title, int wide, int label) {
   if (b->n >= MAXROWS)
@@ -846,11 +851,9 @@ static unsigned aniSig, aniMetaV;
 static double aniT0, aniPlanAt, aniAskAt, aniLogAt;
 static int aniReq0 = -1;
 static const char *const ANI_MODE[] = { "foryou", "popular", "kitsu" };
-/* an anime title whose Kitsu meta (fanart, logo) is still on its way: its box picture waits for it, so the AniList
-   banner is not fetched for nothing */
-static int ani_hold(const Item *it) {
-  return strncmp(it->id, "anilist:", 8) == 0 && anime_addon_ready() && !anime_meta_get(it->id, NULL);
-}
+static unsigned aniMapV;
+static unsigned char aniDirty[MAXROWS]; /* rows the map has news for (done once the focus is off them) */
+static unsigned aniFeatTodo; /* the billboard's titles the same */
 static int ani_same(const Item *a, const Item *b) {
   return !strcmp(a->id, b->id) || (a->name[0] && !strcasecmp(a->name, b->name));
 }
@@ -913,12 +916,14 @@ static void ani_rows(Board *b, int keep, const int *oldCols) {
     b->nfeat = b->featLoad = b->bill = b->featIdx = 0;
   }
   aniSig = anime_page_sig();
+  memset(aniDirty, 0, sizeof aniDirty);
   for (int i = 0; i < n; i++) {
     Row *r = row_add(b, aniPlan[i].title, 0, 0);
     if (!r)
       break;
     int ri = (int)(r - b->rows);
-    r->poster = 1;
+    r->poster =
+        aniPlan[i].src == AS_KITSU; /* (AniList rows are drawn as Shows rows; only the Kitsu fallback has covers) */
     if (keep && ri < MAXROWS)
       r->col = oldCols[ri];
     if (aniPlan[i].src == AS_KITSU) {
@@ -1931,7 +1936,7 @@ static void cine_card_art(const Item *it, float ox, float cy, float ow, float ch
   if (logo_fit(lu, 360, 130, &lw, &lh, &lt))
     gfx_image(lt, rtl ? ox + ow - 28 - lw : ox + 28, cy + ch - 28 - lh, lw, lh, 0, WHITE_A((int)(255 * ek)), 0, 0, 1,
               1);
-  else if ((!lu[0] || img_failed(lu)) && lib_id_is_anime(it->type, it->id) && it->name[0] && !ani_hold(it))
+  else if ((!lu[0] || img_failed(lu)) && lib_id_is_anime(it->type, it->id) && it->name[0])
     text_draw_wrapped(it->name, ox + 28, cy + ch - 28 - 2 * 44, ow - 56, 2, 40, 700, WHITE_A((int)(255 * ek)), -0.4f,
                       rtl ? ALIGN_RIGHT : ALIGN_LEFT, 44); /* no logo: the title in words (an anime without fanart) */
   int bd = recs_badges(it);
@@ -2461,7 +2466,7 @@ static void ani_tick(Board *b) {
     aniMetaV = anime_meta_version();
     for (int i = 0; i < b->n; i++) {
       Row *r = &b->rows[i];
-      if (!r->poster)
+      if (!r->poster && !r->alIdx1)
         continue;
       for (int c = 0; c < r->items.n; c++)
         ani_patch(&r->items.items[c]);
@@ -2470,6 +2475,36 @@ static void ani_tick(Board *b) {
       ani_patch(&b->feat[i]);
     if (b->heroSet && ani_patch(&b->hero))
       b->heroVer++;
+  }
+  if (anime_map_version() !=
+      aniMapV) { /* new AniList -> IMDb pairs: the cards that waited for them are made Shows cards */
+    aniMapV = anime_map_version();
+    for (int i = 0; i < b->n && i < MAXROWS; i++)
+      aniDirty[i] = b->rows[i].alIdx1 && aniPlan[b->rows[i].alIdx1 - 1].src != AS_LIST;
+    aniFeatTodo = b->nfeat >= 32 ? ~0u : (1u << b->nfeat) - 1;
+  }
+  for (int i = 0; i < b->n && i < MAXROWS; i++) {
+    Row *r = &b->rows[i];
+    if (!aniDirty[i] || i == b->rowIdx) /* (not under the focus: no card vanishes there) */
+      continue;
+    aniDirty[i] = 0;
+    if (r->items.n > 0 && anime_page_map_list(&r->items)) {
+      prep_free(r);
+      r->hidden = !r->items.n;
+      if (r->col >= r->items.n)
+        r->col = r->items.n ? r->items.n - 1 : 0;
+    }
+  }
+  if (aniFeatTodo) {
+    int ch = 0;
+    for (int i = 0; i < b->nfeat && i < 32; i++)
+      if ((aniFeatTodo & (1u << i)) && i != b->featIdx % b->nfeat) {
+        aniFeatTodo &= ~(1u << i);
+        ItemList one = { &b->feat[i], 1, 1 }; /* (no fold: each stays where it is) */
+        ch |= anime_page_map_list(&one) > 0;
+      }
+    if (ch)
+      logos_ahead(b, 1);
   }
   if (now < aniAskAt)
     return;
@@ -2480,7 +2515,7 @@ static void ani_tick(Board *b) {
     ani_feat_fill(b); /* (its lists may have come since) */
   int mem = plat_mem_total_mb(), ahead = mem > 0 && mem <= 1200 ? 2 : 4;
   for (int ri = b->rowIdx - 2; ri <= b->rowIdx + 2 && ri < b->n; ri++) {
-    if (ri < 0 || b->rows[ri].hidden || !b->rows[ri].poster)
+    if (ri < 0 || b->rows[ri].hidden || (!b->rows[ri].poster && !b->rows[ri].alIdx1))
       continue;
     Row *r = &b->rows[ri];
     int d1 = ri == b->rowIdx ? r->col + ahead : r->col + 2;
@@ -2759,7 +2794,9 @@ static const CardPrep *row_prep(Row *r, int i, int near, int *hold, int *changed
   if (!r->cpSt[i] || art) {
     card_prep(cp, &r->items.items[i], r->wide, art);
     char bu[512]; /* as Netflix's: a poster card is its wide picture cut at the subject (opening uncovers the rest) */
-    if (!r->wide && !r->ntiles && !r->poster && sb_bg_card(&r->items.items[i], bu, sizeof bu)[0]) {
+    /* (an AniList cover is a portrait: it is not cut, and its thin banner is not a picture to cut) */
+    if (!r->wide && !r->ntiles && !r->poster && strncmp(r->items.items[i].id, "anilist:", 8) &&
+        sb_bg_card(&r->items.items[i], bu, sizeof bu)[0]) {
       snprintf(cp->art, sizeof cp->art, "%s", bu);
       if (!sb_bg_small(&r->items.items[i], cp->pre, sizeof cp->pre)[0])
         snprintf(cp->pre, sizeof cp->pre, "%s", bu);
@@ -2877,10 +2914,10 @@ static void row_ahead(Row *r, int cw, int ch) {
       continue;
     int hold;
     const CardPrep *cp = row_prep(r, i, 1, &hold, NULL);
-    if (cp && r->poster && !cp->crop) { /* a portrait cover: only the open box's picture is asked ahead (its Kitsu
-                                           fanart first, when that is on its way) */
+    if (cp && !cp->crop && (r->poster || !strncmp(r->items.items[i].id, "anilist:", 8))) {
+      /* a portrait cover: only the open box's picture is asked ahead */
       char bu[512];
-      if (!ani_hold(&r->items.items[i]) && sb_bg_card(&r->items.items[i], bu, sizeof bu)[0])
+      if (sb_bg_card(&r->items.items[i], bu, sizeof bu)[0])
         img_ahead_shaped(bu, (int)CARD_OPEN_W, ch, CARD_R, 1);
       continue;
     }
@@ -3067,7 +3104,7 @@ static void card_wide(Board *b, const Row *r, const Item *it, const CardPrep *cp
                       float cw, float ch, float ek, int rtl, int focused) {
   char bu[512];
   if (ek <= 0.001f || !sb_bg_card(it, bu, sizeof bu)[0]) {
-    card_draw_prep(it, cp, x, cy, cw, ch, r->wide, r->label, 1);
+    card_draw_prep(it, cp, x, cy, cw, ch, r->wide, row_label(r, it), 1);
     crop_logo(it, cp, x, cy, cw, ch, 1);
     if (focused) {
       b->wideReady = 0;
@@ -3196,7 +3233,7 @@ static void row_draw(Board *b, Row *r, int ri, float y, int near, float rowA) {
     float s = 0.86f + 0.14f * (1 - rk); /* the one taken out: fading and shrinking where it was */
     gfx_opacity_push(1 - rk);
     gfx_scale_push(s, s, gx + cw / 2, cy + ch / 2);
-    card_draw_wh(&b->remIt, gx, cy, cw, ch, r->wide, r->label, 0);
+    card_draw_wh(&b->remIt, gx, cy, cw, ch, r->wide, row_label(r, &b->remIt), 0);
     gfx_scale_pop();
     gfx_opacity_pop();
   }
@@ -3235,7 +3272,8 @@ static void row_draw(Board *b, Row *r, int ri, float y, int near, float rowA) {
     unsigned long long lk = lift_key(r, i);
     lift_begin(lk, 0, 0, x, cy, cw, ch, CARD_R); /* (the one the focus just left settles back) */
     fill_begin(r->items.items[i].id, r->wide ? 2 : 0, ri - b->rowIdx);
-    card_draw_prep(&r->items.items[i], cp, x, cy, cw, ch, r->wide, r->label, !hold && (load || near));
+    card_draw_prep(&r->items.items[i], cp, x, cy, cw, ch, r->wide, row_label(r, &r->items.items[i]),
+                   !hold && (load || near));
     if (hold || !cp)
       fill_why_prep();
     crop_logo(&r->items.items[i], cp, x, cy, cw, ch, 1);
@@ -3261,8 +3299,6 @@ static void row_draw(Board *b, Row *r, int ri, float y, int near, float rowA) {
       if (i < 0 || i >= r->items.n)
         continue;
       const Item *wi = &r->items.items[i];
-      if (r->poster && ani_hold(wi))
-        continue;
       if (!sb_bg_card(wi, wideSrc, sizeof wideSrc)[0] || img_shaped_loaded(wideSrc, fw0, (int)ch, CARD_R, 1))
         continue;
       img_prefetch_mode(d != 0 || !active);

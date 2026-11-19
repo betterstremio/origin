@@ -1,5 +1,6 @@
 #include "core/anime_page.h"
 #include "core/anime_addon.h"
+#include "core/anime_map.h"
 #include "core/anime_taste.h"
 #include "core/i18n.h"
 #include "core/json.h"
@@ -191,6 +192,117 @@ static void keep8(ItemList *dst, const ItemList *l) {
   dst->n = n;
   dst->total = n;
 }
+/* ---- AniList ids become IMDb ids ----
+   A card whose AniList entry has an IMDb id is made a Shows card: its id is the tt id (the title page has every
+   season, My List / resume / trailers work as on Shows), its art comes from metahub (emptied here, built from the tt
+   id as Shows does). The user's own history under the native ids keeps the native card. Seasons of one show fold into
+   one card. Never waits: ids not known yet are asked, the list goes on as it is (the board runs this again later). */
+#define MAP_MAX 128
+static int map_native_owned(int alid) {
+  char k[40];
+  snprintf(k, sizeof k, "anilist:%d", alid);
+  if (lib_has(k))
+    return 1;
+  int kid = anime_map_kitsu(alid);
+  if (kid > 0) {
+    snprintf(k, sizeof k, "kitsu:%d", kid);
+    return lib_has(k);
+  }
+  return 0;
+}
+static int map_list(ItemList *l, int dropOwned) {
+  if (!l || !l->items || l->n <= 0)
+    return 0;
+  int n = l->n > MAP_MAX ? MAP_MAX : l->n;
+  int ask[MAP_MAX], na = 0;
+  for (int i = 0; i < n; i++)
+    if (!strncmp(l->items[i].id, "anilist:", 8)) {
+      int a = atoi(l->items[i].id + 8);
+      if (a > 0 && !anime_map_known(a))
+        ask[na++] = a;
+    }
+  if (na)
+    anime_map_want(ask, na);
+  const char *key[MAP_MAX];
+  char native[MAP_MAX], gone[MAP_MAX];
+  int unmapped = 0, keptNative = 0;
+  for (int i = 0; i < n; i++) {
+    const Item *it = &l->items[i];
+    key[i] = NULL;
+    native[i] = gone[i] = 0;
+    if (sb_is_imdb(it->id)) {
+      key[i] = it->id; /* (made one before: a later run of this) */
+    } else if (!strncmp(it->id, "anilist:", 8)) {
+      int a = atoi(it->id + 8);
+      key[i] = a > 0 ? anime_map_imdb(a) : NULL;
+      if (!key[i])
+        unmapped++;
+      else if (map_native_owned(a)) {
+        native[i] = 1;
+        keptNative++;
+      } else if (dropOwned && lib_has(key[i]))
+        gone[i] = 1;
+    }
+  }
+  int keep[MAP_MAX], nk = 0, changed = 0, folded = 0;
+  for (int i = 0; i < n; i++) {
+    if (gone[i]) {
+      changed++;
+      continue;
+    }
+    if (!key[i]) {
+      keep[nk++] = i;
+      continue;
+    }
+    int lead = -1, pick = i; /* the first of its group; the card kept: a native one when the group has one */
+    for (int j = 0; j < i && lead < 0; j++)
+      if (!gone[j] && key[j] && !strcmp(key[j], key[i]))
+        lead = j;
+    if (lead >= 0) {
+      folded++;
+      changed++;
+      continue;
+    }
+    for (int j = i; j < n; j++)
+      if (!gone[j] && native[j] && key[j] && !strcmp(key[j], key[i])) {
+        pick = j;
+        break;
+      }
+    keep[nk++] = pick;
+  }
+  Item *out = l->items;
+  Item *res = malloc(sizeof(Item) * (size_t)(nk ? nk : 1));
+  if (!res)
+    return 0;
+  for (int k = 0; k < nk; k++) {
+    Item *o = &res[k];
+    *o = out[keep[k]];
+    int i = keep[k];
+    if (key[i] && !native[i] && strcmp(o->id, key[i])) {
+      snprintf(o->id, sizeof o->id, "%s", key[i]);
+      o->poster[0] = o->background[0] = o->logo[0] = 0;
+      o->anime = 1;
+      changed++;
+    }
+  }
+  int total = l->total == l->n;
+  for (int k = 0; k < nk; k++)
+    out[k] = res[k];
+  free(res);
+  if (n < l->n) /* (past the cap: moved down after the kept ones) */
+    for (int i = n; i < l->n; i++)
+      out[nk + i - n] = out[i];
+  l->n = nk + (l->n - n);
+  if (total)
+    l->total = l->n;
+  if (n > 1)
+    fprintf(stderr, "[anime] map: %d -> %d cards (%d folded), %d unmapped, %d kept native\n", n, nk, folded, unmapped,
+            keptNative);
+  return changed;
+}
+int anime_page_map_list(ItemList *l) {
+  return map_list(l, 0);
+}
 static void on_al(ItemList *l, int cached, void *ud) {
   Ask *a = ud;
   if (a->gen == pageGen) {
@@ -198,6 +310,7 @@ static void on_al(ItemList *l, int cached, void *ud) {
       failc++;
     else {
       okc++;
+      anime_page_map_list(l);
       if (a->kind == AL_ROW_TRENDING)
         keep8(&trend, l);
     }
@@ -251,6 +364,10 @@ static void on_top_list(ItemList *l, int cached, void *ud) {
   out->total = t->np ? 1 : -1;
   if (t->np) {
     qsort(t->pool, (size_t)t->np, sizeof t->pool[0], pool_rank);
+    ItemList pv = { t->pool, t->np,
+                    t->np }; /* (ranked by AniList id first; then made Shows cards, the owned ones out) */
+    map_list(&pv, 1);
+    t->np = pv.n;
     int n = t->np < 20 ? t->np : 20;
     out->items = calloc((size_t)n, sizeof(Item));
     if (out->items) {
