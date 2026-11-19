@@ -1513,10 +1513,11 @@ int lib_id_is_anime(const char *type, const char *id) {
   return !strncmp(id, "kitsu:", 6) || !strncmp(id, "anilist:", 8) || !strncmp(id, "mal:", 4) ||
          !strncmp(id, "anidb:", 6);
 }
+#define ANIME_LIBRARY_KINDS "animeLibraryCinemeta"
 int lib_item_is_anime(const cJSON *it) {
   const char *type = js_str(it, "type", ""), *id = js_str(it, "_id", "");
   return lib_id_is_anime(type, id) || lib_id_is_anime(NULL, js_str(js_obj(it, "state"), "video_id", "")) ||
-         meta_is_anime(it) || js_bool(store_node("animeLibraryKinds"), id, 0) ||
+         meta_is_anime(it) || js_bool(store_node(ANIME_LIBRARY_KINDS), id, 0) ||
          meta_is_anime(sb_meta_cached(type, id));
 }
 /* Old library records often contain just an IMDb ID and artwork. Resolve their in-progress titles in the
@@ -1531,12 +1532,12 @@ static int anime_probe_save(const char *id, const cJSON *meta) {
   if (!js_str(meta, "country", "")[0] || !js_arr(meta, "genres"))
     return 0;
   int anime = meta_is_anime(meta);
-  cJSON *known = store_node("animeLibraryKinds");
+  cJSON *known = store_node(ANIME_LIBRARY_KINDS);
   if (!cJSON_IsObject(known))
     known = cJSON_CreateObject();
   cJSON_DeleteItemFromObjectCaseSensitive(known, id);
   cJSON_AddBoolToObject(known, id, anime);
-  store_set_node("animeLibraryKinds", known);
+  store_set_node(ANIME_LIBRARY_KINDS, known);
   if (anime) {
     animeLibraryVer++;
     if (getenv("SB_ROWLOG"))
@@ -1544,28 +1545,14 @@ static int anime_probe_save(const char *id, const cJSON *meta) {
   }
   return 1;
 }
-typedef struct {
-  char id[64], type[16];
-} AnimeProbe;
 static void anime_probe_cinemeta(int status, const unsigned char *body, size_t len, void *ud) {
   (void)len;
-  AnimeProbe *probe = ud;
+  char *id = ud;
   cJSON *answer = status == 200 ? net_json(body) : NULL;
-  anime_probe_save(probe->id, js_obj(answer, "meta"));
+  anime_probe_save(id, js_obj(answer, "meta"));
   net_json_free(answer);
   animeProbePending = 0;
-  free(probe);
-}
-static void anime_probe_meta(cJSON *meta, void *ud) {
-  AnimeProbe *probe = ud;
-  if (anime_probe_save(probe->id, meta)) {
-    animeProbePending = 0;
-    free(probe);
-    return;
-  }
-  char url[160];
-  snprintf(url, sizeof url, CINEMETA "/meta/%s/%s.json", probe->type, probe->id);
-  net_get_timeout(url, 6000, anime_probe_cinemeta, probe);
+  free(id);
 }
 void lib_anime_tick(void) {
   if (animeProbePending)
@@ -1578,7 +1565,7 @@ void lib_anime_tick(void) {
   }
   if ((Sint32)(now - animeProbeAt) < 0)
     return;
-  const cJSON *known = store_node("animeLibraryKinds"), *it;
+  const cJSON *known = store_node(ANIME_LIBRARY_KINDS), *it;
   int i = 0;
   cJSON_ArrayForEach(it, lib_arr()) {
     if (i++ < animeProbeOffset)
@@ -1592,15 +1579,18 @@ void lib_anime_tick(void) {
         cJSON_IsBool(cJSON_GetObjectItemCaseSensitive(known, id)) ||
         lib_id_is_anime(NULL, js_str(state, "video_id", "")))
       continue;
-    AnimeProbe *probe = calloc(1, sizeof *probe);
+    const cJSON *cached = sb_meta_cached(type, id);
+    if (meta_is_anime(cached) && anime_probe_save(id, cached))
+      continue;
+    /* Account addons may list only one country for co-productions. Use Cinemeta to classify IMDb titles. */
+    char *probe = strdup(id), url[160];
     if (!probe)
       break;
-    copy_str(probe->id, sizeof probe->id, id);
-    copy_str(probe->type, sizeof probe->type, type);
+    snprintf(url, sizeof url, CINEMETA "/meta/%s/%s.json", type, id);
     animeProbePending = 1;
     animeProbeOffset = i;
     animeProbeAt = now + 250;
-    sb_meta(type, id, anime_probe_meta, probe);
+    net_get_timeout(url, 6000, anime_probe_cinemeta, probe);
     return;
   }
   animeProbeOffset = 0;
