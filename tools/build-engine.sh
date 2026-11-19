@@ -1,6 +1,7 @@
 #!/bin/bash
 # Builds the torrent engine library the app loads when a torrent is first played:
 #   tools/build-engine.sh webos  -> build/webos/libsbengine.so     (ARMv7 soft-float, glibc, libc++ inside)
+#   tools/build-engine.sh tizen -> $BUILD_ROOT/tizen/libsbengine.so (ARMv7 soft-float)
 #   tools/build-engine.sh mac    -> build/mac/libsbengine.dylib    (the Mac preview)
 #   tools/build-engine.sh windows -> $WB/engine/libsbengine.dll    (x64, mingw-w64)
 # Engine: github.com/NuvioMedia/nuvio-engine (GPL-3.0) at a pinned commit, libtorrent 2.0.12, Boost
@@ -9,11 +10,13 @@
 # 24 MB and can change while playing, libtorrent settings by name, payload deleted with its torrent). No OpenSSL: peer encryption works,
 # HTTPS trackers do not. Sources and build folders live in $ORIGIN_BUILD/engine.
 set -euo pipefail
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-ORIGIN_BUILD="${ORIGIN_BUILD:-$HOME/origin-build}"   # the private build folder outside the repo: toolchain, SDK, sources, keys
+source "$(dirname "${BASH_SOURCE[0]}")/paths.sh"
 TARGET="${1:-webos}"
-W="${ENGINE_WORK:-$ORIGIN_BUILD/engine}"; mkdir -p "$W"
-ZIG="${ZIG:-$ORIGIN_BUILD/zig-aarch64-macos-0.17.0/zig}"
+DEFAULT_WORK="$ORIGIN_BUILD/engine"
+[ "$TARGET" != tizen ] || DEFAULT_WORK="$ORIGIN_BUILD/engine-tizen"
+W="${ENGINE_WORK:-$DEFAULT_WORK}"; mkdir -p "$W"
+case "$(uname -s)-$(uname -m)" in Darwin-arm64) ZIGHOST=aarch64-macos;; Linux-aarch64) ZIGHOST=aarch64-linux;; *) ZIGHOST=x86_64-linux;; esac
+ZIG="${ZIG:-$ORIGIN_BUILD/zig-$ZIGHOST-0.17.0/zig}"
 COMMIT=99a1860
 SRC="$W/src"
 if [ ! -d "$SRC/.git" ]; then git clone -q https://github.com/NuvioMedia/nuvio-engine "$SRC"; fi
@@ -33,8 +36,18 @@ if [ ! -d "$DEPS/nuvio_libtorrent-src/.git" ]; then
   git -C "$DEPS/nuvio_libtorrent-src" checkout -q 740a0b9aeabe00e762cc0efe4a0f27593db2550b
   git -C "$DEPS/nuvio_libtorrent-src" submodule update -q --init deps/try_signal
 fi
+if [ "$TARGET" = tizen ]; then
+  # The engine CMake applies its pinned libtorrent patches in this checkout during configure.
+  LT_SRC="$DEPS/nuvio_libtorrent-src"
+  if [ "$(git -C "$LT_SRC" rev-parse HEAD)" != 740a0b9aeabe00e762cc0efe4a0f27593db2550b ] ||
+     ! git -C "$LT_SRC" submodule status deps/try_signal | grep -q '^ '; then
+    echo "tizen: libtorrent source in $LT_SRC must match the pinned checkout" >&2
+    exit 1
+  fi
+fi
 case "$TARGET" in
   webos) ZT="-target arm-linux-gnueabi.${GLIBC:-2.17} -mcpu=cortex_a9-neon -mfloat-abi=softfp"; OUT="$ROOT/build/webos/libsbengine.so"; SYS=Linux; PROC=arm ;;   # soft-float ABI like the app; this compiler drops NEON from the assembler there, so libtorrent takes its portable paths
+  tizen) ZT="-target arm-linux-gnueabi.2.24 -mcpu=cortex_a9-neon -mfloat-abi=softfp"; OUT="$BUILD_ROOT/tizen/libsbengine.so"; SYS=Linux; PROC=arm ;;
   mac)   ZT=""; OUT="$ROOT/build/mac/libsbengine.dylib"; SYS=Darwin; PROC=aarch64 ;;
   android-*) ABI="${TARGET#android-}"; OUT="${ENGINE_OUT:-$ROOT/build/android/$ABI/libsbengine.so}"; NDK="${NDK:-$HOME/android-sdk/ndk/27.2.12479018}"; API="${API:-24}" ;;   # arm64-v8a, armeabi-v7a, x86 (the emulator)
   windows) OUT="${ENGINE_OUT:-${WB:-$HOME/wbuild}/engine/libsbengine.dll}"; SYS=Windows; PROC=x86_64 ;;   # mingw-w64 (posix threads), as the app
@@ -114,6 +127,13 @@ elif [ "$TARGET" = webos ]; then   # symbols kept in libsbengine.so.dbg (an engi
     "$B/libnuvio_engine.a" "$LT" -Wl,--gc-sections -Wl,-T,"$ROOT/tools/webos-relocs.ld" -Wl,--version-script="$TC/exports.map" -Wl,-soname,libsbengine.so -lpthread -o "$OUT.dbg"
   python3 "$ROOT/tools/elfstrip.py" "$OUT.dbg" "$OUT" && chmod +x "$OUT"
   python3 "$ROOT/tools/relocs-check.py" "$OUT"   # (webOS 3 starts it only with its two relocation tables together)
+elif [ "$TARGET" = tizen ]; then
+  echo '{ global: sbe_get; local: *; };' > "$TC/exports.map"
+  "$TC/c++" -std=c++20 -Os -fPIC $FL -shared -I"$SRC/include" -I"$ROOT/src" "$ROOT/tools/engine/sbengine.cpp" \
+    "$B/libnuvio_engine.a" "$LT" -Wl,--gc-sections -Wl,--no-undefined -Wl,--hash-style=both \
+    -Wl,--version-script="$TC/exports.map" -Wl,-soname,libsbengine.so -lpthread -o "$OUT.dbg"
+  python3 "$ROOT/tools/elfstrip.py" "$OUT.dbg" "$OUT"
+  python3 "$ROOT/packaging/tizen/check-elf.py" --engine "$OUT"
 elif [[ "$TARGET" == android-* ]]; then
   echo '{ global: sbe_get; local: *; };' > "$TC/exports.map"
   "$TC/c++" -std=c++20 -Os -fPIC $FL -shared -I"$SRC/include" -I"$ROOT/src" "$ROOT/tools/engine/sbengine.cpp" \

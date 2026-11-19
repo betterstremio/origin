@@ -23,6 +23,8 @@ FILES=("${APPID}_${V}_arm.ipk" "${APPID}_${V}_arm.ipk.sha256" "${APPID}_${V}_and
 # phones (from 2.1.7, beta): the same APK as _android.apk under a name that says what it is for. The TV names stay as
 # they are: installed apps find their update by them (src/core/update.c takes only <appid>_<x.y.z><SB_PKG_KIND>)
 FILES+=("${APPID}_${V}_android-phone-beta.apk")
+# Samsung TVs (from 3.0.0, preview): installed by hand with Apps2Samsung; the app only says a newer one is out
+FILES+=("${APPID}_${V}_tizen-beta.tpk" "${APPID}_${V}_tizen-beta.tpk.sha256")
 
 case "$CMD" in
 build)
@@ -38,6 +40,7 @@ build)
   for k in android-arm64 android-armv7 android; do cp "$BUILD_ROOT/android/apk/${APPID}_${V}_$k.apk" "$D/"; done
   cp "$D/${APPID}_${V}_android.apk" "$D/${APPID}_${V}_android-phone-beta.apk"
   OUT="$D" bash "$ROOT/packaging/windows/pack.sh" --clean   # (setup, its .sha256, the portable zip)
+  OUT="$D" bash "$ROOT/packaging/tizen/pack.sh" --clean     # (the TPK and its .sha256; needs the .NET 8 SDK, docs/tizen.md)
   want="$(tr -d '[:space:]' < "$ROOT/packaging/android/release-cert.sha256")"
   for f in "$D"/*.apk; do
     got="$("${ANDROID_HOME:-$HOME/android-sdk}/build-tools/35.0.0/apksigner" verify --print-certs "$f" | grep -m1 'SHA-256' | sed 's/.*: //')"
@@ -55,6 +58,7 @@ publish)
   [ -z "$(g status --porcelain)" ] || die "uncommitted changes"
   [ "$(sha256sum "$D/${FILES[0]}" | cut -c1-64)" = "$(cut -c1-64 "$D/${FILES[1]}")" ] || die "the IPK does not match its .sha256"
   [ "$(sha256sum "$D/${FILES[5]}" | cut -c1-64)" = "$(cut -c1-64 "$D/${FILES[6]}")" ] || die "the Windows setup does not match its .sha256"
+  [ "$(sha256sum "$D/${FILES[9]}" | cut -c1-64)" = "$(cut -c1-64 "$D/${FILES[10]}")" ] || die "the Samsung TPK does not match its .sha256"
   # unsigned Windows files: Defender's machine-learning rules once took a build for a trojan, so nothing goes out
   # that Defender flags (rebuild, or report the false positive to Microsoft first)
   case "$(uname -s)" in MINGW*|MSYS*) bash "$ROOT/tools/windows/test/avscan.sh" "$D/${FILES[5]}" "$D/${FILES[7]}" || die "Defender flags a Windows file";;

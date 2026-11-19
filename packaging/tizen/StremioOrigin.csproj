@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The package's entry program: the picker (start/). It chooses the host for this TV by its Tizen version and starts
+       it: StremioOrigin.HostA.dll (Tizen 4.0-5.5, hosts/a), HostB (6.0), HostC (6.5), HostD (7 and later), built by
+       packaging/tizen/pack.sh into hostbin/ before this project and packed beside it. No host is referenced at compile time. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>tizen40</TargetFramework>
+    <RootNamespace>StremioOrigin.Start</RootNamespace>
+    <AssemblyName>StremioOrigin</AssemblyName>
+    <StartupObject>StremioOrigin.Start.Picker</StartupObject>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <Deterministic>true</Deterministic>
+    <PathMap>$(MSBuildProjectDirectory)=/src</PathMap>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="start/*.cs" />
+    <Content Include="hostbin/StremioOrigin.Host*.dll" Link="%(Filename)%(Extension)" CopyToOutputDirectory="Always" />
+    <PackageReference Include="Tizen.NET" Version="4.0.1.14164"><ExcludeAssets>Runtime</ExcludeAssets></PackageReference>
+    <PackageReference Include="Tizen.NET.Sdk" Version="1.1.9" />
+    <!-- Not used by the picker's code: listed so the package's dependency file names the same TV libraries as before the
+         picker existed (host A needs them; they come from the TV itself). -->
+    <PackageReference Include="Tizen.NET.TV" Version="4.4.0.1341"><ExcludeAssets>Runtime</ExcludeAssets></PackageReference>
+  </ItemGroup>
+</Project>

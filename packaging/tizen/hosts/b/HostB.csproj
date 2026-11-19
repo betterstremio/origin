@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Host B: Samsung TVs on Tizen 6.0 (../HostNui.cs built with HOST_B against that level's reference files). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>tizen80</TargetFramework>
+    <RootNamespace>StremioOrigin.Host</RootNamespace>
+    <AssemblyName>StremioOrigin.HostB</AssemblyName>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <TizenCreateTpkOnBuild>false</TizenCreateTpkOnBuild>
+    <DefineConstants>$(DefineConstants);HOST_B</DefineConstants>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <Deterministic>true</Deterministic>
+    <PathMap>$(MSBuildProjectDirectory)=/src</PathMap>
+    <NoWarn>$(NoWarn);CS0618;CS0612</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../HostNui.cs" />
+    <Compile Include="../../start/StartCode.cs" />
+    <Compile Include="../../start/Qr.cs" />
+    <Compile Include="../../start/FailLayout.cs" />
+    <PackageReference Include="Tizen.NET" Version="10.0.0.17508"><ExcludeAssets>Runtime</ExcludeAssets></PackageReference>
+    <PackageReference Include="Tizen.NET.Sdk" Version="1.1.9" />
+  </ItemGroup>
+</Project>

@@ -3,6 +3,7 @@
 #   tools/build.sh desktop [--run]    Linux, WSL or a Mac: for development and tests
 #   tools/build.sh webos              LG webOS
 #   tools/build.sh android [abi...]   Android, per CPU type (default: arm64-v8a armeabi-v7a x86)
+#   tools/build.sh tizen              Samsung Tizen TV (native library)
 #   tools/build.sh windows            Windows x64 (mingw-w64; tools/windows/build-deps.sh first)
 # Options: --clean   compile everything again (always for a release: object files are kept unless their source is newer)
 #          --clean-tp  compile only the third-party code again
@@ -93,9 +94,9 @@ build_one() {   # one target, or one CPU type of Android
 }
 
 case "$TARGET" in
-  desktop|webos|windows) ABI=""; build_one "$TARGET";;
+  desktop|webos|tizen|windows) ABI=""; build_one "$TARGET";;
   android) [ ${#ABIS[@]} -gt 0 ] || ABIS=(arm64-v8a armeabi-v7a x86); for ABI in "${ABIS[@]}"; do build_one android; done;;
-  *) echo "unknown target $TARGET (desktop, webos, android or windows)"; exit 1;;
+  *) echo "unknown target $TARGET (desktop, webos, android, tizen or windows)"; exit 1;;
 esac
 echo BUILD_OK
 [ $RUN = 1 ] && [ "$TARGET" = desktop ] && exec "$B/stremioorigin" "$ROOT/assets"

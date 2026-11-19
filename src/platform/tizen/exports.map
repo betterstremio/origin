@@ -1,0 +1,3 @@
+/* what libstremioorigin.so offers on Samsung: only the calls of the .NET host; everything else, the SDL and zlib
+   linked in among it, stays inside (no clash with a library of the TV's of the same name) */
+{ global: sb_host_*; local: *; };

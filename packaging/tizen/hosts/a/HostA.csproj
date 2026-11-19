@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Host A: Samsung TVs on Tizen 4.0 to 5.5. The host as it has always been (../../Program.cs), now a file of its
+       own beside the picker (StremioOrigin.dll), which starts it by its entry point. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>tizen40</TargetFramework>
+    <RootNamespace>StremioOrigin</RootNamespace>
+    <AssemblyName>StremioOrigin.HostA</AssemblyName>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <TizenCreateTpkOnBuild>false</TizenCreateTpkOnBuild>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <Deterministic>true</Deterministic>
+    <PathMap>$(MSBuildProjectDirectory)=/src</PathMap>
+    <DefineConstants Condition="'$(SbNetLog)' == 'true'">$(DefineConstants);SB_NETLOG</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../Program.cs" />
+    <Compile Include="../../StartTrace.cs" />
+    <Compile Include="../../FailText.cs" />
+    <Compile Include="../../TvKeyboard.cs" />
+    <Compile Include="../../start/StartCode.cs" />
+    <Compile Include="../../start/Qr.cs" />
+    <Compile Include="../../start/FailLayout.cs" />
+    <Compile Include="$(SbDevDir)/DevNet.cs" Condition="'$(SbNetLog)' == 'true'" />
+    <PackageReference Include="Tizen.NET" Version="4.0.1.14164"><ExcludeAssets>Runtime</ExcludeAssets></PackageReference>
+    <PackageReference Include="Tizen.NET.Sdk" Version="1.1.9" />
+    <PackageReference Include="Tizen.NET.TV" Version="4.4.0.1341"><ExcludeAssets>Runtime</ExcludeAssets></PackageReference>
+  </ItemGroup>
+</Project>

@@ -77,6 +77,9 @@ Origin then shows up in the Homebrew Channel app list and installs from there, w
 
 Or download the `.ipk` from [Releases](https://github.com/betterstremio/origin/releases) and install it on a TV in Developer Mode.
 
+### Samsung TVs (preview)
+A first Samsung build for Tizen 4 or later, not yet tested on a Samsung TV. You install it with Apps2Samsung in Developer Mode, and updates go on by hand. See the [Samsung guide](docs/tizen.md).
+
 ### Android TV, Google TV and Fire TV
 Android 7.0 or later, on ARM (64-bit or 32-bit). For phones, see the next section.
 
@@ -153,6 +156,7 @@ Code style: the C code follows `.clang-format` at the repo root, with clang-form
 - Collections and Nuvio accounts: the collection format, how sources resolve, and the account sign-in and sync follow [NuvioTVSmart](https://github.com/NuvioMedia/NuvioTVSmart) (GPL-3.0).
 - Interface sounds: [Interface Sounds](https://kenney.nl/assets/interface-sounds) by Kenney (CC0).
 - The glass look: [liquid-glass-react](https://github.com/rdev/liquid-glass-react) by rdev; the app ships a modified version.
+- Samsung TVs: the native backend and .NET hosts come from [Stremio Origin for Samsung](https://github.com/stremio-origin/tizen) (GPL-3.0), and the Tizen 4 to 5.5 host from [Nuvio Legacy](https://github.com/iqui27/nuvio-native-legacy) (GPL-3.0); the app ships modified versions.
 - Android video: [AndroidX Media3 / ExoPlayer](https://github.com/androidx/media) (Apache-2.0). Window and input: [SDL](https://libsdl.org) (zlib). Network: [curl](https://curl.se) with [Mbed TLS](https://github.com/Mbed-TLS/mbedtls).
 
 ## Licence

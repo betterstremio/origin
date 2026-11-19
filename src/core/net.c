@@ -7,6 +7,7 @@
 #include <string.h>
 #include <strings.h>
 #include <pthread.h>
+#include <stdint.h>
 #include <curl/curl.h>
 #include <SDL2/SDL.h>
 #if !SB_STATIC_CURL
@@ -789,25 +790,64 @@ unsigned char *net_fetch_sync(const char *url, size_t *len, int *status, int tim
 /* a thread that fetches many small things from the same few hosts (the picture workers) keeps one handle: a new TLS
    connection per poster took the TV's connections down when a long Home was scrolled (curl 7, couldn't connect).
    Bounded like the other kept handles. */
+#if SB_TPK
+static pthread_key_t keepKey, handleKey;
+static pthread_once_t netKeys = PTHREAD_ONCE_INIT;
+static int netKeysReady;
+static void net_keys_destroy_handle(void *handle) {
+  f_easy_cleanup(handle);
+}
+static void net_keys_init(void) {
+  if (pthread_key_create(&keepKey, NULL) == 0) {
+    if (pthread_key_create(&handleKey, net_keys_destroy_handle) == 0)
+      netKeysReady = 1;
+    else
+      pthread_key_delete(keepKey);
+  }
+}
+void net_keep_this_thread(void) {
+  pthread_once(&netKeys, net_keys_init);
+  if (netKeysReady)
+    pthread_setspecific(keepKey, (void *)(intptr_t)1);
+}
+static CURL *kept_handle(int *kept) {
+  pthread_once(&netKeys, net_keys_init);
+  *kept = netKeysReady && pthread_getspecific(keepKey) && f_easy_reset;
+  if (!*kept)
+    return f_easy_init();
+  CURL *handle = pthread_getspecific(handleKey);
+  if (handle) {
+    f_easy_reset(handle);
+  } else {
+    handle = f_easy_init();
+    if (handle && pthread_setspecific(handleKey, handle) != 0)
+      *kept = 0;
+  }
+  return handle;
+}
+#else
 static __thread int thKeep;
 static __thread CURL *thH;
 void net_keep_this_thread(void) {
   thKeep = 1;
 }
+static CURL *kept_handle(int *kept) {
+  *kept = thKeep && f_easy_reset;
+  if (!*kept)
+    return f_easy_init();
+  if (thH)
+    f_easy_reset(thH);
+  else
+    thH = f_easy_init();
+  return thH;
+}
+#endif
 unsigned char *net_fetch_sync_hdr(const char *url, const char *hdr, size_t *len, int *status, int timeoutMs) {
   Req r;
   memset(&r, 0, sizeof r);
   r.url = (char *)url;
-  int kept = thKeep && f_easy_reset;
-  CURL *c;
-  if (kept) {
-    c = thH;
-    if (c)
-      f_easy_reset(c);
-    else
-      c = thH = f_easy_init();
-  } else
-    c = f_easy_init();
+  int kept;
+  CURL *c = kept_handle(&kept);
   if (!c) {
     *status = 0;
     *len = 0;

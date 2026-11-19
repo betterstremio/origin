@@ -24,4 +24,10 @@ The Windows build adds (tools/windows/build-deps.sh fetches and pins them; they 
 - libsbengine.dll: the torrent engine above, built for Windows with tools/engine/windows.patch as well.
 - fallback/vulkan-1.dll: the Khronos Vulkan loader 1.4.304 (github.com/KhronosGroup/Vulkan-Loader), unmodified,
   Apache-2.0 (the same text as mbedtls-Apache-2.0.txt). Loaded only on a PC without a Vulkan loader of its own.
+The Samsung Tizen build adds:
+- The native backend and .NET host picker from github.com/stremio-origin/tizen at fdd1e6a30dfc42f19c845fe9ae1d9b09beda2311,
+  GPL-3.0, with changes for Origin. The legacy host (packaging/tizen/Program.cs) is adapted from Nuvio Legacy,
+  github.com/iqui27/nuvio-native-legacy, copyright its authors, GPL-3.0, modified.
+- SDL 2.30.12 (sdl2-zlib.txt) and zlib 1.3.1 (zlib-zlib.txt), built by tools/build-tizen-deps.sh and linked into
+  libstremioorigin.so. The torrent engine above is built for ARMv7 soft-float and shipped as libsbengine.so.
 The app itself is GPL-3.0.

@@ -20,6 +20,7 @@
 #include <strings.h>
 #include <math.h>
 #include <pthread.h>
+#include <stdint.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -57,8 +58,41 @@ typedef struct {
   short cpcFont[CPC_N];
 } FontSet;
 static FontSet mainSet;
+#if SB_TPK
+/* The Samsung host's fallback loader cannot initialise static TLS for this library. */
+static pthread_key_t fontSetKey, shapeRtlKey;
+static pthread_once_t textKeys = PTHREAD_ONCE_INIT;
+static void text_keys_init(void) {
+  pthread_key_create(&fontSetKey, NULL);
+  pthread_key_create(&shapeRtlKey, NULL);
+}
+static FontSet *thread_fonts(void) {
+  pthread_once(&textKeys, text_keys_init);
+  FontSet *set = pthread_getspecific(fontSetKey);
+  return set ? set : &mainSet;
+}
+static int thread_rtl(void) {
+  pthread_once(&textKeys, text_keys_init);
+  return (intptr_t)pthread_getspecific(shapeRtlKey) != 0;
+}
+static void text_set_fonts(FontSet *set) {
+  pthread_once(&textKeys, text_keys_init);
+  pthread_setspecific(fontSetKey, set);
+}
+static void set_thread_rtl(int rtl) {
+  pthread_once(&textKeys, text_keys_init);
+  pthread_setspecific(shapeRtlKey, (void *)(intptr_t)!!rtl);
+}
+#define FS (thread_fonts())
+#define shapeRtl (thread_rtl())
+#define SET_FS(set) text_set_fonts(set)
+#define SET_SHAPE_RTL(rtl) set_thread_rtl(rtl)
+#else
 static _Thread_local FontSet *FS;
 static _Thread_local int shapeRtl;
+#define SET_FS(set) (FS = (set))
+#define SET_SHAPE_RTL(rtl) (shapeRtl = (rtl))
+#endif
 #define fonts (FS->f)
 #define nfonts (FS->n)
 #define ft (FS->lib)
@@ -441,8 +475,8 @@ static double syncMs;
 static void text_take(void);
 int text_init(const char *assetDir, float surfaceScale) {
   char p[1024];
-  FS = &mainSet;
-  shapeRtl = uiRtl;
+  SET_FS(&mainSet);
+  SET_SHAPE_RTL(uiRtl);
   if (FT_Init_FreeType(&ft))
     return 0;
   sscale = surfaceScale;
@@ -469,7 +503,7 @@ int text_init(const char *assetDir, float surfaceScale) {
 }
 void text_set_rtl(int r) {
   uiRtl = !!r;
-  shapeRtl = uiRtl;
+  SET_SHAPE_RTL(uiRtl);
 }
 int text_rtl(void) {
   return uiRtl;
@@ -1269,7 +1303,7 @@ static void *text_worker(void *a) {
   plat_thread_background(4);
   (void)a;
   static FontSet ws;
-  FS = &ws;
+  SET_FS(&ws);
   if (FT_Init_FreeType(&ws.lib))
     return NULL;
   ws.inter = font_get(FAM_LATIN, 400);
@@ -1281,7 +1315,7 @@ static void *text_worker(void *a) {
     tqh = (tqh + 1) % TQ;
     tqn--;
     pthread_mutex_unlock(&tmu);
-    shapeRtl = q.rtl;
+    SET_SHAPE_RTL(q.rtl);
     int n;
     uint32_t *cps = to_cps(q.utf8, &n, 1);
     float sc = q.scale;

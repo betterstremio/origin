@@ -2,3 +2,5 @@ build/
 dist/
 *.o
 .DS_Store
+/packaging/tizen/**/bin/
+/packaging/tizen/**/obj/

@@ -5,13 +5,14 @@
   GET /releases         a GitHub-style release list of the APKs in <media>/rel/ (the updater test)
   GET /rel/<apk>        those APKs
   a libtorrent session seeding clip.mkv on TCP 6881
-Usage: serve.py <media dir> [http port] [peer address seen by the device]"""
+Usage: serve.py <media dir> [http port] [peer address seen by the device] [seed upload bytes/s]"""
 import hashlib, json, os, re, socket, struct, sys, threading, time
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
 MEDIA = sys.argv[1]; PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 8765
 PEER = sys.argv[3] if len(sys.argv) > 3 else '10.0.2.2'; SEED_PORT = 6881
+SEED_RATE = int(sys.argv[4]) if len(sys.argv) > 4 else 0
 hits = {}
 
 def bencode(x):
@@ -73,7 +74,7 @@ def seeder():
     try: import libtorrent as lt
     except ImportError: print('no libtorrent: P2P seeding off', flush=True); return
     s = lt.session({'alert_mask': lt.alert.category_t.error_notification | lt.alert.category_t.peer_notification | lt.alert.category_t.connect_notification, 'listen_interfaces': '0.0.0.0:%d' % SEED_PORT, 'enable_dht': False, 'enable_lsd': False, 'enable_upnp': False, 'enable_natpmp': False,
-                    'allow_multiple_connections_per_ip': True, 'upload_rate_limit': 0})
+                    'allow_multiple_connections_per_ip': True, 'upload_rate_limit': SEED_RATE})
     ti = lt.torrent_info(os.path.join(MEDIA, 'clip.torrent'))
     h = s.add_torrent({'ti': ti, 'save_path': MEDIA, 'flags': lt.torrent_flags.seed_mode})
     print('seeding %s on %d' % (ti.info_hash(), SEED_PORT), flush=True)

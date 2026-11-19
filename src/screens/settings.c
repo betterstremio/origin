@@ -454,9 +454,13 @@ static int about_opts(void) {
   aboutSeen = update_serial();
   if (av) {
     Setting *s = &supS[n++];
+#if SB_MANUAL_UPDATE
+    set_act(s, "__upd", T1("Version {v} is available", "v", av), T("Install the update with Apps2Samsung"));
+#else
     set_act(s, "__upd",
             st == UPD_INSTALLING ? T1("Installing version {v}…", "v", av) : T1("Install version {v}", "v", av),
             update_msg()[0] ? update_msg() : T("Downloads, checks and installs it; the app opens again by itself"));
+#endif
     s->raw = 1;
   }
   {

@@ -548,6 +548,11 @@ void update_install(void) {
   }
   if (U.state == UPD_INSTALLING)
     return;
+#if SB_MANUAL_UPDATE
+  snprintf(U.msg, sizeof U.msg, "%s", T("Install the update with Apps2Samsung"));
+  changed();
+  return;
+#endif
   U.state = UPD_INSTALLING;
   snprintf(U.msg, sizeof U.msg, "%s", T("Downloading…"));
   changed();
