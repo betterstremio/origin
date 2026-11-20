@@ -96,7 +96,7 @@ Settings and sign-in are kept in `%LOCALAPPDATA%\io.github.betterstremio.origin`
 <summary><b>Mac (beta)</b></summary>
 
 1. Open the DMG and drag Origin to Applications. It runs on Apple Silicon Macs (M1 and newer), not on Intel Macs.
-2. The app is not signed with an Apple Developer ID, so the first time you open it macOS says it cannot check it for malicious software. Open System Settings > Privacy & Security, scroll to Security, and choose Open Anyway next to Origin, then Open. On macOS 14 and older you can instead Control-click Origin in Applications and choose Open. Or run `xattr -dr com.apple.quarantine /Applications/Origin.app` in Terminal. To check a download, compare its SHA-256 with the `.sha256` file next to it in the release.
+2. The app is not signed with an Apple Developer ID. Before you open it the first time, open Terminal and run `xattr -dr com.apple.quarantine /Applications/Origin.app`. Without this, macOS may refuse to open it, and on macOS 26 even Open Anyway in System Settings can leave Origin bouncing in the Dock with no window. If that already happened, quit it first (Option-Command-Esc, Force Quit), then run the command. To check a download, compare its SHA-256 with the `.sha256` file next to it in the release.
 3. The keyboard stands in for the remote: arrows, Return and Escape, Space to play and pause. Command-F searches, Control-Command-F or F11 is fullscreen, and Command-Q quits.
 
 Settings and sign-in are kept in `~/Library/Application Support/io.github.betterstremio.origin`.
@@ -108,7 +108,7 @@ Settings and sign-in are kept in `~/Library/Application Support/io.github.better
 A first Samsung build, not yet run on a Samsung TV. You install it with Apps2Samsung on a TV in Developer Mode, and install updates the same way. It builds on Stremio Origin's Samsung port, which so far works best on TVs from about 2018 to 2020. See the [Samsung guide](docs/tizen.md).
 </details>
 
-**Updates:** Settings > About shows a new version when there is one. The app downloads it and checks its SHA-256 before installing. On Windows it closes, installs the new version and opens again. On a Mac it downloads the new DMG in your browser: drag Origin to Applications again to replace the old one.
+**Updates:** Settings > About shows a new version when there is one. The app downloads it and checks its SHA-256 before installing. On Windows it closes, installs the new version and opens again. On a Mac it downloads the new DMG in your browser: drag Origin to Applications again to replace the old one, then run the `xattr` command from step 2 again.
 
 ## Coming from 2.x or from Stremio Origin
 From 3.0.0 the app id is `io.github.betterstremio.origin`. Origin and Stremio Origin no longer replace each other, so both can be installed on one TV.
