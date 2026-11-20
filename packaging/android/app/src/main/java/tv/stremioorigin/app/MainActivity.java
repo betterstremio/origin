@@ -141,6 +141,7 @@ public class MainActivity extends SDLActivity {
             WindowManager.LayoutParams lp = a.getWindow().getAttributes();
             lp.screenBrightness = v < 0 ? WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE : Math.max(0.01f, Math.min(1f, v / 100f));
             a.getWindow().setAttributes(lp);
+            if (brightWant == v) brightWant = -2;   // applied: read the window again from now on
         });
     }
     static android.media.AudioManager audio(MainActivity a) { return (android.media.AudioManager) a.getSystemService(Context.AUDIO_SERVICE); }
@@ -163,6 +164,7 @@ public class MainActivity extends SDLActivity {
             int v = volWant; if (v < 0) return;
             int max = am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC);
             try { am.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, Math.round(v * max / 100f), 0); } catch (SecurityException e) { Log.w(TAG, "volume", e); }
+            if (volWant == v) volWant = -2;   // applied: the system's own level from now on (its volume keys move it too)
         });
         return 1;
     }
