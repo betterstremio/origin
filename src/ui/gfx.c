@@ -7,6 +7,9 @@
 #include <string.h>
 #include <math.h>
 #include <SDL2/SDL.h>
+#if SB_VIDEO_UNDER
+#include "core/video.h"
+#endif
 
 /* ---- vertex stream -----------------------------------------------------------------------
    One vertex layout for every shader: position (layout units), uv, colour, the rectangle the
@@ -538,6 +541,9 @@ void gfx_begin(uint32_t c) {
 void gfx_end(void) {
   gfx_flush();
   glDisable(GL_SCISSOR_TEST);
+#if SB_VIDEO_UNDER
+  video_frame_under();
+#endif
 }
 
 /* ---- quads ------------------------------------------------------------------------------- */
@@ -915,6 +921,35 @@ void gfx_hole(float x, float y, float w, float h, float r, float a) {
   gfx_flush();
   glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 }
+#if SB_VIDEO_UNDER
+/* "under": the picture adds only what the frame lets through (its colours are kept premultiplied by the blending
+   above, holes included), and the result is opaque */
+void gfx_under(GLuint tex, float x, float y, float w, float h, float u0, float v0, float u1, float v1) {
+  gfx_flush();
+  glBlendFuncSeparate(GL_ONE_MINUS_DST_ALPHA, GL_ONE, GL_ONE, GL_ONE);
+  gfx_image(tex, x, y, w, h, 0, RGBA(255, 255, 255, 255), u0, v0, u1, v1); /* (mpv draws it the right way up) */
+  gfx_flush();
+  glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+}
+void gfx_restore_state(void) {
+  glViewport(vpX, vpY, vpW, vpH);
+  glDisable(GL_DEPTH_TEST);
+  glDisable(GL_CULL_FACE);
+  glDisable(GL_SCISSOR_TEST);
+  if (blendOn)
+    glEnable(GL_BLEND);
+  else
+    glDisable(GL_BLEND);
+  glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+  glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+  for (GLuint i = 0; i < 8; i++)
+    glDisableVertexAttribArray(i); /* (use() turns on the ones each program reads) */
+  glActiveTexture(GL_TEXTURE0); /* (the program and the texture are bound again at each flush: a batch under way keeps
+                                   its own) */
+  glBindBuffer(GL_ARRAY_BUFFER, vbos[vboCur]);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+}
+#endif
 void gfx_rrect_v(float x, float y, float w, float h, float r, uint32_t t, uint32_t b) {
   if ((invisible(t) && invisible(b)) || clipped_out(x, y, w, h))
     return;
@@ -993,7 +1028,8 @@ static struct {
   int w, h, ch;
   long bytes; /* its real size (a compressed picture is not w * h * ch) */
   int comp; /* compressed: never pooled (the pool matches raw sizes) */
-  float corner; /* a picture without corners of its own: the radius in texture pixels gfx_image rounds it with (0: none) */
+  float corner; /* a picture without corners of its own: the radius in texture pixels gfx_image rounds it with (0: none)
+                 */
 } treg[TREG];
 static void treg_add_b(GLuint t, int w, int h, int ch, long bytes, int comp) {
   if (!t)
@@ -1331,7 +1367,8 @@ void gfx_image(GLuint tex, float x, float y, float w, float h, float r, uint32_t
     if (f < 1)
       tint = col_alpha(tint, f);
   }
-  if (r <= 0) { /* a picture kept without its corners (ETC RGB): rounded here, by the radius registered with it, scaled to the size it is drawn at */
+  if (r <= 0) { /* a picture kept without its corners (ETC RGB): rounded here, by the radius registered with it, scaled
+                   to the size it is drawn at */
     int ti = treg_find(tex);
     if (ti >= 0 && treg[ti].corner > 0 && treg[ti].w > 0) {
       float su = u1 > u0 ? u1 - u0 : u0 - u1;

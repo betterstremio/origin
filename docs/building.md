@@ -1,6 +1,6 @@
 # Building
 
-One codebase serves every platform, and each package carries only its own platform's code. `src/platform/<target>/target.h` says what a package has, and `tools/targets/<target>.sh` how it is compiled. Everything builds in Linux or WSL; `tools/paths.sh` says where the toolchains, keys and build folders are.
+One codebase serves every platform, and each package carries only its own platform's code. `src/platform/<target>/target.h` says what a package has, and `tools/targets/<target>.sh` how it is compiled. Everything builds in Linux or WSL except the macOS package, which is made on a Mac; `tools/paths.sh` says where the toolchains, keys and build folders are.
 
 ```
 tools/build.sh desktop                         # a development build for Linux, WSL or a Mac
@@ -16,8 +16,13 @@ tools/windows/build-deps.sh                    # Windows: SDL2, curl with Schann
 tools/build-engine.sh windows                  # the P2P engine as libsbengine.dll
 tools/build.sh windows                         # Origin.exe (mingw-w64)
 packaging/windows/pack.sh                      # the Windows setup (NSIS) and portable zip
+tools/macos/build-deps.sh                      # macOS, on a Mac: SDL2.framework, libmpv, OpenSSL for the engine
+tools/build-engine.sh mac                      # the P2P engine as libsbengine.dylib
+tools/build.sh macos                           # the Origin binary (Apple Silicon, macOS 11 or later)
+packaging/macos/pack.sh                        # Origin.app in a DMG, signed ad hoc
 
 tools/release.sh build X.Y.Z                   # every package from empty folders, into dist/X.Y.Z
+tools/release.sh mac X.Y.Z                     # on a Mac, the same commit: the DMG, then copied into that dist/X.Y.Z
 ```
 
 Android tests on the emulator: `python tools/android/test/run.py --build` (after `tools/android/test/media.sh`). The script's header says what it needs.

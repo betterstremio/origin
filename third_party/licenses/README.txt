@@ -30,4 +30,11 @@ The Samsung Tizen build adds:
   github.com/iqui27/nuvio-native-legacy, copyright its authors, GPL-3.0, modified.
 - SDL 2.30.12 (sdl2-zlib.txt) and zlib 1.3.1 (zlib-zlib.txt), built by tools/build-tizen-deps.sh and linked into
   libstremioorigin.so. The torrent engine above is built for ARMv7 soft-float and shipped as libsbengine.so.
+The macOS build adds (tools/macos/build-deps.sh fetches and pins them; they are not in third_party/):
+- SDL 2.32.10 (sdl2-zlib.txt): SDL2.framework, unmodified, as SDL releases it.
+- libmpv.dylib with FFmpeg and the libraries it loads: mpv 0.36.0, unmodified, as built by
+  github.com/media-kit/libmpv-darwin-build (release v0.7.3, "video-full"); LGPL-2.1 or later as built
+  (ffmpeg-LGPL-2.1.txt). Sources: mpv-macos-SOURCE.txt.
+- libsbengine.dylib: the torrent engine above, built for macOS, with OpenSSL 3 (Apache-2.0, the same text as
+  mbedtls-Apache-2.0.txt) linked in.
 The app itself is GPL-3.0.

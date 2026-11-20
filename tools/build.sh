@@ -1,6 +1,7 @@
 #!/bin/bash
 # The one compile script, for every package:
 #   tools/build.sh desktop [--run]    Linux, WSL or a Mac: for development and tests
+#   tools/build.sh macos              macOS on Apple Silicon (the binary in Origin.app; packaging/macos/pack.sh)
 #   tools/build.sh webos              LG webOS
 #   tools/build.sh android [abi...]   Android, per CPU type (default: arm64-v8a armeabi-v7a x86)
 #   tools/build.sh tizen              Samsung Tizen TV (native library)
@@ -19,7 +20,8 @@ for a in "$@"; do case "$a" in --run) RUN=1;; --clean) CLEAN=1;; --clean-tp) CLE
 
 run_cmds() {   # a file of shell commands, one per line, run in parallel
   [ -s "$1" ] || return 0
-  tr '\n' '\0' < "$1" | xargs -0 -P "$JOBS" -I{} sh -c '{}' || { echo "COMPILE FAILED ($TARGET: $2)"; exit 1; }
+  # (each line as an argument, not -I{}: BSD xargs, the Mac's, refuses a replacement longer than 255 bytes)
+  tr '\n' '\0' < "$1" | xargs -0 -n 1 -P "$JOBS" sh -c 'eval "$1"' sh || { echo "COMPILE FAILED ($TARGET: $2)"; exit 1; }
 }
 
 third_party() {
@@ -94,9 +96,9 @@ build_one() {   # one target, or one CPU type of Android
 }
 
 case "$TARGET" in
-  desktop|webos|tizen|windows) ABI=""; build_one "$TARGET";;
+  desktop|macos|webos|tizen|windows) ABI=""; build_one "$TARGET";;
   android) [ ${#ABIS[@]} -gt 0 ] || ABIS=(arm64-v8a armeabi-v7a x86); for ABI in "${ABIS[@]}"; do build_one android; done;;
-  *) echo "unknown target $TARGET (desktop, webos, android, tizen or windows)"; exit 1;;
+  *) echo "unknown target $TARGET (desktop, macos, webos, android, tizen or windows)"; exit 1;;
 esac
 echo BUILD_OK
 [ $RUN = 1 ] && [ "$TARGET" = desktop ] && exec "$B/stremioorigin" "$ROOT/assets"

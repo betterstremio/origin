@@ -81,9 +81,13 @@ set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
 T
 else
-TCX=()
+TCX=()   # (empty arrays below are written ${A[@]+"${A[@]}"}: macOS's bash 3.2 calls them unbound under set -u)
 printf '#!/bin/sh\nexec "%s" cc %s "$@"\n' "$ZIG" "$ZT" > "$TC/cc"; printf '#!/bin/sh\nexec "%s" c++ %s "$@"\n' "$ZIG" "$ZT" > "$TC/c++"
 printf '#!/bin/sh\nexec "%s" ar "$@"\n' "$ZIG" > "$TC/ar"; printf '#!/bin/sh\nexec "%s" ranlib "$@"\n' "$ZIG" > "$TC/ranlib"
+if [ "$TARGET" = mac ]; then   # Apple's compiler: the macOS SDK's frameworks, and the macOS package's oldest system (not this Mac's)
+  printf '#!/bin/sh\nexec clang -arch arm64 -mmacosx-version-min=11.0 "$@"\n' > "$TC/cc"; printf '#!/bin/sh\nexec clang++ -arch arm64 -mmacosx-version-min=11.0 "$@"\n' > "$TC/c++"
+  printf '#!/bin/sh\nexec ar "$@"\n' > "$TC/ar"; printf '#!/bin/sh\nexec ranlib "$@"\n' > "$TC/ranlib"
+fi
 chmod 755 "$TC/cc" "$TC/c++" "$TC/ar" "$TC/ranlib"
 cat > "$TC/toolchain.cmake" <<T
 set(CMAKE_SYSTEM_NAME $SYS)
@@ -100,7 +104,7 @@ T
 fi
 B="$W/build-$TARGET"
 SSL=(-DCMAKE_DISABLE_FIND_PACKAGE_OpenSSL=ON); SSLLIB=()
-if [ "$TARGET" = mac ]; then OSSL="$(brew --prefix openssl@3)"; SSL=(-DOPENSSL_ROOT_DIR="$OSSL"); SSLLIB=("$OSSL/lib/libssl.a" "$OSSL/lib/libcrypto.a"); export PKG_CONFIG_PATH="$OSSL/lib/pkgconfig"; fi   # the engine needs it on macOS (system trust store)
+if [ "$TARGET" = mac ]; then OSSL="${ENGINE_OPENSSL:-$MB/openssl}"; [ -f "$OSSL/lib/libssl.a" ] || OSSL="$(brew --prefix openssl@3)"; SSL=(-DOPENSSL_ROOT_DIR="$OSSL"); SSLLIB=("$OSSL/lib/libssl.a" "$OSSL/lib/libcrypto.a"); export PKG_CONFIG_PATH="$OSSL/lib/pkgconfig"; fi   # the engine needs it on macOS (system trust store)
 FL="-ffunction-sections -fdata-sections -fvisibility=hidden -fvisibility-inlines-hidden -D_LARGEFILE64_SOURCE -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64 -ffile-prefix-map=$W=/engine -ffile-prefix-map=$HOME=/src -ffile-prefix-map=$ROOT=/app"   # no local paths in the library (source names in asserts)
 if [[ "$TARGET" == android-* ]]; then FL="$FL -fexperimental-library"; fi   # the NDK's libc++ 18 keeps std::stop_token behind it
 if [ "$TARGET" = windows ]; then FL="$FL -DESTALE=10070"; fi   # (mingw has no ESTALE: Winsock's WSAESTALE; it only marks a vanished drive)
@@ -109,7 +113,7 @@ CXXFL="$FL"
 if [ "$TARGET" = windows ]; then CXXFL="$CXXFL -fno-declone-ctor-dtor"; fi   # GCC 16 can leave unresolved C4 symbols when decloning
 [ "$TARGET" = mac ] && [ -n "${ENGINE_MAC_PREBUILT:-}" ] || cmake -S "$SRC" -B "$B" -G Ninja -DNUVIO_ENGINE_ENABLE_LIBTORRENT=ON -DNUVIO_ENGINE_BUILD_TESTS=OFF \
   -DFETCHCONTENT_SOURCE_DIR_NUVIO_BOOST="$DEPS/nuvio_boost-src" -DFETCHCONTENT_SOURCE_DIR_NUVIO_LIBTORRENT="$DEPS/nuvio_libtorrent-src" \
-  -DCMAKE_TOOLCHAIN_FILE="$TC/toolchain.cmake" "${TCX[@]}" -DCMAKE_BUILD_TYPE=MinSizeRel -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+  -DCMAKE_TOOLCHAIN_FILE="$TC/toolchain.cmake" ${TCX[@]+"${TCX[@]}"} -DCMAKE_BUILD_TYPE=MinSizeRel -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
   "${SSL[@]}" -DCMAKE_DISABLE_FIND_PACKAGE_GnuTLS=ON -DCMAKE_DISABLE_FIND_PACKAGE_LibGcrypt=ON \
   -DCMAKE_C_FLAGS="$FL" -DCMAKE_CXX_FLAGS="$CXXFL" >/dev/null
 if [ "$TARGET" = mac ] && [ -n "${ENGINE_MAC_PREBUILT:-}" ]; then B="$ENGINE_MAC_PREBUILT"   # the Mac preview only: archives built earlier (Homebrew's newer OpenSSL no longer compiles the pinned libtorrent)
@@ -140,7 +144,7 @@ elif [[ "$TARGET" == android-* ]]; then
     "$B/libnuvio_engine.a" "$LT" -Wl,--gc-sections -Wl,--version-script="$TC/exports.map" -Wl,--strip-all -Wl,-soname,libsbengine.so -static-libstdc++ -Wl,-z,max-page-size=16384 -o "$OUT"
 else
   "$TC/c++" -std=c++20 -Os $FL -shared -I"$SRC/include" -I"$ROOT/src" "$ROOT/tools/engine/sbengine.cpp" \
-    "$B/libnuvio_engine.a" "$LT" "${SSLLIB[@]}" -framework Security -framework CoreFoundation -framework SystemConfiguration \
-    -Wl,-dead_strip -o "$OUT"
+    "$B/libnuvio_engine.a" "$LT" ${SSLLIB[@]+"${SSLLIB[@]}"} -framework Security -framework CoreFoundation -framework SystemConfiguration \
+    -Wl,-dead_strip -Wl,-exported_symbol,_sbe_get -Wl,-install_name,@rpath/libsbengine.dylib -Wl,-x -o "$OUT"   # (sbe_get alone; no path of this Mac inside)
 fi
 ls -l "$OUT"

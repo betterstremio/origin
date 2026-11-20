@@ -1,6 +1,6 @@
 <p align="center"><img src="docs/banner.png" width="640" alt="Origin"></p>
 
-<p align="center">A fast, native app for your Stremio and Nuvio accounts and addons, written in C.<br>For LG webOS TVs, Android TV, Google TV, Fire TV, Android phones (beta), Windows and Samsung TVs (preview).</p>
+<p align="center">A fast, native app for your Stremio and Nuvio accounts and addons, written in C.<br>For LG webOS TVs, Android TV, Google TV, Fire TV, Android phones (beta), Windows, Macs (beta) and Samsung TVs (preview).</p>
 
 <p align="center"><a href="https://github.com/betterstremio/origin/releases/latest"><b>Download</b></a> · <a href="https://betterstremio.github.io/">Website</a> · <a href="docs/releases/3.0.0.md">What's new in 3.0.0</a> · <a href="https://github.com/betterstremio/origin/issues">Issues</a></p>
 
@@ -47,6 +47,7 @@ Get the file for your device from [the latest release](https://github.com/better
 | Fire TV sticks, older boxes | `_android-armv7.apk` | Android 7.0 or later |
 | Android phones and tablets (beta) | `_android-phone-beta.apk` | Android 7.0 or later |
 | Windows PC | `_windows_setup.exe`, or `_windows_portable.zip` | Windows 10 or 11, 64-bit |
+| Mac (beta) | `_macos-arm64.dmg` | Apple Silicon (M1 or newer), macOS 11 or later |
 | Samsung TV (preview, not yet run on a Samsung TV) | `_tizen-beta.tpk` | Tizen 4 or later |
 
 `_android.apk` holds both Android CPU types and works on any of them.
@@ -92,12 +93,22 @@ Settings and sign-in are kept in `%LOCALAPPDATA%\io.github.betterstremio.origin`
 </details>
 
 <details>
+<summary><b>Mac (beta)</b></summary>
+
+1. Open the DMG and drag Origin to Applications. It runs on Apple Silicon Macs (M1 and newer), not on Intel Macs.
+2. The app is not signed with an Apple Developer ID, so the first time you open it macOS says it cannot check it for malicious software. Open System Settings > Privacy & Security, scroll to Security, and choose Open Anyway next to Origin, then Open. On macOS 14 and older you can instead Control-click Origin in Applications and choose Open. Or run `xattr -dr com.apple.quarantine /Applications/Origin.app` in Terminal. To check a download, compare its SHA-256 with the `.sha256` file next to it in the release.
+3. The keyboard stands in for the remote: arrows, Return and Escape, Space to play and pause. Command-F searches, Control-Command-F or F11 is fullscreen, and Command-Q quits.
+
+Settings and sign-in are kept in `~/Library/Application Support/io.github.betterstremio.origin`.
+</details>
+
+<details>
 <summary><b>Samsung TVs (preview)</b></summary>
 
 A first Samsung build, not yet run on a Samsung TV. You install it with Apps2Samsung on a TV in Developer Mode, and install updates the same way. It builds on Stremio Origin's Samsung port, which so far works best on TVs from about 2018 to 2020. See the [Samsung guide](docs/tizen.md).
 </details>
 
-**Updates:** Settings > About shows a new version when there is one. The app downloads it and checks its SHA-256 before installing. On Windows it closes, installs the new version and opens again.
+**Updates:** Settings > About shows a new version when there is one. The app downloads it and checks its SHA-256 before installing. On Windows it closes, installs the new version and opens again. On a Mac it downloads the new DMG in your browser: drag Origin to Applications again to replace the old one.
 
 ## Coming from 2.x or from Stremio Origin
 From 3.0.0 the app id is `io.github.betterstremio.origin`. Origin and Stremio Origin no longer replace each other, so both can be installed on one TV.
@@ -121,7 +132,7 @@ From 3.0.0 the app id is `io.github.betterstremio.origin`. Origin and Stremio Or
 
 **Everywhere:** made for a remote: the arrows, OK and Back do everything. 11 languages, including Arabic (right to left). Collections imported from your phone, in the Catalogue tab. Updates from inside the app.
 
-**Per platform:** webOS: DTS converted on the TV, an optional USB drive for P2P, and casting from your phone. Android: DTS and TrueHD where the device decodes them or passes them to a receiver. Windows: mouse and keyboard (type on Home to search, F11 for fullscreen), a layout that fits the window, DTS and TrueHD played by the app itself, and 5.1 or 7.1 folded down to stereo for headphones without clipping.
+**Per platform:** webOS: DTS converted on the TV, an optional USB drive for P2P, and casting from your phone. Android: DTS and TrueHD where the device decodes them or passes them to a receiver. Windows: mouse and keyboard (type on Home to search, F11 for fullscreen), a layout that fits the window, DTS and TrueHD played by the app itself, and 5.1 or 7.1 folded down to stereo for headphones without clipping. Mac (beta): the same as Windows, with the Command key where Windows has Ctrl, and hardware decoding with VideoToolbox.
 
 ## Set up For You
 Recommendations need your own free [TMDB](https://www.themoviedb.org/settings/api) API key. If you sign in with Nuvio and saved a TMDB key there, Origin uses it. Otherwise add it under Settings > For You > TMDB key: on a TV from your phone, on Windows by copying the key and pressing OK on that row. Trakt is optional and adds ratings and reviews, with your own client id. No keys are built into the app.
@@ -133,6 +144,7 @@ Recommendations need your own free [TMDB](https://www.themoviedb.org/settings/ap
 | Android TV | Google TV emulator (Android 14), and the 32-bit build through Android's ARM translation. Not yet on a real TV box or Fire TV stick |
 | Android phones | Emulators and one tablet |
 | Windows | One PC (Windows 11, NVIDIA RTX 5080, 4K at 240 Hz) and Windows' software renderer. Not yet on Intel or AMD graphics |
+| Mac | One MacBook Air (M1, 8 GB, macOS 26). Not yet on macOS 11 to 15 |
 | Samsung | Not run on a Samsung TV yet |
 
 Reports are welcome, with your device and system version: [Issues](https://github.com/betterstremio/origin/issues).

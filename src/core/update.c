@@ -550,7 +550,13 @@ void update_install(void) {
   }
   if (U.state == UPD_INSTALLING || U.state == UPD_CHECKING)
     return; /* (a check under way may still change what is offered) */
-#if SB_MANUAL_UPDATE
+#if SB_UPDATE_IN_BROWSER /* (macOS: the DMG downloads in the browser; the user drags the new app over the old one) */
+  snprintf(U.msg, sizeof U.msg, "%s",
+           plat_open_url(U.avail.url) ? T("Downloading in your browser: open it and drag Origin to Applications")
+                                      : T("The update failed"));
+  changed();
+  return;
+#elif SB_MANUAL_UPDATE
   snprintf(U.msg, sizeof U.msg, "%s", T("Install the update with Apps2Samsung"));
   changed();
   return;
