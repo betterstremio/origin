@@ -20,6 +20,10 @@
 #define SB_STATIC_CURL 1 /* the system's libcurl, linked */
 #define SB_CACHE_MB 400
 #define SB_IMG_BUDGET_MB 96
+#define SB_UP_BUDGET_KB \
+  4096 /* a desktop GPU takes RGBA uploads at GB/s: the TV's 320 KB a frame (sized for its CPU-side texel swizzle and
+          4-8x smaller ETC pictures) let only about one RGBA poster go up per frame, so rows filled slowly */
+#define SB_UP_PER_FRAME 32 /* (the 3 ms a frame cap in pump_loads still holds) */
 #define SB_MANUAL_UPDATE 1 /* an unsigned app cannot replace itself quietly: the new DMG opens in the browser */
 #define SB_UPDATE_IN_BROWSER 1
 #define SB_CRASH_TO_SYSTEM 1 /* a crash is logged, then handed to the system (its crash reporter) */
