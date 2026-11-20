@@ -780,6 +780,9 @@ void subs_list(const char *type, const char *vid, void (*cb)(SubEntry *, int, in
 /* ---- the addons' lists: every installed subtitles addon for this video, asked with the file's hash, size and name
    when known (/subtitles/{type}/{id}/videoHash=..&videoSize=..&filename=...json); the subtitles the stream carries
    first. The built-in list above is never mixed in. ---- */
+/* subtitle addons asked per video: 16, not ADDONS_MAX, since find_add's duplicate check compares every new file with
+   all kept so far on the player's thread (64 addons of 400 files each would stall a weak TV) */
+#define SUBS_ADDONS_MAX 16
 typedef struct {
   char name[64], base[ADDON_URL_MAX];
   int from, order;
@@ -787,7 +790,7 @@ typedef struct {
 struct FindQ {
   unsigned tok;
   SubQuery q;
-  FindSrc src[16];
+  FindSrc src[SUBS_ADDONS_MAX];
   int nsrc, pending, nok;
   SubEntry *all;
   int n, cap;
@@ -967,8 +970,12 @@ void subs_find(const SubQuery *q, const SubEntry *own, int nown, void (*cb)(SubE
   if (a)
     cJSON_ArrayForEach(ad, a) {
       order++;
-      if (f->nsrc >= 16 || !addon_serves_subs(ad, q->type, q->vid))
+      if (!addon_serves_subs(ad, q->type, q->vid))
         continue;
+      if (f->nsrc >= SUBS_ADDONS_MAX) {
+        fprintf(stderr, "[subs] more than %d subtitle addons: the rest are not asked\n", SUBS_ADDONS_MAX);
+        break;
+      }
       FindSrc *s = &f->src[f->nsrc++];
       snprintf(s->name, sizeof s->name, "%s", addon_name(ad));
       addon_base(ad, s->base, sizeof s->base);

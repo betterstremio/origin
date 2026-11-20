@@ -431,7 +431,7 @@ static struct {
       Mo fa, bh, ia;
       float bhT;
       int leaving, seen, touched;
-    } g[16];
+    } g[ADDONS_MAX];
     int ng, on;
   } srcs; /* fa: how open its list is (alpha, slide), bh: its list's height as laid out now, ia: its rows fading in as
              they come */
@@ -3537,8 +3537,8 @@ static void srcs_begin(const char *vid) {
   srcs_free();
   snprintf(P.srcs.vid, sizeof P.srcs.vid, "%s", vid);
   P.srcs.on = 1;
-  char names[16][96];
-  int n = sb_stream_addons(P.type, vid, names, 16);
+  char names[ADDONS_MAX][96];
+  int n = sb_stream_addons(P.type, vid, names, ADDONS_MAX);
   for (int i = 0; i < n; i++) {
     snprintf(P.srcs.g[i].name, sizeof P.srcs.g[i].name, "%s", names[i][0] ? names[i] : T("Addon"));
     P.srcs.g[i].open = 1;

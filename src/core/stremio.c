@@ -2617,7 +2617,7 @@ typedef struct {
   void *ud;
   cJSON *own;
   int bg, nids;
-  unsigned ids[24];
+  unsigned ids[ADDONS_MAX];
 } StreamReq;
 /* previews: the requests still out (to cancel), and the addons that gave no answer twice running (left out 10 min) */
 static StreamReq *bgLive[8];
@@ -2852,7 +2852,7 @@ static unsigned streams_req(const char *type, const char *vid, int only, StreamP
                           : net_get_timeout(url, 45000, on_streams,
                                             p); /* slow debrid addons can take 20-30 s: the phone and PC apps wait as
                                                    long (a preview: 5 s, it would be too late anyway) */
-      if (r->nids < 24)
+      if (r->nids < ADDONS_MAX)
         r->ids[r->nids++] = id;
     }
   r->count = r->pending;

@@ -9,6 +9,9 @@
 /* the longest addon address kept: some addons carry their whole setup in it (Meteor: the debrid key, languages and
    filters as base64, often 600-1500 characters); a shorter cut sent them a broken setup (issue #5) */
 #define ADDON_URL_MAX 2048
+/* the most addons one title's stream list and the player's Sources show: far past any real account (issue #18: the
+   list held 23 and Sources 16, and the answers of the rest were thrown away) */
+#define ADDONS_MAX 64
 
 /* the addon answers /{resource}/{type}/{id} (switched on here, its manifest's rules); id NULL: any id */
 int addon_serves(const cJSON *ad, const char *resource, const char *type, const char *id);
