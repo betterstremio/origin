@@ -320,5 +320,9 @@
 "Lock": "Lock",
 "Screen locked": "Screen locked",
 "Tap to unlock": "Tap to unlock",
-"Fill": "Fill"
+"Fill": "Fill",
+"Pinch out for Zoom, in for Original": "Pinch out for Zoom, in for Original",
+"Pinch in for Fill": "Pinch in for Fill",
+"Pinch out for Fill": "Pinch out for Fill",
+"Fixed": "Fixed"
 }

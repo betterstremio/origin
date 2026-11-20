@@ -930,10 +930,12 @@ int main(int argc, char **argv) {
           app_key(k, e.type == SDL_KEYDOWN, e.key.repeat);
       } else if (e.type == SDL_TEXTINPUT)
         app_text(e.text.text);
-      else if (form_touch() && (e.type == SDL_APP_WILLENTERBACKGROUND || e.type == SDL_APP_DIDENTERBACKGROUND))
+      else if (form_touch() && (e.type == SDL_APP_WILLENTERBACKGROUND || e.type == SDL_APP_DIDENTERBACKGROUND)) {
         phone_peek_shut_now(); /* a phone sent away: the card and its preview are gone when it comes back */
-      else if (form_touch() && (e.type == SDL_FINGERDOWN || e.type == SDL_FINGERMOTION ||
-                                e.type == SDL_FINGERUP)) { /* a phone's finger, in window coordinates */
+        if (player_open())
+          player_touch_cancel(); /* (and what a finger on the film started: a hold, a swipe, a tap waiting) */
+      } else if (form_touch() && (e.type == SDL_FINGERDOWN || e.type == SDL_FINGERMOTION ||
+                                  e.type == SDL_FINGERUP)) { /* a phone's finger, in window coordinates */
         if (script)
           continue;
         int ww, wh;

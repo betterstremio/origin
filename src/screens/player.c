@@ -37,6 +37,7 @@
 #include "platform/plat.h"
 #include "ui/nerds.h"
 #include <math.h>
+#include <SDL2/SDL.h>
 
 /* ---- the stream's text, read for the info chips: resolution, HDR, audio ---- */
 static void lower(const char *s, char *out, size_t cap) {
@@ -495,6 +496,23 @@ static struct {
   Nudge nudge;
   double nameAt;
 } P;
+/* a phone's gestures that outlive a touch event: what waits, is held or still shows (the touch code is with TP, near
+   the end of the file; P starts over per film, this is dropped by player_touch_cancel()) */
+static struct {
+  unsigned tapAt; /* a tap on a side third that changes the controls waits out the double-tap window: when it lifted */
+  int tapShow; /* ... and what it will do: 1 bring the controls in, 0 take them out */
+  int arm, holdOn; /* a finger on the film that may turn into a hold or a swipe; the 2x hold in force */
+  int swKind; /* this finger: 0 not decided, 1 brightness, 2 volume, -1 neither */
+  int swOn, swFixed, swPct, swDirty, swSide, brSet;
+  float swY0, swLv0;
+  double hudUntil;
+  int pinch, pinchDone; /* two fingers down; the step made, nothing more until they lift */
+  float pinchSpan0;
+  int rpSide; /* the double-tap ripple: -1 left, 1 right */
+  char rpTot[32], rpTime[16], toL1[32], toL2[64];
+  double rpUntil, toUntil;
+  Mo rpA, rpG, hudA, chipA, toA;
+} GS;
 static MkvSession *mkv; /* the subtitle reader of the stream playing (outside P: P starts over per source) */
 static unsigned p2pTok;
 static void close_player(int goNext, int goSim);
@@ -2870,14 +2888,21 @@ static void apply_aspect(void) {
   if (!video_set_crop(sx, sy, sw, sh, dx, dy, dw, dh))
     video_set_window(fx, fy, fw, fh); /* no crop on this TV: the picture stays whole */
 }
-static void next_aspect(void) {
+static int aspect_index(void) {
   static const char *A[3] = { "fit", "fill", "zoom" };
-  static const char *N[3] = { "Original", "Fill the screen", "Zoom" };
-  int i = 0;
   for (int k = 0; k < 3; k++)
     if (!strcmp(A[k], P.aspect))
-      i = k;
-  int n = (i + 1) % 3;
+      return k;
+  return 0;
+}
+/* the size by its name ("fit", "fill" or "zoom"): kept for the title and applied */
+static void set_aspect(const char *name) {
+  static const char *A[3] = { "fit", "fill", "zoom" };
+  static const char *N[3] = { "Original", "Fill the screen", "Zoom" };
+  int n = 0;
+  for (int k = 0; k < 3; k++)
+    if (!strcmp(A[k], name))
+      n = k;
   char key[96];
   aspect_key(key, sizeof key);
   snprintf(P.aspect, sizeof P.aspect, "%s", A[n]);
@@ -2890,6 +2915,10 @@ static void next_aspect(void) {
     snprintf(P.btns[b].lb, 48, "%s", T(N[n]));
     P.btns[b].lw = text_width(P.btns[b].lb, 24, 700, 0) + 22;
   } /* the button names the mode it is in */
+}
+static void next_aspect(void) {
+  static const char *A[3] = { "fit", "fill", "zoom" };
+  set_aspect(A[(aspect_index() + 1) % 3]);
 }
 
 /* ---- prompts: skip intro / recap, the credits card ---- */
@@ -5179,6 +5208,9 @@ static void draw_tray(void);
 static float tdp(void);
 static void ph_shades(void);
 static void ph_osd_draw(void);
+static void ph_gest_draw(void);
+static void ph_gest_tick(float dt);
+static void ph_gest_restore(void);
 /* another source or episode from inside the player: the controls as they are on screen at that moment, taken ONCE as
    a picture, fade off as the controls do (.2 s) while the art comes back over them (.45 s); freed once gone */
 static GfxTarget handSnap;
@@ -5210,6 +5242,11 @@ static void prepare(const char *vid, double startAt, int keepSubs) {
   resumeMsg[0] = 0;
   loadGen++;
   int again = P.open;
+  if (form_touch()) {
+    player_touch_cancel();
+    if (!again || strcmp(vid, P.vid))
+      ph_gest_restore(); /* (another film: the system's brightness again; the same one loaded again keeps the user's) */
+  }
   char type[16];
   snprintf(type, sizeof type, "%s", P.type);
   float artWas = again ? P.artA.v : 1; /* the art comes back from where it is (the page's .45 s), never at once */
@@ -5792,6 +5829,10 @@ static void close_player(int goNext, int goSim) {
     bestTok = 0;
   }
   P.closing = 1;
+  if (form_touch()) {
+    player_touch_cancel();
+    ph_gest_restore();
+  }
   if (P.rateI) {
     P.rateI = 0;
     video_set_rate(1);
@@ -6246,6 +6287,8 @@ void player_tick(float dt) {
       lw = SB_W;
       lh = SB_H;
       build_btns();
+      if (form_touch())
+        player_touch_cancel();
     }
   } /* the canvas changed (a phone turning for the film): the buttons placed again */
   hand_tick(dt);
@@ -6278,6 +6321,8 @@ void player_tick(float dt) {
     P.btns[i].x = P.btns[i].x0 + P.btns[i].dx.v;
   }
   nudge_tick(&P.nudge, dt);
+  if (form_touch())
+    ph_gest_tick(dt);
   if (P.tray.kind < 0 && !P.tray.openA.on && P.tray.openA.v <= 0.001f) {
     P.tray.kind = 0;
     cols_clear();
@@ -8287,6 +8332,7 @@ void player_draw(void) {
   if (P.live && P.artA.v < 0.999f) {
     draw_osd();
     ph_osd_draw();
+    ph_gest_draw();
     draw_tray();
     vol_draw();
   } else if (P.artA.v < 0.999f)
@@ -9073,6 +9119,7 @@ static void ph_do(const char *id) {
     P.locked = 1;
     P.menu = 0;
     TP.lastUpMs = 0;
+    GS.tapAt = 0;
     hide_osd();
   } else if (!strcmp(id, "nerd"))
     store_set("nerdStats", nerds_on() ? "false" : "true");
@@ -9090,6 +9137,280 @@ static void ph_bar_down(float x) { /* a finger takes the bar: the knob to it, th
   if (du > 0) {
     P.seekT = P.hvP * du;
     P.seekCommitAt = now_() + 1e6;
+  }
+}
+/* ---- a phone's film gestures beyond the tap: a tap on a side third that waits, the double-tap ripple, the 2x hold,
+   the brightness and volume swipes, the pinch. What outlives a touch event is in GS; ph_gest_tick() runs what is timed
+   ---- */
+#define HOLD_MS 450 /* a finger kept still this long on the film is a hold */
+/* a tap on a side third that changes the controls waits out the double-tap window (a second landing makes it a step); a
+   tap in the middle third acts at once */
+static void ph_tap_ctl(int side, int show) {
+  if (!side) {
+    if (show)
+      show_osd(1);
+    else
+      hide_osd();
+    return;
+  }
+  GS.tapAt = TP.lastUpMs;
+  GS.tapShow = show;
+  if (tlog())
+    fprintf(stderr, "[touch] single tap on a side: waits %d ms for a second\n", DTAP_MS);
+}
+static void ph_tap_fire(void) {
+  if (!GS.tapAt)
+    return;
+  if (tlog())
+    fprintf(stderr, "[touch] single tap: no second one after %u ms, the controls %s\n", SDL_GetTicks() - GS.tapAt,
+            GS.tapShow ? "come up" : "go");
+  GS.tapAt = 0;
+  if (GS.tapShow)
+    show_osd(1);
+  else
+    hide_osd();
+}
+/* is this place on a control the controls up have (they take the finger: no hold, no swipe from there)? */
+static int ph_on_control(float x, float y) {
+  if (!P.osd)
+    return 0;
+  ph_geo();
+  if (ph_hit(&PHG.band, x, y) || ph_hit(&PHG.pp, x, y) || ph_hit(&PHG.rw, x, y) || ph_hit(&PHG.ff, x, y) ||
+      ph_hit(&PHG.back, x, y) || ph_hit(&PHG.more, x, y))
+    return 1;
+  for (int i = 0; i < PHG.nact; i++)
+    if (ph_hit(&PHG.act[i].r, x, y))
+      return 1;
+  return 0;
+}
+/* a finger that lands on the film itself (no tray, prompt, menu or control under it): it may hold or swipe */
+static int ph_film_ok(float x, float y) {
+  return !P.menu && P.mode != 2 && P.mode != 4 && !(P.prompt.k && PG.prompt) && !ph_on_control(x, y);
+}
+static void ph_hold_end(void) {
+  GS.holdOn = 0;
+  video_set_rate(PH_RATES[P.rateI]); /* (back to what the Speed choice was) */
+  if (tlog())
+    fprintf(stderr, "[touch] hold ended: rate back to %.2f\n", PH_RATES[P.rateI]);
+}
+/* the double-tap ripple: the run's total and the time it lands on */
+static void ph_ripple_step(int side) {
+  if (P.seekT < 0)
+    return;
+  snprintf(GS.rpTot, sizeof GS.rpTot, "%s", P.seekTxt);
+  ph_clock(P.seekT, GS.rpTime, sizeof GS.rpTime);
+  if (GS.rpA.v < 0.05f || GS.rpSide != side) {
+    mo_set(&GS.rpG, 0);
+    mo_to(&GS.rpG, 1, .3f, C_OUT, 0);
+  }
+  GS.rpSide = side;
+  GS.rpUntil = now_() + 0.6;
+  mo_to(&GS.rpA, 1, .1f, C_EASE, 0);
+  if (tlog())
+    fprintf(stderr, "[touch] ripple on the %s: %s, to %s\n", side < 0 ? "left" : "right", GS.rpTot, GS.rpTime);
+}
+/* is a landing outside the system's gesture edges (a swipe from an edge is the system's)? */
+static int ph_outside_insets(float x, float y) {
+  int gl = 0, gt = 0, gr = 0, gb = 0;
+  plat_gesture_insets(&gl, &gt, &gr, &gb);
+  float gs = gfx_scale();
+  if (gs <= 0)
+    return 1;
+  return x >= gl / gs && x <= SB_W - gr / gs && y >= gt / gs && y <= SB_H - gb / gs;
+}
+/* the finger has moved 10 dp: mostly vertical on the left half it is brightness, on the right half volume */
+static void ph_swipe_begin(float x, float y) {
+  GS.swKind = -1;
+  if (!GS.arm || fabsf(y - TP.y0) <= fabsf(x - TP.x0) || !ph_outside_insets(TP.x0, TP.y0))
+    return;
+  int left = TP.x0 < SB_W / 2, lv = left ? plat_brightness_get() : plat_sysvol_get();
+  if (lv < 0)
+    return; /* (not on this device: no HUD, nothing) */
+  GS.swFixed = 0;
+  if (!left) {
+    int r = plat_sysvol_set(lv); /* (its own level back: it says whether the route can change at all) */
+    if (r == -2)
+      GS.swFixed = 1;
+    else if (r <= 0)
+      return;
+  }
+  GS.swKind = left ? 1 : 2;
+  GS.swSide = left ? -1 : 1;
+  GS.swLv0 = (float)lv;
+  GS.swPct = lv;
+  GS.swY0 = y; /* (from where it is: the slop does not make the level jump) */
+  GS.swOn = 1;
+  GS.hudUntil = 0;
+  mo_to(&GS.hudA, 1, .12f, C_EASE, 0);
+  if (tlog())
+    fprintf(stderr, "[touch] swipe: %s from %d%%%s\n", left ? "brightness" : "volume", lv,
+            GS.swFixed ? " (fixed)" : "");
+}
+static void ph_swipe_move(float y) {
+  if (GS.swFixed)
+    return;
+  float lv = GS.swLv0 + (GS.swY0 - y) / SB_H * 100.0f;
+  int pct = (int)(fminf(100, fmaxf(0, lv)) + 0.5f);
+  if (pct != GS.swPct) {
+    GS.swPct = pct;
+    GS.swDirty = 1; /* (written once a frame, in the tick) */
+  }
+}
+static void ph_swipe_end(void) {
+  GS.swOn = 0;
+  GS.hudUntil = now_() + 0.6;
+  if (tlog())
+    fprintf(stderr, "[touch] swipe ended at %d%%\n", GS.swPct);
+}
+/* the pinch took a size: the toast names it and what the next pinch does */
+static void ph_pinch_step(int i) {
+  static const char *A[3] = { "fit", "fill", "zoom" };
+  set_aspect(A[i]);
+  snprintf(GS.toL1, sizeof GS.toL1, "%s", T(i == 0 ? "Original" : i == 1 ? "Fill" : "Zoom"));
+  snprintf(GS.toL2, sizeof GS.toL2, "%s",
+           T(i == 0   ? "Pinch out for Fill"
+             : i == 1 ? "Pinch out for Zoom, in for Original"
+                      : "Pinch in for Fill"));
+  GS.toUntil = now_() + 1.2;
+  mo_to(&GS.toA, 1, .12f, C_EASE, 0);
+  if (tlog())
+    fprintf(stderr, "[touch] pinch: picture size %s\n", A[i]);
+}
+static int mo_live(const Mo *m) {
+  return m->on || m->v > 0.001f;
+}
+static void ph_gest_tick(float dt) {
+  if (GS.tapAt && !P.locked && (int)(SDL_GetTicks() - GS.tapAt) >= DTAP_MS)
+    ph_tap_fire();
+  if (GS.arm && TP.down && !GS.holdOn && !TP.moved && !P.locked && SDL_GetTicks() - TP.downMs >= HOLD_MS) {
+    GS.arm = 0;
+    if (video_rate_supported()) {
+      GS.holdOn = 1;
+      TP.lastUpMs = 0;
+      GS.tapAt = 0;
+      video_set_rate(2);
+      plat_haptic();
+      mo_to(&GS.chipA, 1, .15f, C_EASE, 0);
+      if (tlog())
+        fprintf(stderr, "[touch] hold: rate 2\n");
+    }
+  }
+  if (GS.swDirty) {
+    GS.swDirty = 0;
+    int r = GS.swKind == 1 ? plat_brightness_set(GS.swPct) : plat_sysvol_set(GS.swPct);
+    if (GS.swKind == 1 && r > 0)
+      GS.brSet = 1;
+    if (r <= 0 && GS.swKind == 2 && r == -2)
+      GS.swFixed = 1;
+    else if (r <= 0) { /* it will not take: no HUD, nothing */
+      GS.swOn = 0;
+      GS.swKind = -1;
+      GS.hudUntil = 0;
+    }
+  }
+  if (!(mo_live(&GS.rpA) || mo_live(&GS.hudA) || mo_live(&GS.chipA) || mo_live(&GS.toA)))
+    return;
+  double n = now_();
+  mo_to(&GS.rpA, n < GS.rpUntil ? 1 : 0, n < GS.rpUntil ? .1f : .25f, C_EASE, 0);
+  mo_to(&GS.hudA, GS.swOn || n < GS.hudUntil ? 1 : 0, GS.swOn || n < GS.hudUntil ? .12f : .25f, C_EASE, 0);
+  mo_to(&GS.chipA, GS.holdOn ? 1 : 0, .15f, C_EASE, 0);
+  mo_to(&GS.toA, n < GS.toUntil ? 1 : 0, .2f, C_EASE, 0);
+  mo_tick(&GS.rpA, dt);
+  mo_tick(&GS.rpG, dt);
+  mo_tick(&GS.hudA, dt);
+  mo_tick(&GS.chipA, dt);
+  mo_tick(&GS.toA, dt);
+}
+/* the player closes or another film opens: the system's own brightness again (the volume is the user's, left) */
+static void ph_gest_restore(void) {
+  if (GS.brSet)
+    plat_brightness_set(-1);
+  GS.brSet = 0;
+  GS.hudUntil = 0;
+  GS.swOn = 0;
+  mo_set(&GS.hudA, 0);
+  mo_set(&GS.rpA, 0);
+  mo_set(&GS.chipA, 0);
+  mo_set(&GS.toA, 0);
+  GS.rpUntil = GS.toUntil = 0;
+  if (tlog())
+    fprintf(stderr, "[touch] restored: system brightness, rate %.2f\n", PH_RATES[P.rateI]);
+}
+/* a dark pill: the chip, the toast */
+static void ph_pill(float x, float y, float w, float h) {
+  gfx_rrect(x, y, w, h, fminf(28 * tdp(), h / 2), RGBA(18, 18, 20, 209));
+}
+static void ph_gest_draw(void) {
+  if (!form_touch() || !P.live)
+    return;
+  float d = tdp(), W = SB_W, H = SB_H;
+  /* the ripple: half of an ellipse taller than the screen, grown from the tapped edge, black 34 % */
+  if (GS.rpA.v > 0.01f) {
+    int left = GS.rpSide < 0;
+    float w = W * 0.42f, gw = w * (0.4f + 0.6f * GS.rpG.v), b = H * 0.9f, ex = left ? 0 : W;
+    uint32_t c = BLACK_A(87), cc[4] = { c, c, c, c };
+    gfx_opacity_push(GS.rpA.v);
+    enum { N = 40 };
+    for (int i = 0; i < N; i++) {
+      float y0 = H * i / N, y1 = H * (i + 1) / N, u0 = (y0 - H / 2) / b, u1 = (y1 - H / 2) / b;
+      float e0 = gw * sqrtf(1 - u0 * u0), e1 = gw * sqrtf(1 - u1 * u1);
+      float px[4] = { ex, left ? ex + e0 : ex - e0, left ? ex + e1 : ex - e1, ex }, py[4] = { y0, y0, y1, y1 };
+      gfx_quad_pts(px, py, cc);
+    }
+    float cx = left ? w * 0.41f : W - w * 0.41f, isz = 28 * d;
+    int pt = ph_px(15), ps = ph_px(12);
+    float th = isz + 6 * d + text_line_height(pt) + 2 * d + text_line_height(ps), ty = (H - th) / 2;
+    icon_draw(left ? "p_rwx" : "p_ffx", cx - isz / 2, ty, isz, WHITE_A(255));
+    text_draw(GS.rpTot, cx, ty + isz + 6 * d, pt, 700, WHITE_A(255), 0, 0, ALIGN_CENTER);
+    text_draw(GS.rpTime, cx, ty + isz + 8 * d + text_line_height(pt), ps, 400, WHITE_A(204), 0, 0, ALIGN_CENTER);
+    gfx_opacity_pop();
+  }
+  /* brightness or volume: a slim pill 56 dp from the edge, an icon over a 120 dp track over the percent */
+  if (GS.hudA.v > 0.01f) {
+    float st = 0, sb = 0, sl = 0, sr = 0;
+    form_safe(&st, &sb, &sl, &sr);
+    int pl = ph_px(11);
+    float w = 44 * d, h = 12 * d + 20 * d + 10 * d + 120 * d + 10 * d + text_line_height(pl) + 10 * d,
+          x = GS.swSide < 0 ? fmaxf(56 * d, sl + 12 * d) : W - fmaxf(56 * d, sr + 12 * d) - w, y = (H - h) / 2;
+    gfx_opacity_push(GS.hudA.v);
+    gfx_rrect(x, y, w, h, 22 * d, RGBA(18, 18, 20, 184));
+    icon_draw(GS.swSide < 0 ? "p_bright" : "p_spk", x + w / 2 - 10 * d, y + 12 * d, 20 * d, WHITE_A(255));
+    float ty = y + 12 * d + 20 * d + 10 * d, th = 120 * d, fh = th * GS.swPct / 100.0f;
+    gfx_rrect(x + w / 2 - 2 * d, ty, 4 * d, th, 2 * d, WHITE_A(64));
+    if (fh > 0.5f)
+      gfx_rrect(x + w / 2 - 2 * d, ty + th - fh, 4 * d, fh, 2 * d, WHITE_A(255));
+    char pc[16];
+    snprintf(pc, sizeof pc, "%d%%", GS.swPct);
+    text_draw(GS.swFixed ? T("Fixed") : pc, x + w / 2, ty + th + 10 * d, pl, 600, WHITE_A(255), 0, 0, ALIGN_CENTER);
+    gfx_opacity_pop();
+  }
+  /* the hold's chip, top centre under the safe inset */
+  if (GS.chipA.v > 0.01f) {
+    float st = 0, sb = 0, sl = 0, sr = 0;
+    form_safe(&st, &sb, &sl, &sr);
+    int p = ph_px(15);
+    float tw = text_width("2×", p, 700, 0), h = 18 * d + fmaxf(0, text_line_height(p) - 18 * d) + 18 * d,
+          w = 14 * d + 18 * d + 8 * d + tw + 18 * d, x = (W - w) / 2, y = st + 20 * d;
+    gfx_opacity_push(GS.chipA.v);
+    ph_pill(x, y, w, h);
+    icon_draw("p_ffx", x + 14 * d, y + (h - 18 * d) / 2, 18 * d, WHITE_A(255));
+    text_draw("2×", x + 14 * d + 18 * d + 8 * d, y + (h - text_line_height(p)) / 2, p, 700, WHITE_A(255), 0, 0,
+              ALIGN_LEFT);
+    gfx_opacity_pop();
+  }
+  /* the pinch's toast, in the middle */
+  if (GS.toA.v > 0.01f) {
+    int p1 = ph_px(14), p2 = ph_px(12);
+    float tw = fmaxf(text_width(GS.toL1, p1, 600, 0), text_width(GS.toL2, p2, 400, 0)),
+          th = text_line_height(p1) + d + text_line_height(p2), h = fmaxf(24 * d, th) + 24 * d,
+          w = 18 * d + 24 * d + 12 * d + tw + 22 * d, x = (W - w) / 2, y = (H - h) / 2;
+    gfx_opacity_push(GS.toA.v);
+    ph_pill(x, y, w, h);
+    icon_draw("p_asp", x + 18 * d, y + (h - 24 * d) / 2, 24 * d, WHITE_A(255));
+    float tx = x + 18 * d + 24 * d + 12 * d, ty = y + (h - th) / 2;
+    text_draw(GS.toL1, tx, ty, p1, 600, WHITE_A(255), 0, 0, ALIGN_LEFT);
+    text_draw(GS.toL2, tx, ty + text_line_height(p1) + d, p2, 400, WHITE_A(184), 0, 0, ALIGN_LEFT);
+    gfx_opacity_pop();
   }
 }
 void player_touch(int type, float x, float y) {
@@ -9140,6 +9461,10 @@ void player_touch(int type, float x, float y) {
     TP.downMs = touch_evt_ms;
     TP.gapMs = TP.lastUpMs ? touch_evt_ms - TP.lastUpMs : 0;
     TP.quick = TP.lastUpMs && ph_side(x) && ph_side(x) == TP.lastSide && TP.gapMs <= DTAP_MS;
+    if (TP.quick)
+      GS.tapAt = 0; /* (the first tap of a double tap: it never changes the controls) */
+    else
+      ph_tap_fire(); /* (a tap that waited and found no second one: it acts now, before this finger does) */
     if (tlog() && TP.lastUpMs)
       fprintf(stderr, "[touch] landed %u ms after the last lift%s\n", TP.gapMs,
               TP.quick ? ": may be a double tap" : "");
@@ -9158,6 +9483,8 @@ void player_touch(int type, float x, float y) {
       fprintf(stderr, "[touch] -> the bar takes it (band %.0f-%.0f)\n", PHG.band.y, PHG.band.y + PHG.band.h);
     if (TP.onBar)
       ph_bar_down(x);
+    GS.swKind = 0;
+    GS.arm = !TP.onBar && !TP.barLater && ph_film_ok(x, y);
     return;
   }
   if (type == 1) {
@@ -9175,7 +9502,11 @@ void player_touch(int type, float x, float y) {
           fprintf(stderr, "[touch] -> the bar takes it after all (it moved)\n");
         ph_bar_down(TP.x0);
       }
+      if (!TP.onBar && !GS.holdOn)
+        ph_swipe_begin(x, y);
     }
+    if (GS.swOn && !GS.holdOn)
+      ph_swipe_move(y);
     if (TP.onBar) {
       ptr_hv(1, x);
       double du = dur();
@@ -9206,6 +9537,15 @@ void player_touch(int type, float x, float y) {
   if (!TP.down)
     return;
   TP.down = 0;
+  GS.arm = 0;
+  if (GS.swOn)
+    ph_swipe_end();
+  GS.swKind = 0;
+  if (GS.holdOn) { /* a hold is never also a tap */
+    ph_hold_end();
+    TP.lastUpMs = 0;
+    return;
+  }
   if (TP.onBar) {
     P.scrub = 0;
     TP.lastUpMs = 0;
@@ -9236,8 +9576,10 @@ void player_touch(int type, float x, float y) {
     TP.lastUpMs = touch_evt_ms;
     P.rep = 0;
     seek_by(side);
-    if (P.seekT >= 0)
+    if (P.seekT >= 0) {
       P.seekCommitAt = now_() + 0.6; /* a finger's run of taps lands sooner than a remote's presses */
+      ph_ripple_step(side);
+    }
     if (TP.osdBefore)
       show_osd(1);
     else if (P.osd) {
@@ -9299,14 +9641,15 @@ void player_touch(int type, float x, float y) {
         ph_do(PHG.act[i].id);
         return;
       }
-    hide_osd();
+    ph_tap_ctl(side, 0);
     return;
   }
-  show_osd(1);
+  ph_tap_ctl(side, 1);
 }
 void player_touch_cancel(void) {
   if (tlog())
-    fprintf(stderr, "[touch] cancelled: down %d, on the bar %d\n", TP.down, TP.onBar);
+    fprintf(stderr, "[touch] cancelled: down %d, on the bar %d, hold %d, swipe %d, tap waiting %d\n", TP.down, TP.onBar,
+            GS.holdOn, GS.swOn, GS.tapAt != 0);
   TP.down = 0;
   TP.lastUpMs = 0;
   P.scrub = 0;
@@ -9315,6 +9658,16 @@ void player_touch_cancel(void) {
     cancel_seek();
     TP.onBar = 0;
   }
+  /* what the finger started: a tap waiting out the window, a hold (the speed goes back), a swipe (the level stays where
+     it was set). A run of double-tap steps already asked for lands on its own */
+  GS.tapAt = 0;
+  GS.arm = 0;
+  GS.swKind = 0;
+  GS.pinch = 0;
+  if (GS.holdOn)
+    ph_hold_end();
+  if (GS.swOn)
+    ph_swipe_end();
 }
 void player_touch2(int type, float x0, float y0, float x1, float y1) {
   if (tlog())
@@ -9323,6 +9676,26 @@ void player_touch2(int type, float x0, float y0, float x1, float y1) {
             : type == 1 ? "move"
                         : "lift",
             x0, y0, x1, y1);
+  float span = hypotf(x1 - x0, y1 - y0);
+  if (type == 0) {
+    GS.pinch = P.live && !P.locked && P.mode != 2 && P.mode != 4 && !(P.prompt.k && PG.prompt) && span > 1;
+    GS.pinchDone = 0;
+    GS.pinchSpan0 = span;
+    return;
+  }
+  if (type == 1 && GS.pinch && !GS.pinchDone) {
+    float k = span / GS.pinchSpan0;
+    int step = k > 1.15f ? 1 : k < 0.87f ? -1 : 0, i = aspect_index() + step;
+    if (step) {
+      GS.pinchDone = 1; /* one step a pinch: the next waits for the fingers to lift */
+      if (i >= 0 && i < 3)
+        ph_pinch_step(i);
+    }
+  }
+  if (type == 2) {
+    GS.pinch = 0;
+    GS.pinchDone = 0;
+  }
 }
 
 /* Stats for nerds: what plays and how, a few short lines (n of them filled) */
