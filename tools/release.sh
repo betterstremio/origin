@@ -103,8 +103,8 @@ publish)
   SITE="${SITE:-$ROOT/../site-publish}"
   if [ -d "$SITE/.git" ]; then
     bash "$ROOT/tools/webos-feed.sh" "$V" "$NOTES" "$SITE"
-    git -C "$SITE" add webos
-    git -C "$SITE" -c user.name="${AUTHOR% <*}" -c user.email="$(sed 's/.*<\(.*\)>/\1/' <<<"$AUTHOR")" commit -q -m "webOS listing $V" || true
+    git -C "$SITE" add webos updates
+    git -C "$SITE" -c user.name="${AUTHOR% <*}" -c user.email="$(sed 's/.*<\(.*\)>/\1/' <<<"$AUTHOR")" commit -q -m "webOS listing + update files $V" || true
     git -C "$SITE" -c credential.helper= -c credential.helper='!gh auth git-credential' push -q "https://github.com/${SITE_SLUG:-betterstremio/betterstremio.github.io}.git" HEAD:main && echo "site: webOS listing $V pushed"
   else echo "NOTE: no site clone at $SITE: run tools/webos-feed.sh $V $NOTES <site> and push it, or TVs fall back to GitHub's API"; fi
   ;;

@@ -43,8 +43,10 @@ float key_hint(float x, float y, int key, const char *label, uint32_t col,
                                                                              platform: PKG_KIND picks ours */
 /* the website's manifest (tools/webos-feed.sh, written by every release) is asked first: GitHub's API allows 60 calls
    an hour per address without an account, and a home's TV shares that with every other device there. It names only the
-   webOS IPK, so the other platforms go to the release list when it has nothing for them. */
+   webOS IPK; every other package has its own file in the same form (from 3.0.9: updates/<appid>/<kind>.json, e.g.
+   windows_setup.exe.json). The release list is asked only when the website has nothing for this package. */
 #define UPD_MAN "https://betterstremio.github.io/webos/api/apps/" SB_APP_ID "/manifest.json"
+#define UPD_PKG "https://betterstremio.github.io/updates/" SB_APP_ID "/%s.json" /* %s: PKG_KIND without its "_" */
 typedef struct {
   char ver[24], url[512], sha[72];
   char notes[5][256];
@@ -440,8 +442,11 @@ void update_check(int manual) {
   changed();
   const char *mf =
       getenv("SB_UPD_MAN"); /* development: another manifest; SB_UPD_GH alone tests the release list by itself */
-  if (mf || (!gh && !strcmp(PKG_KIND, "_arm.ipk"))) /* (the manifest names only the webOS IPK) */
-    net_get_timeout(mf ? mf : UPD_MAN, 15000, on_manifest, (void *)(size_t)manual);
+  static char pkgMan[256];
+  snprintf(pkgMan, sizeof pkgMan, UPD_PKG, PKG_KIND + 1);
+  if (mf || !gh) /* the website first (webOS: the Homebrew manifest; the others: their package's own file) */
+    net_get_timeout(mf ? mf : !strcmp(PKG_KIND, "_arm.ipk") ? UPD_MAN : pkgMan, 15000, on_manifest,
+                    (void *)(size_t)manual);
   else
     net_get_timeout(gh ? gh : UPD_GH, 15000, on_releases, (void *)(size_t)manual);
 }
