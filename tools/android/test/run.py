@@ -307,8 +307,9 @@ def t_letterbox():
     if bar < 20: return False, 'the screen did not get wider (%dx%d)' % (w, h)
     edge = [px(img, x, int(h * fy)) for x in (3, bar - 6, w - bar + 6, w - 4) for fy in (0.1, 0.5, 0.9)]
     inner = [px(img, x, int(h * fy)) for x in (bar + 20, w - bar - 20) for fy in (0.1, 0.5, 0.9)]
-    if any(max(c) > 20 for c in edge): return False, 'expected black bars %d px wide on a %dx%d screen, found %s' % (bar, w, h, edge[:2])
-    if all(max(c) <= 20 for c in inner): return False, 'the 16:9 picture is black too'
+    # the bars are true black; the page inside is #121214 since 3.0.0 (18,18,20): a threshold of 20 called it black too
+    if any(max(c) > 8 for c in edge): return False, 'expected black bars %d px wide on a %dx%d screen, found %s' % (bar, w, h, edge[:2])
+    if all(max(c) <= 8 for c in inner): return False, 'the 16:9 picture is black too'
     return True, '%dx%d screen (2400x1080 scaled): 16:9 picture between %d px black bars' % (w, h, bar)
 
 @test('update')
