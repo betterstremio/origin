@@ -19,8 +19,8 @@
 #include <string.h>
 #include <stdint.h>
 
-#define MAXG 32
-#define MAXI 400
+#define MAXG ADDONS_MAX
+#define MAXI (STREAMS_MAX_KEPT + 2) /* resume and best-pick rows */
 enum { R_PLAIN, R_RESUME, R_BEST };
 typedef struct {
   char name[96];
@@ -34,7 +34,7 @@ static struct {
   int loading, pending, asked;
   char type[16], id[64], vid[80], title[256], label[300];
   Group g[MAXG];
-  int ng;
+  int ng, per, extra;
   Stream resume;
   int hasResume;
   const Stream *items[MAXI];
@@ -71,12 +71,8 @@ static void rebuild(void) {
     }
   }
   if (best_on() && S.filter < 0 && n > first) {
-    const Stream *list[MAXI];
-    int m = 0;
-    for (int i = first; i < n; i++)
-      list[m++] = S.items[i];
     BestRate r;
-    const Stream *b = best_pick(list, m, best_dur(sb_meta_cached(S.type, S.id), S.type), NULL, -1, &r);
+    const Stream *b = best_pick(S.items + first, n - first, best_dur(sb_meta_cached(S.type, S.id), S.type), NULL, -1, &r);
     if (b && n < MAXI) {
       memmove(S.items + first + 1, S.items + first, (size_t)(n - first) * sizeof *S.items);
       memmove(S.kind + first + 1, S.kind + first, (size_t)(n - first) * sizeof *S.kind);
@@ -98,13 +94,23 @@ static void add(const Stream *arr, int n, int gi, const char *name) {
     S.ng = gi + 1;
   if (!g->name[0])
     snprintf(g->name, sizeof g->name, "%s", name ? name : T("Addon"));
-  int k = n < 60 - g->n ? n : 60 - g->n;
+  int lim = S.per + (gi < S.extra);
+  int k = n < lim - g->n ? n : lim - g->n;
   if (k > 0) {
     Stream *x = realloc(g->items, (size_t)(g->n + k) * sizeof *x);
     if (!x)
       return;
     g->items = x;
     memcpy(g->items + g->n, arr, (size_t)k * sizeof *arr);
+    if (k < n && lim < 60 && best_on()) {
+      const Stream *all[60];
+      int m = n < 60 ? n : 60;
+      for (int i = 0; i < m; i++)
+        all[i] = &arr[i];
+      const Stream *best = best_pick(all, m, best_dur(sb_meta_cached(S.type, S.id), S.type), NULL, -1, NULL);
+      if (best && best - arr >= k)
+        g->items[g->n + k - 1] = *best;
+    }
     g->n += k;
   }
   rebuild();
@@ -136,6 +142,9 @@ void phone_streams_show(const char *type, const char *id, const char *vid, const
   S.bestSum[0] = 0;
   S.pending = 0;
   S.asked = 0;
+  int na = sb_stream_addons(type, vid, NULL, ADDONS_MAX);
+  S.per = na > STREAMS_MAX_KEPT / 60 ? STREAMS_MAX_KEPT / na : 60;
+  S.extra = S.per < 60 ? STREAMS_MAX_KEPT % na : 0;
   snprintf(S.type, sizeof S.type, "%s", type);
   snprintf(S.id, sizeof S.id, "%s", id);
   snprintf(S.vid, sizeof S.vid, "%s", vid);
@@ -265,11 +274,13 @@ static void draw(void) {
       float w = text_width(t, PH_TX_SMALL + 1, 700, 0) + 26;
       if (w > 200)
         w = 200;
-      int on = S.filter == g, p = touch_pressed(NULL, chip_act, g, 0);
-      gfx_rrect(cx, y, w, 32, 16, on ? WHITE_A(255) : p ? WHITE_A(50) : WHITE_A(22));
-      text_draw(t, cx + w / 2, y + 16 - text_line_height(PH_TX_SMALL + 1) / 2.0f, PH_TX_SMALL + 1, 700,
-                on ? RGB(18, 18, 20) : PH_TXT, 0, w - 16, ALIGN_CENTER);
-      hit_act(cx, y, w, 32, chip_act, g, 0);
+      if (cx + w > x0 && cx < x0 + W) {
+        int on = S.filter == g, p = touch_pressed(NULL, chip_act, g, 0);
+        gfx_rrect(cx, y, w, 32, 16, on ? WHITE_A(255) : p ? WHITE_A(50) : WHITE_A(22));
+        text_draw(t, cx + w / 2, y + 16 - text_line_height(PH_TX_SMALL + 1) / 2.0f, PH_TX_SMALL + 1, 700,
+                  on ? RGB(18, 18, 20) : PH_TXT, 0, w - 16, ALIGN_CENTER);
+        hit_act(cx, y, w, 32, chip_act, g, 0);
+      }
       cx += w + 8;
     }
     gfx_clip_pop();

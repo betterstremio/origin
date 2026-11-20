@@ -55,7 +55,7 @@ static struct {
   int closing;
   SGlass glass;
   Group groups[MAXG];
-  int ng, per; /* per: streams kept per addon */
+  int ng, per, extra; /* streams kept per addon, plus one for the first extra addons */
   unsigned tok;
   int loading;
   double t;
@@ -273,7 +273,7 @@ static void rebuild(void) {
   S.laid = 0;
 }
 static void add(const Stream *arr, int n, int gIdx, const char *gName, int resume) {
-  if (gIdx >= MAXG) {
+  if (gIdx < 0 || gIdx >= MAXG) {
     static unsigned told; /* once per lookup */
     if (told != S.tok)
       fprintf(stderr, "[streams] more than %d addons answered: the rest are left out of the list\n", ADDONS_MAX);
@@ -286,9 +286,13 @@ static void add(const Stream *arr, int n, int gIdx, const char *gName, int resum
   if (!g->name[0])
     snprintf(g->name, sizeof g->name, "%s", gName ? gName : T("Addon"));
   g->resume = resume;
-  int lim = resume || !S.per ? 40 : S.per, k = n < lim - g->n ? n : lim - g->n;
+  int lim = resume ? 40 : S.per + (gIdx <= S.extra);
+  int k = n < lim - g->n ? n : lim - g->n;
   if (k > 0) {
-    g->items = realloc(g->items, (g->n + k) * sizeof *g->items);
+    Stream *items = realloc(g->items, (g->n + k) * sizeof *items);
+    if (!items)
+      return;
+    g->items = items;
     memcpy(g->items + g->n, arr, k * sizeof *arr);
     /* cut to its share: its best stream for this TV stays (in place of the last kept), so the best fit sees it */
     if (k < n && !resume && best_on()) {
@@ -381,23 +385,16 @@ void streams_show(const char *type, const char *id, const char *vid, const char 
   S.filter = -1;
   S.chipIdx = 0;
   S.nchips = 0;
-  {
-    /* streams kept per addon: 40, and with more than 24 addons serving the title a share of 960 (at least 15), so a
-       big addon list keeps no more than 24 addons of 40 always did (a Stream is ~6.5 KB: 64 x 40 would be 16 MB) */
-    char nm[ADDONS_MAX][96];
-    int na = sb_stream_addons(type, vid, nm, ADDONS_MAX);
-    S.per = na > 24 ? 960 / na : 40;
-    if (S.per < 15)
-      S.per = 15;
-  }
+  /* Cap the total even when every addon returns a full list. The resume row has its own slot. */
+  int na = sb_stream_addons(type, vid, NULL, ADDONS_MAX);
+  S.per = na > STREAMS_MAX_KEPT / 40 ? STREAMS_MAX_KEPT / na : 40;
+  S.extra = S.per < 40 ? STREAMS_MAX_KEPT % na : 0;
   S.tok++;
   S.loading = 1;
   qt_set(&S.chipsX, 0);
   qt_set(&S.listY, 0);
   Stream r;
   if (sb_resume_stream(id, vid, &r)) {
-    Stream x = r; /* (it keeps its addon: played again, it is remembered as that addon's, not as "Last used") */
-    snprintf(x.name, sizeof x.name, "%s", T("Resume last stream"));
     S.resumeSum[0] = 0;
     {
       BestRate br;
@@ -405,7 +402,8 @@ void streams_show(const char *type, const char *id, const char *vid, const char 
       best_rate(&r, NULL, -1, 100, &br);
       snprintf(S.resumeSum, sizeof S.resumeSum, "%s", br.sum);
     } /* its specs laid out as the best fit's are */
-    add(&x, 1, 0, T("Last used"), 1);
+    snprintf(r.name, sizeof r.name, "%s", T("Resume last stream"));
+    add(&r, 1, 0, T("Last used"), 1);
   } else
     rebuild();
   sb_streams(type, vid, on_part, on_done, (void *)(uintptr_t)S.tok);

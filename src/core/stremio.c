@@ -2674,6 +2674,8 @@ static void streams_answer(StreamPart *p, const cJSON *arr) {
   if (!r->ans && na > 40)
     na = 40; /* the best-stream pick reads all of them, as the web does: a 4K-first addon lists its 1080p files late */
   g.items = calloc(na ? na : 1, sizeof(Stream));
+  if (!g.items)
+    return;
   g.n = 0;
   if (arr)
     cJSON_ArrayForEach(s, arr) {
@@ -2785,7 +2787,7 @@ unsigned sb_streams_one(const char *type, const char *vid, int which, StreamPart
 }
 int sb_stream_addons(const char *type, const char *vid, char (*names)[96], int max) {
   if (video_streams(type, vid)) {
-    if (max > 0)
+    if (names && max > 0)
       copy_str(names[0], 96, T("This title"));
     return max > 0;
   }
@@ -2798,7 +2800,9 @@ int sb_stream_addons(const char *type, const char *vid, char (*names)[96], int m
         break;
       if (!addon_serves(ad, "stream", type, vid))
         continue;
-      copy_str(names[n++], 96, addon_name(ad));
+      if (names)
+        copy_str(names[n], 96, addon_name(ad));
+      n++;
     }
   return n;
 }
@@ -2830,6 +2834,8 @@ static unsigned streams_req(const char *type, const char *vid, int only, StreamP
   const cJSON *ad;
   if (a)
     cJSON_ArrayForEach(ad, a) {
+      if (idx >= ADDONS_MAX)
+        break;
       if (!addon_serves(ad, "stream", type, vid))
         continue;
       if (only >= 0 && idx != only) {
@@ -2852,8 +2858,7 @@ static unsigned streams_req(const char *type, const char *vid, int only, StreamP
                           : net_get_timeout(url, 45000, on_streams,
                                             p); /* slow debrid addons can take 20-30 s: the phone and PC apps wait as
                                                    long (a preview: 5 s, it would be too late anyway) */
-      if (r->nids < ADDONS_MAX)
-        r->ids[r->nids++] = id;
+      r->ids[r->nids++] = id;
     }
   r->count = r->pending;
   if (!r->pending) {

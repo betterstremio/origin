@@ -3594,14 +3594,17 @@ static void srcs_begin(const char *vid) {
   if (P.srcs.on && !strcmp(P.srcs.vid, vid))
     return;
   srcs_free();
+  char (*names)[96] = malloc(ADDONS_MAX * sizeof *names);
+  if (!names)
+    return;
   snprintf(P.srcs.vid, sizeof P.srcs.vid, "%s", vid);
   P.srcs.on = 1;
-  char names[ADDONS_MAX][96];
   int n = sb_stream_addons(P.type, vid, names, ADDONS_MAX);
   for (int i = 0; i < n; i++) {
     snprintf(P.srcs.g[i].name, sizeof P.srcs.g[i].name, "%s", names[i][0] ? names[i] : T("Addon"));
     P.srcs.g[i].open = 1;
   }
+  free(names);
   P.srcs.ng = n;
 }
 static int src_on(const Stream *s) {

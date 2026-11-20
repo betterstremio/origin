@@ -143,6 +143,7 @@ void lib_commit(void); /* many items changed in place: one version bump, one sav
 unsigned lib_version(void); /* bumps on every change: boards rebuild when it moves */
 
 /* ---- streams ---- */
+#define STREAMS_MAX_KEPT 960 /* total stream copies kept by a title's streams sheet */
 /* url: what plays ("p2p://<infoHash>/<fileIdx>?tr=..." for P2P streams, "ytid:<id>" for YouTube); ext: an externalUrl
    (opened on another device, never played); hdrs / rhdrs: proxyHeaders' request and response headers ("Name: value"
    lines) sent with every request for it; binge: behaviorHints.bingeGroup; size / hash: videoSize / videoHash */
@@ -173,7 +174,7 @@ unsigned sb_streams_ex(const char *type, const char *vid, StreamPartCb part, Str
                        void *ud);
 /* the addons that serve streams for this video, in the user's order (their names); then one of them alone, by that
  * place */
-int sb_stream_addons(const char *type, const char *vid, char (*names)[96], int max);
+int sb_stream_addons(const char *type, const char *vid, char (*names)[96], int max); /* names NULL: count only */
 unsigned sb_streams_one(const char *type, const char *vid, int which, StreamPartCb part, StreamDoneCb done, void *ud);
 void sb_stream_info(const Stream *s, char *out, size_t cap);
 /* the last played stream of a title/episode */

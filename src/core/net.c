@@ -1,3 +1,6 @@
+#ifdef _WIN32
+#include <winsock2.h>
+#endif
 #include "platform/plat.h"
 #include "core/net.h"
 #include "core/update.h"
@@ -9,6 +12,11 @@
 #include <pthread.h>
 #include <stdint.h>
 #include <curl/curl.h>
+#ifndef _WIN32
+#include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 #include <SDL2/SDL.h>
 #if !SB_STATIC_CURL
 #include <dlfcn.h>
@@ -26,7 +34,15 @@ static CURLcode (*f_global_init)(long);
 static void (*f_easy_reset)(CURL *); /* (optional: without it every request opens its own connection, as before) */
 static CURLSH *(*f_share_init)(void);
 static CURLSHcode (*f_share_setopt)(CURLSH *, CURLSHoption, ...); /* (optional too) */
-static curl_version_info_data *(*f_version_info)(CURLversion); /* (optional: the log only) */
+static curl_version_info_data *(*f_version_info)(CURLversion); /* optional: without it use blocking workers */
+static CURLM *(*f_multi_init)(void);
+static CURLMcode (*f_multi_cleanup)(CURLM *);
+static CURLMcode (*f_multi_setopt)(CURLM *, CURLMoption, ...);
+static CURLMcode (*f_multi_add_handle)(CURLM *, CURL *);
+static CURLMcode (*f_multi_remove_handle)(CURLM *, CURL *);
+static CURLMcode (*f_multi_perform)(CURLM *, int *);
+static CURLMcode (*f_multi_wait)(CURLM *, struct curl_waitfd *, unsigned int, int, int *);
+static CURLMsg *(*f_multi_info_read)(CURLM *, int *);
 static char caPath[1024];
 /* "StremioOrigin/1.0.0 (webOS; native)": the running version, the platform it runs on */
 static const char *ua(void) {
@@ -55,6 +71,14 @@ static int resolve(void) {
   f_share_init = curl_share_init;
   f_share_setopt = curl_share_setopt;
   f_version_info = curl_version_info;
+  f_multi_init = curl_multi_init;
+  f_multi_cleanup = curl_multi_cleanup;
+  f_multi_setopt = curl_multi_setopt;
+  f_multi_add_handle = curl_multi_add_handle;
+  f_multi_remove_handle = curl_multi_remove_handle;
+  f_multi_perform = curl_multi_perform;
+  f_multi_wait = curl_multi_wait;
+  f_multi_info_read = curl_multi_info_read;
   return 1;
 #else
   static const char *names[] = { "libcurl.so.5", "libcurl.so.4", "libcurl.so", NULL };
@@ -86,6 +110,16 @@ static int resolve(void) {
   *(void **)(&f_share_init) = dlsym(h, "curl_share_init");
   *(void **)(&f_share_setopt) = dlsym(h, "curl_share_setopt");
   *(void **)(&f_version_info) = dlsym(h, "curl_version_info");
+#define M(name) *(void **)(&f_multi_##name) = dlsym(h, "curl_multi_" #name)
+  M(init);
+  M(cleanup);
+  M(setopt);
+  M(add_handle);
+  M(remove_handle);
+  M(perform);
+  M(wait);
+  M(info_read);
+#undef M
   return 1;
 #endif
 }
@@ -98,11 +132,11 @@ typedef struct Req {
   NetCb cb;
   void *ud;
   long timeoutMs;
-  cJSON *json; /* postLen: a raw body (net_send), else post is text; json: the body already parsed on the worker */
+  cJSON *json; /* the body already parsed on the worker */
   int status;
   unsigned char *body;
   size_t len, cap;
-  int cancelled, done;
+  int cancelled; /* under mu */
   int size;
   double total; /* net_size: only the headers are read (2: net_resolve, the final address kept) */
   int bg; /* the previews' lane */
@@ -112,28 +146,52 @@ typedef struct Req {
 } Req;
 static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t cv = PTHREAD_COND_INITIALIZER;
-static Req *queue, *queueTail, *slowQ, *slowTail, *bgQ, *bgTail, *finished, *inflight[16], *fqueue, *fqueueTail;
+static Req *queue, *queueTail, *slowQ, *slowTail, *bgQ, *bgTail, *finished, *finishedTail, *fqueue, *fqueueTail;
+static Req *fileInflight;
 static pthread_cond_t slowCv = PTHREAD_COND_INITIALIZER, bgCv = PTHREAD_COND_INITIALIZER;
 static pthread_cond_t fcv = PTHREAD_COND_INITIALIZER;
 static unsigned nextId = 1;
 static int npending;
-#define WORKERS                                                                                               \
-  16 /* 0-4 take the quick requests (catalogs, details, the account); 5-7 the slow ones (stream addons, up to \
-       45 s each): details never wait behind a debrid addon thinking */
-#define SLOW0 5
+#define WORKERS 16
+#define SLOW0 5 /* 0-4: quick requests; 5-7: blocking fallback for the slow lane */
 #define BG0                                                                                                          \
   8 /* 8-15: the previews' lane (stream lookups and link resolving for a card at rest): never the slots a title page \
        waits on. Eight, because every addon is asked at once: with two, an addon that never answers held a slot for  \
        its whole timeout and the fast ones waited behind it */
+static Req *inflight[WORKERS];
+#define SLOW_MAX 32
+typedef struct {
+  Req *req; /* published under mu; only the multi thread touches the easy handle and headers */
+  CURL *easy;
+  struct curl_slist *headers;
+} SlowTransfer;
+static SlowTransfer slowActive[SLOW_MAX];
+static int slowLimit;
+static curl_socket_t slowWake[2] = { CURL_SOCKET_BAD, CURL_SOCKET_BAD };
+static int slowWakePending; /* under mu, at most one byte in the wake descriptor */
+
+static int is_cancelled(const Req *r) {
+  pthread_mutex_lock(&mu);
+  int cancelled = r->cancelled;
+  pthread_mutex_unlock(&mu);
+  return cancelled;
+}
 
 static size_t on_data(char *p, size_t s, size_t n, void *ud) {
   Req *r = ud;
   size_t add = s * n;
-  if (r->cancelled)
+  if (r->id && is_cancelled(r))
     return 0;
-  if (r->len + add + 1 > r->cap) {
-    r->cap = (r->len + add + 1) * 2;
-    r->body = realloc(r->body, r->cap);
+  if (add > SIZE_MAX - r->len - 1)
+    return 0;
+  size_t need = r->len + add + 1;
+  if (need > r->cap) {
+    size_t cap = need <= SIZE_MAX / 2 ? need * 2 : need;
+    unsigned char *body = realloc(r->body, cap);
+    if (!body)
+      return 0;
+    r->body = body;
+    r->cap = cap;
   }
   memcpy(r->body + r->len, p, add);
   r->len += add;
@@ -173,9 +231,10 @@ static size_t on_size_data(char *p, size_t s, size_t n, void *ud) {
 static CURL *handles[WORKERS];
 static int keepSlots, keepConns;
 static void keep_limits(void) {
-  int mb = plat_mem_total_mb(), small = mb > 0 && mb < 1200;
-  keepSlots = !f_easy_reset ? 0 : small ? SLOW0 : WORKERS;
-  keepConns = small ? 1 : 2;
+  int mb = plat_mem_total_mb(), lowMemory = mb > 0 && mb < 1200;
+  slowLimit = mb < 1200 ? 16 : SLOW_MAX;
+  keepSlots = !f_easy_reset ? 0 : lowMemory ? SLOW0 : WORKERS;
+  keepConns = lowMemory ? 1 : 2;
   fprintf(stderr, "[net] kept connections: %d workers, up to %d each\n", keepSlots, keepConns);
 }
 /* DNS answers and TLS sessions shared by every worker: a host one worker has met costs another no lookup, and its TLS
@@ -227,28 +286,16 @@ static void net_stats(CURL *c) {
             nShake ? shakeSum * 1000 / nShake : 0.0);
   pthread_mutex_unlock(&mu);
 }
-static void perform(Req *r, int slot) {
-  CURL *c;
-  int kept = slot >= 0 && slot < keepSlots;
-  if (kept) {
-    c = handles[slot];
-    if (c)
-      f_easy_reset(c);
-    else
-      c = handles[slot] = f_easy_init();
-  } else
-    c = f_easy_init();
-  if (!c) {
-    r->status = 0;
-    return;
-  }
-  if (kept) {
-    f_easy_setopt(c, CURLOPT_MAXCONNECTS, (long)keepConns);
-    f_easy_setopt(c, CURLOPT_DNS_CACHE_TIMEOUT, 300L);
-  }
+static int append_header(struct curl_slist **hs, const char *line) {
+  struct curl_slist *next = f_slist_append(*hs, line);
+  if (!next)
+    return 0;
+  *hs = next;
+  return 1;
+}
+static int prepare(CURL *c, Req *r, struct curl_slist **hs) {
   if (share)
     f_easy_setopt(c, CURLOPT_SHARE, share);
-  struct curl_slist *hs = NULL;
   f_easy_setopt(c, CURLOPT_URL, r->url);
   f_easy_setopt(c, CURLOPT_WRITEFUNCTION, on_data);
   f_easy_setopt(c, CURLOPT_WRITEDATA, r);
@@ -267,35 +314,35 @@ static void perform(Req *r, int slot) {
     f_easy_setopt(c, CURLOPT_HEADERFUNCTION, on_header);
     f_easy_setopt(c, CURLOPT_HEADERDATA, r);
     f_easy_setopt(c, CURLOPT_WRITEFUNCTION, on_size_data);
-    hs = f_slist_append(hs, "Range: bytes=0-0");
+    if (!append_header(hs, "Range: bytes=0-0"))
+      return 0;
   }
   /* one header per line; one the caller names (User-Agent...) replaces curl's own */
   for (char *h = r->hdr, *nl; h && *h; h = nl ? nl + 1 : NULL) {
     nl = strchr(h, '\n');
     if (nl)
       *nl = 0;
-    if (*h)
-      hs = f_slist_append(hs, h);
+    int ok = !*h || append_header(hs, h);
     if (nl)
       *nl = '\n';
+    if (!ok)
+      return 0;
   }
   if (r->post) {
-    if (r->ctype) {
-      if (*r->ctype) {
-        char ct[160];
-        snprintf(ct, sizeof ct, "Content-Type: %s", r->ctype);
-        hs = f_slist_append(hs, ct);
-      }
-    } else if (!r->postLen)
-      hs = f_slist_append(hs, "Content-Type: application/json");
+    if (r->ctype && *r->ctype) {
+      char ct[160];
+      snprintf(ct, sizeof ct, "Content-Type: %s", r->ctype);
+      if (!append_header(hs, ct))
+        return 0;
+    }
     f_easy_setopt(c, CURLOPT_POSTFIELDS, r->post);
-    f_easy_setopt(c, CURLOPT_POSTFIELDSIZE, (long)(r->postLen ? r->postLen : strlen(r->post)));
+    f_easy_setopt(c, CURLOPT_POSTFIELDSIZE, (long)r->postLen);
   }
   if (r->method)
     f_easy_setopt(c, CURLOPT_CUSTOMREQUEST, r->method);
-  if (hs)
-    f_easy_setopt(c, CURLOPT_HTTPHEADER, hs);
-  CURLcode rc = f_easy_perform(c);
+  return !*hs || f_easy_setopt(c, CURLOPT_HTTPHEADER, *hs) == CURLE_OK;
+}
+static void read_result(CURL *c, Req *r, CURLcode rc) {
   long code = 0;
   f_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code);
   r->status = rc == CURLE_OK ? (int)code : 0;
@@ -315,10 +362,40 @@ static void perform(Req *r, int slot) {
     r->status = (int)code;
   } /* the server's answer even without a size (a 404 says why a film will not play); 0 = no answer */
   net_stats(c);
-  if (hs)
-    f_slist_free_all(hs);
+}
+static int cancel_progress(void *ud, curl_off_t a, curl_off_t b, curl_off_t c, curl_off_t d) {
+  (void)a;
+  (void)b;
+  (void)c;
+  (void)d;
+  return is_cancelled(ud);
+}
+static void perform(Req *r, int slot) {
+  int kept = slot >= 0 && slot < keepSlots;
+  CURL *c = kept ? handles[slot] : NULL;
+  if (c)
+    f_easy_reset(c);
+  else
+    c = f_easy_init();
+  if (!c)
+    return;
+  if (kept) {
+    handles[slot] = c;
+    f_easy_setopt(c, CURLOPT_MAXCONNECTS, (long)keepConns);
+    f_easy_setopt(c, CURLOPT_DNS_CACHE_TIMEOUT, 300L);
+  }
+  struct curl_slist *hs = NULL;
+  if (prepare(c, r, &hs)) {
+    if (slot >= SLOW0 && slot < BG0 && f_easy_setopt(c, CURLOPT_XFERINFOFUNCTION, cancel_progress) == CURLE_OK) {
+      f_easy_setopt(c, CURLOPT_XFERINFODATA, r);
+      f_easy_setopt(c, CURLOPT_NOPROGRESS, 0L);
+    }
+    read_result(c, r, f_easy_perform(c));
+  }
   if (!kept)
     f_easy_cleanup(c);
+  if (hs)
+    f_slist_free_all(hs);
 }
 static void parse_body(Req *r) {
   if (r->body && r->len > 1 && r->len < 16u * 1024 * 1024 && r->status >= 200 && r->status < 300) {
@@ -329,6 +406,22 @@ static void parse_body(Req *r) {
       r->json = cJSON_ParseWithLength((const char *)r->body, r->len);
   }
 }
+static Req *pop_req(Req **head, Req **tail) { /* under mu, with a nonempty queue */
+  Req *r = *head;
+  *head = r->next;
+  if (!*head)
+    *tail = NULL;
+  r->next = NULL;
+  return r;
+}
+static void finish_req(Req *r) { /* under mu */
+  r->next = NULL;
+  if (finishedTail)
+    finishedTail->next = r;
+  else
+    finished = r;
+  finishedTail = r;
+}
 /* disk copies get a thread of their own: behind six stream addons (45 s each) a cached title page would wait as long */
 static void *file_worker(void *arg) {
   plat_thread_background(5);
@@ -337,13 +430,10 @@ static void *file_worker(void *arg) {
     pthread_mutex_lock(&mu);
     while (!fqueue)
       pthread_cond_wait(&fcv, &mu);
-    Req *r = fqueue;
-    fqueue = r->next;
-    if (!fqueue)
-      fqueueTail = NULL;
-    r->next = NULL;
+    Req *r = pop_req(&fqueue, &fqueueTail);
+    fileInflight = r;
     pthread_mutex_unlock(&mu);
-    if (!r->cancelled) {
+    if (!is_cancelled(r)) {
       FILE *f = fopen(r->url, "rb");
       r->status = 404;
       if (f) {
@@ -360,9 +450,8 @@ static void *file_worker(void *arg) {
       parse_body(r);
     }
     pthread_mutex_lock(&mu);
-    r->done = 1;
-    r->next = finished;
-    finished = r;
+    fileInflight = NULL;
+    finish_req(r);
     pthread_mutex_unlock(&mu);
   }
   return NULL;
@@ -374,7 +463,7 @@ unsigned net_file(const char *path, NetCb cb, void *ud) {
   r->ud = ud;
   r->file = 1;
   pthread_mutex_lock(&mu);
-  r->id = nextId++;
+  unsigned id = r->id = nextId++;
   if (fqueueTail)
     fqueueTail->next = r;
   else
@@ -383,7 +472,7 @@ unsigned net_file(const char *path, NetCb cb, void *ud) {
   npending++;
   pthread_cond_signal(&fcv);
   pthread_mutex_unlock(&mu);
-  return r->id;
+  return id;
 }
 static void *worker(void *arg) {
   plat_thread_background(5);
@@ -400,38 +489,231 @@ static void *worker(void *arg) {
       while (!queue)
         pthread_cond_wait(&cv, &mu);
     Req *r;
-    if (slot >= BG0) {
-      r = bgQ;
-      bgQ = r->next;
-      if (!bgQ)
-        bgTail = NULL;
-    } else if (slot >= SLOW0) {
-      r = slowQ;
-      slowQ = r->next;
-      if (!slowQ)
-        slowTail = NULL;
-    } else {
-      r = queue;
-      queue = r->next;
-      if (!queue)
-        queueTail = NULL;
-    }
-    r->next = NULL;
+    if (slot >= BG0)
+      r = pop_req(&bgQ, &bgTail);
+    else if (slot >= SLOW0)
+      r = pop_req(&slowQ, &slowTail);
+    else
+      r = pop_req(&queue, &queueTail);
     inflight[slot] = r;
     pthread_mutex_unlock(&mu);
-    if (!r->cancelled) {
+    if (!is_cancelled(r)) {
       perform(r, slot);
       /* a JSON answer is parsed here, off the drawing thread (catalogs, metadata, streams: tens of ms each on a TV) */
       parse_body(r);
     }
     pthread_mutex_lock(&mu);
     inflight[slot] = NULL;
-    r->done = 1;
-    r->next = finished;
-    finished = r;
+    finish_req(r);
     pthread_mutex_unlock(&mu);
   }
   return NULL;
+}
+static void start_worker(int slot) {
+  pthread_t t;
+  if (pthread_create(&t, NULL, worker, (void *)(size_t)slot) == 0)
+    pthread_detach(t);
+}
+
+/* Give curl_multi_wait a descriptor even while curl has no sockets to poll. A queue or cancellation event
+   wakes it immediately, including on curl versions that predate curl_multi_wakeup. */
+static void slow_wake_close(void) {
+  for (int i = 0; i < 2; i++) {
+    if (slowWake[i] == CURL_SOCKET_BAD)
+      continue;
+#ifdef _WIN32
+    closesocket(slowWake[i]);
+#else
+    close(slowWake[i]);
+#endif
+    slowWake[i] = CURL_SOCKET_BAD;
+  }
+}
+static int slow_wake_open(void) {
+#ifdef _WIN32
+  struct sockaddr_in addr[2] = { 0 };
+  unsigned long nonblock = 1;
+  for (int i = 0; i < 2; i++) {
+    int len = sizeof addr[i];
+    addr[i].sin_family = AF_INET;
+    addr[i].sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    slowWake[i] = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (slowWake[i] == CURL_SOCKET_BAD || bind(slowWake[i], (struct sockaddr *)&addr[i], len) != 0 ||
+        getsockname(slowWake[i], (struct sockaddr *)&addr[i], &len) != 0 ||
+        ioctlsocket(slowWake[i], FIONBIO, &nonblock) != 0)
+      return 0;
+  }
+  return connect(slowWake[0], (struct sockaddr *)&addr[1], sizeof addr[1]) == 0 &&
+         connect(slowWake[1], (struct sockaddr *)&addr[0], sizeof addr[0]) == 0;
+#else
+  return pipe(slowWake) == 0 && fcntl(slowWake[0], F_SETFL, O_NONBLOCK) == 0 &&
+         fcntl(slowWake[1], F_SETFL, O_NONBLOCK) == 0;
+#endif
+}
+static void slow_notify(void) { /* under mu */
+  if (slowWake[1] == CURL_SOCKET_BAD || slowWakePending)
+    return;
+#ifdef _WIN32
+  slowWakePending = send(slowWake[1], "w", 1, 0) == 1;
+#else
+  ssize_t n;
+  do {
+    n = write(slowWake[1], "w", 1);
+  } while (n < 0 && errno == EINTR);
+  slowWakePending = n == 1;
+#endif
+}
+static void slow_drain_wake(void) { /* under mu, before looking for new work or cancellations */
+  if (!slowWakePending)
+    return;
+  char byte;
+#ifdef _WIN32
+  recv(slowWake[0], &byte, 1, 0);
+#else
+  while (read(slowWake[0], &byte, 1) < 0 && errno == EINTR)
+    ;
+#endif
+  slowWakePending = 0;
+}
+static int slow_add(CURLM *m, SlowTransfer *t) {
+  t->easy = f_easy_init();
+  if (!t->easy)
+    return 0;
+  if (!prepare(t->easy, t->req, &t->headers))
+    return 0;
+  f_easy_setopt(t->easy, CURLOPT_DNS_CACHE_TIMEOUT, 300L);
+  if (f_easy_setopt(t->easy, CURLOPT_PRIVATE, (void *)t) != CURLE_OK)
+    return 0;
+  return f_multi_add_handle(m, t->easy) == CURLM_OK;
+}
+static void slow_finish(SlowTransfer *t) {
+  Req *r = t->req;
+  if (t->easy)
+    f_easy_cleanup(t->easy);
+  if (t->headers)
+    f_slist_free_all(t->headers);
+  t->easy = NULL;
+  t->headers = NULL;
+  if (!is_cancelled(r))
+    parse_body(r);
+  pthread_mutex_lock(&mu);
+  t->req = NULL;
+  finish_req(r);
+  pthread_mutex_unlock(&mu);
+}
+static void *slow_worker(void *arg) {
+  CURLM *m = arg;
+  int active = 0;
+  CURLMcode rc;
+  plat_thread_background(5);
+  for (;;) {
+    pthread_mutex_lock(&mu);
+    while (!active && !slowQ)
+      pthread_cond_wait(&slowCv, &mu);
+    slow_drain_wake();
+    pthread_mutex_unlock(&mu);
+
+    for (int i = 0; i < slowLimit; i++) {
+      SlowTransfer *t = &slowActive[i];
+      if (t->req && is_cancelled(t->req)) {
+        rc = f_multi_remove_handle(m, t->easy);
+        if (rc != CURLM_OK)
+          goto failed;
+        slow_finish(t);
+        active--;
+      }
+    }
+    if (active < slowLimit) {
+      pthread_mutex_lock(&mu);
+      for (int i = 0; slowQ && i < slowLimit; i++)
+        if (!slowActive[i].req)
+          slowActive[i].req = pop_req(&slowQ, &slowTail);
+      pthread_mutex_unlock(&mu);
+    }
+    int retry = 0;
+    for (int i = 0; i < slowLimit; i++) {
+      SlowTransfer *t = &slowActive[i];
+      if (t->req && !t->easy) {
+        if (!is_cancelled(t->req) && slow_add(m, t))
+          active++;
+        else {
+          slow_finish(t);
+          retry = 1; /* a skipped request left a slot free */
+        }
+      }
+    }
+    if (!active)
+      continue;
+
+    int running;
+    do {
+      rc = f_multi_perform(m, &running);
+    } while (rc == CURLM_CALL_MULTI_PERFORM);
+    if (rc != CURLM_OK)
+      break;
+    int left;
+    CURLMsg *msg;
+    while ((msg = f_multi_info_read(m, &left))) {
+      if (msg->msg != CURLMSG_DONE)
+        continue;
+      char *slot = NULL;
+      if (f_easy_getinfo(msg->easy_handle, CURLINFO_PRIVATE, &slot) != CURLE_OK || !slot) {
+        rc = CURLM_INTERNAL_ERROR;
+        goto failed;
+      }
+      SlowTransfer *t = (SlowTransfer *)slot;
+      CURLcode result = msg->data.result;
+      rc = f_multi_remove_handle(m, t->easy);
+      if (rc != CURLM_OK)
+        goto failed;
+      read_result(t->easy, t->req, result);
+      slow_finish(t);
+      active--;
+      retry = 1;
+    }
+    if (retry)
+      continue;
+    struct curl_waitfd wake = { slowWake[0], CURL_WAIT_POLLIN, 0 };
+    rc = f_multi_wait(m, &wake, 1, 1000, NULL);
+    if (rc != CURLM_OK)
+      break;
+  }
+
+failed:
+  fprintf(stderr, "[net] slow multi error %d, switching to blocking workers\n", (int)rc);
+  for (int i = 0; i < slowLimit; i++) {
+    SlowTransfer *t = &slowActive[i];
+    if (t->req && (!t->easy || f_multi_remove_handle(m, t->easy) == CURLM_OK))
+      slow_finish(t);
+  }
+  f_multi_cleanup(m);
+  for (int i = 0; i < slowLimit; i++)
+    if (slowActive[i].req)
+      slow_finish(&slowActive[i]);
+  pthread_mutex_lock(&mu);
+  slow_wake_close();
+  slowWakePending = 0;
+  pthread_mutex_unlock(&mu);
+  for (int i = SLOW0 + 1; i < BG0; i++)
+    start_worker(i);
+  return worker((void *)(size_t)SLOW0);
+}
+static int start_slow_worker(void) {
+  if (!f_multi_init || !f_multi_cleanup || !f_multi_setopt || !f_multi_add_handle || !f_multi_remove_handle ||
+      !f_multi_perform || !f_multi_wait || !f_multi_info_read)
+    return 0;
+  CURLM *m = f_multi_init();
+  if (!m)
+    return 0;
+  pthread_t t;
+  if (f_multi_setopt(m, CURLMOPT_MAXCONNECTS, (long)keepConns) != CURLM_OK || !slow_wake_open() ||
+      pthread_create(&t, NULL, slow_worker, m) != 0) {
+    slow_wake_close();
+    f_multi_cleanup(m);
+    return 0;
+  }
+  pthread_detach(t);
+  return 1;
 }
 #if !SB_STATIC_CURL
 /* OpenSSL 1.0 (the TV's, under its libcurl) is safe across threads only with locks the app hands it: without them
@@ -510,20 +792,26 @@ int net_init(const char *ca) {
 #if !SB_STATIC_CURL
   ssl_locks(); /* before the first request and the worker threads */
 #endif
-  f_global_init(CURL_GLOBAL_ALL);
+  if (f_global_init(CURL_GLOBAL_ALL) != CURLE_OK)
+    return 0;
   if (ca)
     snprintf(caPath, sizeof caPath, "%s", ca);
   keep_limits();
   share_make();
-  for (int i = 0; i < WORKERS; i++) {
-    pthread_t t;
-    pthread_create(&t, NULL, worker, (void *)(size_t)i);
-    pthread_detach(t);
-  }
+  const curl_version_info_data *version = f_version_info ? f_version_info(CURLVERSION_NOW) : NULL;
+  int asyncDns = version && (version->features & CURL_VERSION_ASYNCHDNS);
+  int multi = asyncDns && start_slow_worker();
+  if (multi)
+    fprintf(stderr, "[net] slow lane: curl multi, up to %d transfers and %d kept connections\n", slowLimit, keepConns);
+  else
+    fprintf(stderr, "[net] slow lane: blocking workers (%s)\n", asyncDns ? "curl multi unavailable" : "no async DNS");
+  for (int i = 0; i < WORKERS; i++)
+    if (!multi || i < SLOW0 || i >= BG0)
+      start_worker(i);
   {
     pthread_t t;
-    pthread_create(&t, NULL, file_worker, NULL);
-    pthread_detach(t);
+    if (pthread_create(&t, NULL, file_worker, NULL) == 0)
+      pthread_detach(t);
   }
   return 1;
 }
@@ -536,6 +824,8 @@ static void push_req(Req *r) { /* under mu */
     bgTail = r;
     pthread_cond_signal(&bgCv);
   } else if (r->timeoutMs > 20000) {
+    if (!slowQ)
+      slow_notify();
     if (slowTail)
       slowTail->next = r;
     else
@@ -560,17 +850,18 @@ static unsigned enqueue_x(const char *url, const char *hdr, const char *post, co
   r->url = strdup(url);
   r->hdr = hdr ? strdup(hdr) : NULL;
   r->post = post ? strdup(post) : NULL;
-  r->ctype = ctype ? strdup(ctype) : NULL;
+  r->postLen = post ? strlen(post) : 0;
+  r->ctype = post ? strdup(ctype ? ctype : "application/json") : NULL;
   r->cb = cb;
   r->ud = ud;
   r->timeoutMs = timeoutMs;
   r->size = size;
   pthread_mutex_lock(&mu);
-  r->id = nextId++;
+  unsigned id = r->id = nextId++;
   push_req(r);
   npending++;
   pthread_mutex_unlock(&mu);
-  return r->id;
+  return id;
 }
 static unsigned enqueue_c(const char *url, const char *hdr, const char *post, const char *ctype, long timeoutMs,
                           NetCb cb, void *ud) {
@@ -619,59 +910,79 @@ unsigned net_send(const char *method, const char *url, const char *headers, cons
   Req *r = calloc(1, sizeof *r);
   r->url = strdup(url);
   r->hdr = headers ? strdup(headers) : NULL;
-  r->method = strcmp(method, "POST") ? strdup(method) : NULL;
   r->cb = cb;
   r->ud = ud;
   r->timeoutMs = timeoutMs;
-  r->post = malloc(len + 1);
-  memcpy(r->post, body, len);
-  r->post[len] = 0;
-  r->postLen = len;
+  if (len || strcmp(method, "GET")) {
+    r->method = strcmp(method, "POST") ? strdup(method) : NULL;
+    r->post = malloc(len + 1);
+    if (len)
+      memcpy(r->post, body, len);
+    r->post[len] = 0;
+    r->postLen = len;
+  }
   pthread_mutex_lock(&mu);
-  r->id = nextId++;
+  unsigned id = r->id = nextId++;
   push_req(r);
   npending++;
   pthread_mutex_unlock(&mu);
-  return r->id;
+  return id;
 }
-/* only while it waits in a queue: a request already running finishes, so its kept connection is not torn down */
+/* Unlink under mu so a cancelled request can finish even when all workers are busy. */
+static int cancel_queued(unsigned id, Req **head, Req **tail) {
+  Req *prev = NULL;
+  for (Req *r = *head; r; prev = r, r = r->next) {
+    if (r->id != id)
+      continue;
+    if (prev)
+      prev->next = r->next;
+    else
+      *head = r->next;
+    if (*tail == r)
+      *tail = prev;
+    r->cancelled = 1;
+    finish_req(r);
+    return 1;
+  }
+  return 0;
+}
+/* A running request finishes so its connection can be reused. */
 void net_cancel_queued(unsigned id) {
   pthread_mutex_lock(&mu);
-  for (Req *r = queue; r; r = r->next)
-    if (r->id == id)
-      r->cancelled = 1;
-  for (Req *r = slowQ; r; r = r->next)
-    if (r->id == id)
-      r->cancelled = 1;
-  for (Req *r = bgQ; r; r = r->next)
-    if (r->id == id)
-      r->cancelled = 1;
+  if (!cancel_queued(id, &queue, &queueTail) && !cancel_queued(id, &slowQ, &slowTail))
+    cancel_queued(id, &bgQ, &bgTail);
   pthread_mutex_unlock(&mu);
 }
 void net_cancel(unsigned id) {
   pthread_mutex_lock(&mu);
-  for (Req *r = queue; r; r = r->next)
-    if (r->id == id)
-      r->cancelled = 1;
-  for (Req *r = slowQ; r; r = r->next)
-    if (r->id == id)
-      r->cancelled = 1;
-  for (Req *r = bgQ; r; r = r->next)
-    if (r->id == id)
-      r->cancelled = 1;
-  for (Req *r = fqueue; r; r = r->next)
-    if (r->id == id)
-      r->cancelled = 1;
+  if (cancel_queued(id, &queue, &queueTail) || cancel_queued(id, &slowQ, &slowTail) ||
+      cancel_queued(id, &bgQ, &bgTail) || cancel_queued(id, &fqueue, &fqueueTail)) {
+    pthread_mutex_unlock(&mu);
+    return;
+  }
+  if (fileInflight && fileInflight->id == id)
+    fileInflight->cancelled = 1;
   for (int i = 0; i < WORKERS; i++)
     if (inflight[i] && inflight[i]->id == id)
       inflight[i]->cancelled = 1;
+  for (int i = 0; i < slowLimit; i++) {
+    Req *r = slowActive[i].req;
+    if (r && r->id == id) {
+      r->cancelled = 1;
+      slow_notify();
+      break;
+    }
+  }
   for (Req *r = finished; r; r = r->next)
     if (r->id == id)
       r->cancelled = 1;
   pthread_mutex_unlock(&mu);
 }
 int net_pending(void) {
-  return npending;
+  pthread_mutex_lock(&mu);
+  int n = npending;
+  pthread_mutex_unlock(&mu);
+  return n;
 }
 /* parsed answers are freed on a thread of their own: deleting a catalog's tree (thousands of small blocks, made by a
    worker) took 10-25 ms of a frame on the TV */
@@ -737,20 +1048,14 @@ cJSON *net_json(const unsigned char *body) {
 }
 void net_pump(void) {
   pthread_mutex_lock(&mu);
-  Req *list = finished;
-  finished = NULL;
-  pthread_mutex_unlock(&mu);
-  /* finished is LIFO; deliver in completion order */
-  Req *rev = NULL;
-  while (list) {
-    Req *n = list->next;
-    list->next = rev;
-    rev = list;
-    list = n;
-  }
-  while (rev) {
-    Req *r = rev;
-    rev = r->next;
+  /* Keep the rest of this batch visible to cancellation, including from a callback. */
+  Req *last = finishedTail;
+  while (last) {
+    Req *r = pop_req(&finished, &finishedTail);
+    if (r == last)
+      last = NULL;
+    int cancelled = r->cancelled;
+    pthread_mutex_unlock(&mu);
     curBody = r->body;
     curJson = r->json;
     r->json = NULL;
@@ -760,7 +1065,7 @@ void net_pump(void) {
         slowLog = getenv("SB_SLOWLOG") != NULL;
       Uint32 tc0 = slowLog ? SDL_GetTicks() : 0;
       if (r->cb) {
-        if (r->cancelled)
+        if (cancelled)
           r->cb(-1, NULL, 0, r->ud);
         else
           r->cb(r->status, r->body ? r->body : (const unsigned char *)"", r->len, r->ud);
@@ -772,9 +1077,6 @@ void net_pump(void) {
       net_json_free(curJson);
     curJson = NULL;
     curBody = NULL; /* the callback did not want the tree */
-    pthread_mutex_lock(&mu);
-    npending--;
-    pthread_mutex_unlock(&mu);
     free(r->url);
     free(r->hdr);
     free(r->post);
@@ -782,7 +1084,10 @@ void net_pump(void) {
     free(r->method);
     free(r->body);
     free(r);
+    pthread_mutex_lock(&mu);
+    npending--;
   }
+  pthread_mutex_unlock(&mu);
 }
 unsigned char *net_fetch_sync(const char *url, size_t *len, int *status, int timeoutMs) {
   return net_fetch_sync_hdr(url, NULL, len, status, timeoutMs);
