@@ -4281,9 +4281,13 @@ static void open_tray(int kind) {
   for (int i = 0; i < 4; i++)
     mo_set(&P.tray.plA[i], 0);
 }
+static int ph_item_centre(const char *id, float *x, float *y);
 static void tray_origin(void) {
   int ak = P.tray.kind < 0 ? -P.tray.kind : P.tray.kind;
-  int b = btn_index(ak == 1 || ak == 5 ? "eps" : ak == 2 ? "src" : ak == 3 ? "aud" : "subs");
+  const char *id = ak == 1 || ak == 5 ? "eps" : ak == 2 ? "src" : ak == 3 ? "aud" : "subs";
+  if (form_touch() && ph_item_centre(id, &P.tray.ox, &P.tray.oy))
+    return; /* a phone: from its item in the row (or the menu's dots, when it moved there) */
+  int b = btn_index(id);
   P.tray.ox = b >= 0 ? P.btns[b].x0 + P.btns[b].w / 2 : SB_W - 72 - 39;
   P.tray.oy = SB_H - 54 - 47;
 } /* its button's centre, measured again on close: the tray may have grown since */
@@ -8739,6 +8743,20 @@ static void ph_row_add(const char *id, const char *lb, int on) {
   PHG.row[PHG.nrow].on = on;
   PHG.nrow++;
 }
+static int ph_item_centre(const char *id, float *x, float *y) {
+  for (int i = 0; i < PHG.nact; i++)
+    if (!strcmp(PHG.act[i].id, id)) {
+      *x = PHG.act[i].r.x + PHG.act[i].r.w / 2;
+      *y = PHG.act[i].r.y + PHG.act[i].r.h / 2;
+      return 1;
+    }
+  if (PHG.more.w > 0) {
+    *x = PHG.more.x + PHG.more.w / 2;
+    *y = PHG.more.y + PHG.more.h / 2;
+    return 1;
+  }
+  return 0;
+}
 static void ph_geo(void) {
   float d = tdp(), W = SB_W, H = SB_H, st = 0, sb = 0, sl = 0, sr = 0;
   form_safe(&st, &sb, &sl, &sr);
@@ -8766,8 +8784,9 @@ static void ph_geo(void) {
   PHG.pp = (PhR){ cx - ps / 2, PHG.cy - ps / 2, ps, ps };
   PHG.rw = (PhR){ cx - off - ss / 2, PHG.cy - ss / 2, ss, ss };
   PHG.ff = (PhR){ cx + off - ss / 2, PHG.cy - ss / 2, ss, ss };
-  /* the bottom, from 14 dp over the gesture inset: the action row, the bar, the times */
-  float yb = H - PHG.gb - 14 * d, ay = yb - 48 * d;
+  /* the bottom, 14 dp over the screen's edge (or a cutout there): the action row, the bar, the times. The system's
+     gesture strip may lie under the row: a tap there is the app's, only a swipe starting in it is the system's */
+  float yb = H - sb - 14 * d, ay = yb - 48 * d;
   PHG.barX = PHG.sl;
   PHG.barW = W - PHG.sl - PHG.sr;
   PHG.barCy = ay - 6 * d - 2 * d;
@@ -8857,7 +8876,7 @@ static void ph_geo(void) {
       float w = text_width(PHG.row[i].lb, ph_px(15), 500, 0);
       mw = w > mw ? w : mw;
     }
-    mw = fmaxf(200 * d, mw + 32 * d + 36 * d);
+    mw = fmaxf(200 * d, mw + 32 * d + 36 * d + 8 * d);
     float px = PHG.more.x + PHG.more.w - mw, py = PHG.more.y + PHG.more.h + 4 * d;
     PHG.panel = (PhR){ px, py, mw, PHG.nrow * 48 * d + 8 * d };
     for (int i = 0; i < PHG.nrow; i++)
@@ -9019,8 +9038,8 @@ static void ph_osd_draw(void) {
     for (int i = 0; i < PHG.nrow; i++) {
       const PhR *r = &PHG.row[i].r;
       int pr = ph_px(15);
-      text_draw(PHG.row[i].lb, r->x + 16 * d, r->y + (r->h - text_line_height(pr)) / 2, pr, 500, WHITE_A(240), 0,
-                r->w - 32 * d - 36 * d, ALIGN_LEFT);
+      text_draw(PHG.row[i].lb, r->x + 16 * d, r->y + (r->h - text_line_height(pr)) / 2, pr, 500, WHITE_A(240), 0, 0,
+                ALIGN_LEFT); /* (the panel is as wide as its longest row: no ellipsis) */
       if (PHG.row[i].on)
         icon_draw("check", r->x + r->w - 16 * d - 20 * d, r->y + 14 * d, 20 * d, ACC);
     }

@@ -134,13 +134,14 @@ public final class SbPlayer {
             // not carry on over this one: it held a film silent for seconds
             if (volAnim != null) { volAnim.cancel(); volAnim = null; }
             player.setVolume(1f);
-            player.setPlaybackParameters(androidx.media3.common.PlaybackParameters.DEFAULT);
+            player.setPlaybackParameters(new androidx.media3.common.PlaybackParameters(rate));   // the speed chosen for this film (another source keeps it)
             player.prepare(); player.setPlayWhenReady(true);
             refresh();
         });
     }
     public static void unload() { ui.post(() -> { if (volAnim != null) { volAnim.cancel(); volAnim = null; } if (player != null) { player.stop(); player.clearMediaItems(); } clip.setVisibility(View.INVISIBLE); subs.setCues(new ArrayList<>()); keepOn(false); everReady = firstFrame = false; refresh(); }); }
-    public static void setRate(final float rate) { ui.post(() -> { if (player != null) player.setPlaybackParameters(new androidx.media3.common.PlaybackParameters(rate)); }); }
+    static volatile float rate = 1;   // the app sets 1 when a film opens or closes
+    public static void setRate(final float r) { rate = r; ui.post(() -> { if (player != null) player.setPlaybackParameters(new androidx.media3.common.PlaybackParameters(r)); }); }
     public static void play() { ui.post(() -> { if (player != null) player.play(); }); }
     public static void pause() { ui.post(() -> { if (player != null) player.pause(); }); }
     public static void seek(double sec) { ui.post(() -> { if (player != null) { seeking = true; player.seekTo((long) (sec * 1000)); refresh(); } }); }
