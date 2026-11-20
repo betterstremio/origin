@@ -316,13 +316,13 @@
 "%s family films": "Familiefilms · %s",
 "%s family series": "Familieseries · %s",
 "Because you watched %s": "Omdat je %s hebt gekeken",
-"Speed": "Speed",
-"Lock": "Lock",
-"Screen locked": "Screen locked",
-"Tap to unlock": "Tap to unlock",
-"Fill": "Fill",
-"Pinch out for Zoom, in for Original": "Pinch out for Zoom, in for Original",
-"Pinch in for Fill": "Pinch in for Fill",
-"Pinch out for Fill": "Pinch out for Fill",
-"Fixed": "Fixed"
+"Speed": "Snelheid",
+"Lock": "Vergrendelen",
+"Screen locked": "Scherm vergrendeld",
+"Tap to unlock": "Tik om te ontgrendelen",
+"Fill": "Vullen",
+"Pinch out for Zoom, in for Original": "Spreiden voor Zoom, knijpen voor Origineel",
+"Pinch in for Fill": "Knijpen voor Vullen",
+"Pinch out for Fill": "Spreiden voor Vullen",
+"Fixed": "Vast"
 }

@@ -316,13 +316,13 @@
 "%s family films": "Aile filmleri · %s",
 "%s family series": "Aile dizileri · %s",
 "Because you watched %s": "%s izlediğiniz için",
-"Speed": "Speed",
-"Lock": "Lock",
-"Screen locked": "Screen locked",
-"Tap to unlock": "Tap to unlock",
-"Fill": "Fill",
-"Pinch out for Zoom, in for Original": "Pinch out for Zoom, in for Original",
-"Pinch in for Fill": "Pinch in for Fill",
-"Pinch out for Fill": "Pinch out for Fill",
-"Fixed": "Fixed"
+"Speed": "Hız",
+"Lock": "Kilitle",
+"Screen locked": "Ekran kilitli",
+"Tap to unlock": "Kilidi açmak için dokun",
+"Fill": "Doldur",
+"Pinch out for Zoom, in for Original": "Zoom için aç, Orijinal için kıs",
+"Pinch in for Fill": "Doldurmak için kıs",
+"Pinch out for Fill": "Doldurmak için aç",
+"Fixed": "Sabit"
 }

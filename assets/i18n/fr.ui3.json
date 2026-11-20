@@ -316,13 +316,13 @@
 "%s family films": "Films familiaux · %s",
 "%s family series": "Séries familiales · %s",
 "Because you watched %s": "Parce que vous avez regardé %s",
-"Speed": "Speed",
-"Lock": "Lock",
-"Screen locked": "Screen locked",
-"Tap to unlock": "Tap to unlock",
-"Fill": "Fill",
-"Pinch out for Zoom, in for Original": "Pinch out for Zoom, in for Original",
-"Pinch in for Fill": "Pinch in for Fill",
-"Pinch out for Fill": "Pinch out for Fill",
-"Fixed": "Fixed"
+"Speed": "Vitesse",
+"Lock": "Verrouiller",
+"Screen locked": "Écran verrouillé",
+"Tap to unlock": "Toucher pour déverrouiller",
+"Fill": "Remplir",
+"Pinch out for Zoom, in for Original": "Écarter pour Zoom, rapprocher pour Original",
+"Pinch in for Fill": "Rapprocher pour Remplir",
+"Pinch out for Fill": "Écarter pour Remplir",
+"Fixed": "Fixe"
 }

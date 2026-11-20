@@ -316,13 +316,13 @@
 "%s family films": "أفلام عائلية · %s",
 "%s family series": "مسلسلات عائلية · %s",
 "Because you watched %s": "لأنك شاهدت %s",
-"Speed": "Speed",
-"Lock": "Lock",
-"Screen locked": "Screen locked",
-"Tap to unlock": "Tap to unlock",
-"Fill": "Fill",
-"Pinch out for Zoom, in for Original": "Pinch out for Zoom, in for Original",
-"Pinch in for Fill": "Pinch in for Fill",
-"Pinch out for Fill": "Pinch out for Fill",
-"Fixed": "Fixed"
+"Speed": "السرعة",
+"Lock": "قفل",
+"Screen locked": "الشاشة مقفلة",
+"Tap to unlock": "اضغط لفتح القفل",
+"Fill": "ملء",
+"Pinch out for Zoom, in for Original": "تباعد للتكبير، تقارب للأصلي",
+"Pinch in for Fill": "تقارب للملء",
+"Pinch out for Fill": "تباعد للملء",
+"Fixed": "ثابت"
 }

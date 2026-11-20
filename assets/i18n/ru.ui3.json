@@ -316,13 +316,13 @@
 "%s family films": "Семейные фильмы · %s",
 "%s family series": "Семейные сериалы · %s",
 "Because you watched %s": "Потому что вы смотрели «%s»",
-"Speed": "Speed",
-"Lock": "Lock",
-"Screen locked": "Screen locked",
-"Tap to unlock": "Tap to unlock",
-"Fill": "Fill",
-"Pinch out for Zoom, in for Original": "Pinch out for Zoom, in for Original",
-"Pinch in for Fill": "Pinch in for Fill",
-"Pinch out for Fill": "Pinch out for Fill",
-"Fixed": "Fixed"
+"Speed": "Скорость",
+"Lock": "Блокировка",
+"Screen locked": "Экран заблокирован",
+"Tap to unlock": "Нажмите, чтобы разблокировать",
+"Fill": "Заполнить",
+"Pinch out for Zoom, in for Original": "Раздвинуть: Увеличение, сдвинуть: Оригинал",
+"Pinch in for Fill": "Сдвинуть: Заполнить",
+"Pinch out for Fill": "Раздвинуть: Заполнить",
+"Fixed": "Фиксированная"
 }
