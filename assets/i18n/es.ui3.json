@@ -315,5 +315,10 @@
 "%s animated series": "Series de animación · %s",
 "%s family films": "Películas familiares · %s",
 "%s family series": "Series familiares · %s",
-"Because you watched %s": "Porque viste %s"
+"Because you watched %s": "Porque viste %s",
+"Speed": "Speed",
+"Lock": "Lock",
+"Screen locked": "Screen locked",
+"Tap to unlock": "Tap to unlock",
+"Fill": "Fill"
 }

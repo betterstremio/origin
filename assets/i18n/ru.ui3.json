@@ -315,5 +315,10 @@
 "%s animated series": "Анимационные сериалы · %s",
 "%s family films": "Семейные фильмы · %s",
 "%s family series": "Семейные сериалы · %s",
-"Because you watched %s": "Потому что вы смотрели «%s»"
+"Because you watched %s": "Потому что вы смотрели «%s»",
+"Speed": "Speed",
+"Lock": "Lock",
+"Screen locked": "Screen locked",
+"Tap to unlock": "Tap to unlock",
+"Fill": "Fill"
 }

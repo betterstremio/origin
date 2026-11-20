@@ -315,5 +315,10 @@
 "%s animated series": "Animasyon dizileri · %s",
 "%s family films": "Aile filmleri · %s",
 "%s family series": "Aile dizileri · %s",
-"Because you watched %s": "%s izlediğiniz için"
+"Because you watched %s": "%s izlediğiniz için",
+"Speed": "Speed",
+"Lock": "Lock",
+"Screen locked": "Screen locked",
+"Tap to unlock": "Tap to unlock",
+"Fill": "Fill"
 }

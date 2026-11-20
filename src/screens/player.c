@@ -34,6 +34,8 @@
 #include "core/subsync.h"
 #include "ui/asssubs.h"
 #include "core/form.h"
+#include "platform/plat.h"
+#include "ui/nerds.h"
 #include <math.h>
 
 /* ---- the stream's text, read for the info chips: resolution, HDR, audio ---- */
@@ -308,6 +310,11 @@ static struct {
   } pg; /* the viewer notice: an age and what for, as the picture comes, gone in 5 s */
   Mo dlyA, dlyR;
   int dlyF;
+  /* a phone's controls: the fade of all of them, of all but the bar (a finger on the bar), of the lock chip and of the
+     menu; the lock, the menu, the chosen speed, how long the chip stays, a finger scrubbing */
+  Mo phA, phS, phC, phM;
+  int locked, menu, rateI, scrub;
+  double chipUntil;
   double dlyAt; /* the delay card (mode 4): its showing, its focus ring's place, the focused button, when the value last
                    changed */
   double hideAt;
@@ -492,6 +499,7 @@ static MkvSession *mkv; /* the subtitle reader of the stream playing (outside P:
 static unsigned p2pTok;
 static void close_player(int goNext, int goSim);
 static void show_osd(int keepFocus);
+static void ph_chip_show(void);
 static void hide_osd(void);
 static void render_tray(int fresh);
 static void tray_origin(void);
@@ -2723,6 +2731,8 @@ static void arm_hide(void) {
 }
 static void chips_in(void);
 static void show_osd(int keepFocus) {
+  if (P.locked)
+    return; /* locked: the controls stay away until the chip is tapped */
   if (P.mode == 0) {
     P.mode = 1;
     if (!keepFocus) {
@@ -2740,6 +2750,7 @@ static void show_osd(int keepFocus) {
 static void hide_osd(void) {
   P.mode = 0;
   P.osd = 0;
+  P.menu = 0;
 }
 static void toggle(void) {
   if (paused())
@@ -4650,6 +4661,14 @@ static void act(const char *id) {
 static void back(void) {
   if (P.closing)
     return;
+  if (P.locked) {
+    ph_chip_show();
+    return;
+  } /* locked: Back shows the chip, it doesn't leave */
+  if (P.menu) {
+    P.menu = 0;
+    return;
+  }
   if (P.mode == 2) {
     tray_back();
     return;
@@ -5153,6 +5172,9 @@ static void roll_draw(float cx, float y, float lh, uint32_t col) {
 }
 static void draw_osd(void);
 static void draw_tray(void);
+static float tdp(void);
+static void ph_shades(void);
+static void ph_osd_draw(void);
 /* another source or episode from inside the player: the controls as they are on screen at that moment, taken ONCE as
    a picture, fade off as the controls do (.2 s) while the art comes back over them (.45 s); freed once gone */
 static GfxTarget handSnap;
@@ -5414,6 +5436,10 @@ static void on_best_done(const Stream *s, const BestRate *r, void *ud) {
    the player shows that very picture, already loaded, so it always flies in and is never drawn again */
 static char pageLogo[512], pageLogoId[64];
 static void open_title(const char *type, const char *id) {
+  if (P.open && P.rateI) {
+    P.rateI = 0;
+    video_set_rate(1);
+  } /* a new film plays at normal speed */
   if (bestTok) {
     best_choose_cancel(bestTok);
     bestTok = 0;
@@ -5430,6 +5456,7 @@ static void open_title(const char *type, const char *id) {
   if (P.open && strcmp(P.id, id)) {
     P.name[0] = P.poster[0] = P.bg[0] = P.logo[0] = P.epTitle[0] = P.year[0] = P.genre[0] = 0;
     P.season = P.episode = 0;
+    P.locked = P.menu = P.scrub = 0;
     if (P.meta) {
       cJSON_Delete(P.meta);
       P.meta = NULL;
@@ -5761,6 +5788,10 @@ static void close_player(int goNext, int goSim) {
     bestTok = 0;
   }
   P.closing = 1;
+  if (P.rateI) {
+    P.rateI = 0;
+    video_set_rate(1);
+  }
   closeArt = !P.live && P.artA.v > 0.999f;
   closeT0 = now_();
   sx_begin_quick(0); /* the player's logo moves back to the page */
@@ -6096,6 +6127,13 @@ static void css(void) {
     mo_to(&P.dim, osd || pz ? 1 : skm ? .6f : 0, .3f, C_EASE, 0);
     mo_to(&P.dimT, osd || pz ? 1 : 0, .3f, C_EASE, 0);
   }
+  if (form_touch()) {
+    int up = osd && !tr && P.mode != 4 && !P.locked; /* a phone's controls: one fade, 0.2 s */
+    mo_to(&P.phA, up ? 1 : 0, .2f, C_EASE, 0);
+    mo_to(&P.phS, P.scrub ? 0 : 1, .12f, C_EASE, 0);
+    mo_to(&P.phC, P.locked && now_() < P.chipUntil ? 1 : 0, .2f, C_EASE, 0);
+    mo_to(&P.phM, P.menu && up ? 1 : 0, .15f, C_EASE, 0);
+  }
   mo_to(&P.vig, pz ? 1 : 0, .9f, C_EASE, 0);
   mo_to(&P.pzA, pz ? 1 : 0, .3f, C_EASE, 0);
   if (!P.closing && !ss && (!P.live || P.artA.v > 0.02f)) {
@@ -6129,8 +6167,8 @@ static void css(void) {
 
   mo_to(&P.prA, P.prompt.k ? 1 : 0, .3f, C_EASE, 0);
   mo_to(&P.prY, P.prompt.k ? 0 : 20, .3f, C_OUT, 0);
-  mo_to(&P.prB, P.osd ? 440 : 104, .3f, C_EASE, 0);
-  mo_to(&P.subB, tr ? SB_H * 0.62f : P.osd ? 420 : P.skm ? 200 : SB_H * 0.08f, .3f, C_EASE, 0);
+  mo_to(&P.prB, P.osd ? (form_touch() ? 200 : 440) : 104, .3f, C_EASE, 0);
+  mo_to(&P.subB, tr ? SB_H * 0.62f : P.osd ? (form_touch() ? 230 : 420) : P.skm ? 200 : SB_H * 0.08f, .3f, C_EASE, 0);
   mo_to(&P.hvA, P.hvOn ? 1 : 0, .15f, C_EASE, 0);
   mo_to(&P.ccS, strcmp(P.curSub, "off") ? 0 : 1, .26f, C_OUT, 0);
   mo_to(&P.p2pA, P.isP2p && P.p2pLine[0] && osd ? 1 : 0, .3f, C_EASE, 0);
@@ -6220,7 +6258,8 @@ void player_tick(float dt) {
                &P.knA,        &P.prA,        &P.prY,        &P.prB,       &P.subB,       &P.ccS,       &P.dlyA,
                &P.dlyR,       &P.p2pA,       &P.focX,       &P.focY,      &P.focW,       &P.focH,      &P.focA,
                &P.tipA,       &P.hvA,        &P.volA,       &P.tray.open, &P.tray.openA, &P.tray.rowX, &P.tray.tabsX,
-               &P.tray.ringX, &P.tray.ringY, &P.tray.ringA, &RL.t };
+               &P.tray.ringX, &P.tray.ringY, &P.tray.ringA, &RL.t,        &P.phA,        &P.phS,       &P.phC,
+               &P.phM };
   if (P.skA.v <= 0.001f && !P.skOn)
     RL.key[0] = 0; /* the pill gone: its next time shows at once */
   for (size_t i = 0; i < sizeof mo / sizeof *mo; i++)
@@ -6434,7 +6473,7 @@ void player_tick(float dt) {
       P.skOn = 0;
       P.skm = 0;
     }
-    if (P.mode == 1 && now_() >= P.hideAt && !paused() && P.seekT < 0)
+    if (P.mode == 1 && now_() >= P.hideAt && !paused() && P.seekT < 0 && !P.menu && !P.scrub)
       hide_osd();
     if (vs == VID_PLAYING && now_() - P.lastSave >= 10) {
       save_progress(0);
@@ -7003,13 +7042,15 @@ static void draw_osd(void) {
         trkC = barTop + L25 / 2, ttlBot = barTop - 32;
   bake();
   /* the shades: the bottom for the controls, the top for the clock, the vignette when paused */
-  if (P.dim.v > 0.001f) {
+  if (form_touch())
+    ph_shades();
+  if (!form_touch() && P.dim.v > 0.001f) {
     gfx_opacity_push(P.dim.v);
     gfx_rrect_v(0, H * 0.44f, W, H * 0.56f * 0.54f, 0, BLACK_A(0), BLACK_A(140));
     gfx_rrect_v(0, H * 0.44f + H * 0.56f * 0.54f, W, H * 0.56f * 0.46f, 0, BLACK_A(140), BLACK_A(224));
     gfx_opacity_pop();
   }
-  if (P.dimT.v > 0.001f) {
+  if (!form_touch() && P.dimT.v > 0.001f) {
     gfx_opacity_push(P.dimT.v);
     gfx_rrect_v(0, 0, W, 240, 0, BLACK_A(140), BLACK_A(0));
     gfx_opacity_pop();
@@ -7020,7 +7061,7 @@ static void draw_osd(void) {
   /* buffering: a quarter of the ring turning */
   if (P.bufA.v > 0.001f) {
     gfx_opacity_push(P.bufA.v);
-    float cx = W / 2, cy = H / 2 - 62 + 40;
+    float cx = W / 2, cy = form_touch() ? H / 2 - 6 * tdp() : H / 2 - 62 + 40; /* (a phone: where play / pause is) */
     gfx_ring(cx - 40, cy - 40, 80, 80, 40, 5, WHITE_A(36));
     float ph = clock_ph(0.9) * 6.2832f;
     for (int i = 0; i <= 20; i++) {
@@ -7035,6 +7076,10 @@ static void draw_osd(void) {
      come in one after the other */
   if (P.pgA.v > 0.001f) {
     float x = 72 + P.pgY.v, y = 52 + (46 + 14) * P.p2pA.v, h = 52, t = (float)(now_() - P.pg.at);
+    if (form_touch()) { /* a phone: under the title line, the sides' width in from the edge */
+      x = 40 * tdp() + P.pgY.v;
+      y = (12 + 52 * P.phA.v) * tdp() + (46 + 14) * P.p2pA.v;
+    }
     char ag[40];
     if (P.pg.age > 0)
       snprintf(ag, sizeof ag, "%d+", P.pg.age);
@@ -7080,14 +7125,15 @@ static void draw_osd(void) {
     gfx_opacity_push(P.p2pA.v);
     static TMemo p2W;
     float tw = tm_width(&p2W, P.p2pLine, 24, 600, 0), w = 16 + 10 + 12 + tw + 20 + 4;
-    lglass_shell(72, 52, w, 46, 23, RGBA(10, 12, 22, 150), 1);
-    gfx_circle(72 + 2 + 16 + 5, 52 + 23, 5, RGB(0x4a, 0xde, 0x80));
-    xline_draw(&stX[2], P.p2pLine, 72 + 2 + 16 + 10 + 12, 52 + (46 - text_line_height(24)) / 2, 24, WHITE_A(255), 0,
+    float cx0 = form_touch() ? 40 * tdp() : 72, cy0 = form_touch() ? (12 + 52 * P.phA.v) * tdp() : 52;
+    lglass_shell(cx0, cy0, w, 46, 23, RGBA(10, 12, 22, 150), 1);
+    gfx_circle(cx0 + 2 + 16 + 5, cy0 + 23, 5, RGB(0x4a, 0xde, 0x80));
+    xline_draw(&stX[2], P.p2pLine, cx0 + 2 + 16 + 10 + 12, cy0 + (46 - text_line_height(24)) / 2, 24, WHITE_A(255), 0,
                ALIGN_LEFT);
     gfx_opacity_pop();
   }
   /* top right: the clock, the pages' own (a new minute: only its changed digits crossfade), and when it ends */
-  if (P.topR.v > 0.001f) {
+  if (!form_touch() && P.topR.v > 0.001f) {
     gfx_opacity_push(P.topR.v);
     gfx_offset_push(0, P.topY.v);
     float fsR =
@@ -7118,7 +7164,7 @@ static void draw_osd(void) {
   }
   /* bottom left: the title's art, S:E and its name, the info chips, year · genre · via addon (laid out from the bar up)
    */
-  if (P.ttlA.v > 0.001f) {
+  if (!form_touch() && P.ttlA.v > 0.001f) {
     gfx_opacity_push(P.ttlA.v);
     gfx_offset_push(P.ttlX.v, P.ttlY.v);
     static char viaSrc[96], mt2[96];
@@ -7258,7 +7304,7 @@ static void draw_osd(void) {
   }
   /* the bar: time, buffered, the intro / recap / credits marks, the progress, the knob, the pointer's time and the seek
    * pill */
-  if (P.barA.v > 0.001f) {
+  if (!form_touch() && P.barA.v > 0.001f) {
     gfx_opacity_push(P.barA.v);
     gfx_offset_push(0, P.barY.v);
     double d = dur();
@@ -7338,7 +7384,7 @@ static void draw_osd(void) {
     gfx_opacity_pop();
   }
   /* the buttons: one accent pill slides under the focused one and its name fades in */
-  if (P.btnA.v > 0.001f) {
+  if (!form_touch() && P.btnA.v > 0.001f) {
     gfx_opacity_push(P.btnA.v);
     gfx_offset_push(nudge_x(&P.nudge) * (P.mode == 1 && P.row == 0), P.btnY.v);
     int fi = P.mode == 1 && P.row == 0 ? P.bIdx : -1;
@@ -8229,7 +8275,6 @@ static void draw_tray(void) {
   gfx_scale_pop();
   gfx_opacity_pop();
 }
-static void ph_controls_draw(void);
 void player_draw(void) {
   if (!P.open)
     return;
@@ -8237,7 +8282,7 @@ void player_draw(void) {
   gfx_opacity_push(a);
   if (P.live && P.artA.v < 0.999f) {
     draw_osd();
-    ph_controls_draw();
+    ph_osd_draw();
     draw_tray();
     vol_draw();
   } else if (P.artA.v < 0.999f)
@@ -8581,35 +8626,441 @@ static float tdp(void) {
   float s = gfx_scale();
   return s > 0 ? form_density() / s : 1;
 } /* layout units per dp */
-static void ph_centres(float *cx, float *cy, float *gap, float *r) {
-  float d = tdp();
-  *cx = SB_W / 2;
-  *cy = SB_H * 0.3f; /* (above the title and its chips) */
-  *gap = 128 * d;
-  *r = 36 * d;
+/* ---- a phone's controls (core/form.h): one table of rectangles, PHG, filled by ph_geo() from the canvas, the dp and
+   the system's insets. The drawing and the finger's hit tests both read it, nothing else holds a number. Sizes are in
+   dp (tdp() layout units each); the mockups in so/phone-player-mockups are the reference ---- */
+typedef struct {
+  float x, y, w, h;
+} PhR;
+#define PH_ACTS 8
+#define PH_ROWS 12
+static struct PhGeo {
+  float d, W, H, sl, sr, gb; /* a dp, the canvas, the sides (cutouts) and the bottom gesture inset */
+  PhR back, more, rw, pp, ff, band, chip, panel;
+  float topY, titleX, titleW, cy, barX, barW, barCy, timesY, k;
+  int nact;
+  struct {
+    PhR r;
+    const char *id, *icon;
+    char lb[48];
+    int iconOnly;
+  } act[PH_ACTS];
+  int nrow; /* the menu's rows: its own, then what the row had no room for */
+  struct {
+    PhR r;
+    const char *id;
+    char lb[48];
+    int on;
+  } row[PH_ROWS];
+} PHG;
+static const float PH_RATES[6] = {
+  1, 1.25f, 1.5f, 2, 0.5f, 0.75f
+}; /* a tap on Speed steps through them in this order */
+static int ph_px(float sp) {
+  return (int)(sp * tdp() + 0.5f);
 }
-static int ph_in(float x, float y, float cx, float cy, float r) {
-  return (x - cx) * (x - cx) + (y - cy) * (y - cy) <= r * r;
+static int ph_hit(const PhR *r, float x, float y) {
+  return x >= r->x && x <= r->x + r->w && y >= r->y && y <= r->y + r->h;
 }
-static void ph_controls_draw(void) {
+static void ph_rate_text(char *out, size_t cap) {
+  float r = PH_RATES[P.rateI];
+  if (r == (int)r)
+    snprintf(out, cap, "%d×", (int)r);
+  else if (r * 10 == (int)(r * 10))
+    snprintf(out, cap, "%.1f×", r);
+  else
+    snprintf(out, cap, "%.2f×", r);
+}
+/* a label's width, kept for each place in the row until its words or the language change */
+static float ph_lw(int slot, const char *lb) {
+  static struct {
+    char lb[48];
+    float w;
+    unsigned gen;
+  } c[PH_ACTS + PH_ROWS];
+  if (c[slot].gen != i18n_gen() || strcmp(c[slot].lb, lb)) {
+    c[slot].gen = i18n_gen();
+    snprintf(c[slot].lb, sizeof c[slot].lb, "%s", lb);
+    c[slot].w = text_width(lb, ph_px(13), 500, 0);
+  }
+  return c[slot].w;
+}
+static int ph_audio_n(void) { /* the tracks in the file, asked twice a second at most */
+  static double at;
+  static int n;
+  if (now_() - at > 0.5 || now_() < at) {
+    VidTrack ts[16];
+    n = video_audio_tracks(ts, 16);
+    at = now_();
+  }
+  return n;
+}
+/* the action row's candidates in the order the spec gives (then what the row can't hold, Sources first, Speed, the
+   picture size) */
+static const char *ph_item_label(const char *id, char *buf, size_t cap) {
+  if (!strcmp(id, "spd")) {
+    char r[16];
+    ph_rate_text(r, sizeof r);
+    snprintf(buf, cap, "%s (%s)", T("Speed"), r);
+  } else if (!strcmp(id, "lock"))
+    snprintf(buf, cap, "%s", T("Lock"));
+  else if (!strcmp(id, "eps"))
+    snprintf(buf, cap, "%s", T("Episodes"));
+  else if (!strcmp(id, "subs") || !strcmp(id, "cc"))
+    snprintf(buf, cap, "%s", T("Subtitles"));
+  else if (!strcmp(id, "aud"))
+    snprintf(buf, cap, "%s", T("Audio"));
+  else if (!strcmp(id, "asp"))
+    snprintf(buf, cap, "%s",
+             !strcmp(P.aspect, "fill")   ? T("Fill")
+             : !strcmp(P.aspect, "zoom") ? T("Zoom")
+                                         : T("Original"));
+  else if (!strcmp(id, "nxt"))
+    snprintf(buf, cap, "%s", T("Next episode"));
+  else
+    snprintf(buf, cap, "%s", T("Sources"));
+  return buf;
+}
+static const char *ph_item_icon(const char *id) {
+  return !strcmp(id, "spd")    ? "p_speed"
+         : !strcmp(id, "lock") ? "p_lock"
+         : !strcmp(id, "eps")  ? "p_eps"
+         : !strcmp(id, "aud")  ? "p_aud"
+         : !strcmp(id, "asp")  ? "p_asp"
+         : !strcmp(id, "nxt")  ? "p_next"
+         : !strcmp(id, "src")  ? "p_src"
+                               : "p_subs";
+}
+static void ph_row_add(const char *id, const char *lb, int on) {
+  if (PHG.nrow >= PH_ROWS)
+    return;
+  PHG.row[PHG.nrow].id = id;
+  snprintf(PHG.row[PHG.nrow].lb, 48, "%s", lb);
+  PHG.row[PHG.nrow].on = on;
+  PHG.nrow++;
+}
+static void ph_geo(void) {
+  float d = tdp(), W = SB_W, H = SB_H, st = 0, sb = 0, sl = 0, sr = 0;
+  form_safe(&st, &sb, &sl, &sr);
+  int gl = 0, gt = 0, gr = 0, gb = 0;
+  plat_gesture_insets(&gl, &gt, &gr, &gb);
+  float gs = gfx_scale();
+  PHG.d = d;
+  PHG.W = W;
+  PHG.H = H;
+  PHG.sl = fmaxf(40 * d, sl);
+  PHG.sr = fmaxf(40 * d, sr);
+  PHG.gb = gs > 0 ? gb / gs : 0;
+  float k = form_tablet() ? 1.25f : 1;
+  PHG.k = k;
+  /* the top: Back, the title, the menu's dots */
+  PHG.topY = st;
+  PHG.back = (PhR){ PHG.sl - 12 * d, st + 8 * d, 48 * d, 48 * d };
+  PHG.more = (PhR){ W - fmaxf(16 * d, sr) - 48 * d, st + 8 * d, 48 * d, 48 * d };
+  PHG.titleX = PHG.back.x + 56 * d;
+  PHG.titleW = PHG.more.x - PHG.titleX - 8 * d;
+  /* the middle */
+  float gap = form_tablet() ? fminf(0.15f * W, 160 * d) : 72 * d, cx = W / 2;
+  PHG.cy = H / 2 - 6 * d;
+  float ps = 76 * d * k, ss = 64 * d * k, off = ps / 2 + gap + ss / 2;
+  PHG.pp = (PhR){ cx - ps / 2, PHG.cy - ps / 2, ps, ps };
+  PHG.rw = (PhR){ cx - off - ss / 2, PHG.cy - ss / 2, ss, ss };
+  PHG.ff = (PhR){ cx + off - ss / 2, PHG.cy - ss / 2, ss, ss };
+  /* the bottom, from 14 dp over the gesture inset: the action row, the bar, the times */
+  float yb = H - PHG.gb - 14 * d, ay = yb - 48 * d;
+  PHG.barX = PHG.sl;
+  PHG.barW = W - PHG.sl - PHG.sr;
+  PHG.barCy = ay - 6 * d - 2 * d;
+  PHG.timesY = PHG.barCy - 2 * d - 8 * d - text_line_height(ph_px(12));
+  PHG.band = (PhR){ PHG.barX, PHG.barCy - 24 * d, PHG.barW, fminf(48 * d, ay - (PHG.barCy - 24 * d)) };
+  /* which items the row holds */
+  const char *ids[PH_ACTS];
+  int n = 0, trailer = P.isTrailer;
+  if (video_rate_supported())
+    ids[n++] = "spd";
+  ids[n++] = "lock";
+  if (!trailer && episodic() && P.videos && cJSON_GetArraySize(P.videos))
+    ids[n++] = "eps";
+  if (trailer) {
+    if (trSubsN)
+      ids[n++] = "cc";
+  } else
+    ids[n++] = "subs";
+  if (!trailer && ph_audio_n() >= 2)
+    ids[n++] = "aud";
+  ids[n++] = "asp";
+  if (!trailer)
+    ids[n++] = P.next.has ? "nxt" : "src";
+  /* does it fit? no: Sources goes into the menu, then Speed, then the picture size; still no: icons alone */
+  static const char *const moveOrder[3] = { "src", "spd", "asp" };
+  const char *moved[3] = { NULL, NULL, NULL };
+  int nm = 0, iconOnly = 0;
+  float rowW = W - PHG.sl - PHG.sr + 20 * d, minGap = 8 * d;
+  for (int pass = 0; pass < 4; pass++) {
+    float sum = 0;
+    for (int i = 0; i < n; i++) {
+      char lb[48];
+      ph_item_label(ids[i], lb, sizeof lb);
+      sum += iconOnly ? 48 * d : 20 * d + 20 * d + 8 * d + ph_lw(i, lb);
+    }
+    if (n < 2 || sum + (n - 1) * minGap <= rowW)
+      break;
+    if (pass < 3) {
+      int found = 0;
+      for (int i = 0; i < n && !found; i++)
+        if (!strcmp(ids[i], moveOrder[pass])) {
+          for (int j = i; j + 1 < n; j++)
+            ids[j] = ids[j + 1];
+          n--;
+          moved[nm++] = moveOrder[pass];
+          found = 1;
+        }
+    } else
+      iconOnly = 1;
+  }
+  PHG.nact = n;
+  float wsum = 0, ws[PH_ACTS];
+  for (int i = 0; i < n; i++) {
+    char lb[48];
+    ph_item_label(ids[i], lb, sizeof lb);
+    ws[i] = iconOnly ? 48 * d : 20 * d + 20 * d + 8 * d + ph_lw(i, lb);
+    wsum += ws[i];
+    PHG.act[i].id = ids[i];
+    PHG.act[i].icon = ph_item_icon(ids[i]);
+    snprintf(PHG.act[i].lb, 48, "%s", lb);
+    PHG.act[i].iconOnly = iconOnly;
+  }
+  float gp = n > 1 ? (rowW - wsum) / (n - 1) : 0, x = PHG.sl - 10 * d;
+  if (n == 1)
+    x = PHG.sl - 10 * d;
+  for (int i = 0; i < n; i++) {
+    PHG.act[i].r = (PhR){ x, ay, ws[i], 48 * d };
+    x += ws[i] + gp;
+  }
+  /* the menu: what the player offers, then what the row moved (and, icon-only, every label) */
+  PHG.nrow = 0;
+  if (P.menu || P.phM.v > 0.01f) {
+    if (!trailer)
+      ph_row_add("beg", T("Play from the beginning"), 0);
+    ph_row_add("nerd", T("Stats for nerds"), nerds_on());
+    for (int i = 0; i < nm; i++) {
+      char lb[48];
+      ph_item_label(moved[i], lb, sizeof lb);
+      ph_row_add(moved[i], lb, 0);
+    }
+    if (iconOnly)
+      for (int i = 0; i < n; i++)
+        if (strcmp(ids[i], "lock"))
+          ph_row_add(ids[i], PHG.act[i].lb, 0);
+    float mw = 0;
+    for (int i = 0; i < PHG.nrow; i++) {
+      float w = text_width(PHG.row[i].lb, ph_px(15), 500, 0);
+      mw = w > mw ? w : mw;
+    }
+    mw = fmaxf(200 * d, mw + 32 * d + 36 * d);
+    float px = PHG.more.x + PHG.more.w - mw, py = PHG.more.y + PHG.more.h + 4 * d;
+    PHG.panel = (PhR){ px, py, mw, PHG.nrow * 48 * d + 8 * d };
+    for (int i = 0; i < PHG.nrow; i++)
+      PHG.row[i].r = (PhR){ px, py + 4 * d + i * 48 * d, mw, 48 * d };
+  }
+  /* the lock chip, bottom centre */
+  if (P.locked) {
+    const char *l1 = T("Screen locked"), *l2 = T("Tap to unlock");
+    float w1 = text_width(l1, ph_px(14), 600, 0), w2 = text_width(l2, ph_px(12), 400, 0), tw = fmaxf(w1, w2);
+    float cw = 16 * d + 22 * d + 12 * d + tw + 22 * d,
+          ch = fmaxf(56 * d, 20 * d + text_line_height(ph_px(14)) + d + text_line_height(ph_px(12)));
+    PHG.chip = (PhR){ W / 2 - cw / 2, H - fmaxf(28 * d, PHG.gb + 14 * d) - ch, cw, ch };
+  }
+}
+/* the shades: black 66 % at the top, 30 % from 24 % to 56 % of the height, 82 % at the bottom */
+static void ph_shades(void) {
+  float a = P.phA.v;
+  if (a <= 0.001f)
+    return;
+  float W = SB_W, H = SB_H;
+  gfx_opacity_push(a);
+  gfx_rrect_v(0, 0, W, H * 0.24f, 0, BLACK_A(168), BLACK_A(77));
+  gfx_rect(0, H * 0.24f, W, H * 0.32f, BLACK_A(77));
+  gfx_rrect_v(0, H * 0.56f, W, H * 0.44f, 0, BLACK_A(77), BLACK_A(209));
+  gfx_opacity_pop();
+}
+/* the time for the bar's ends and the scrub bubble: m:ss or h:mm:ss */
+static void ph_clock(double s, char *out, size_t cap) {
+  if (s < 0)
+    s = 0;
+  fmt_time(s, out, cap);
+}
+static void ph_osd_draw(void) {
   if (!form_touch() || !P.live)
     return;
-  float a = P.btnA.v;
-  if (a <= 0.01f || P.mode == 2 || P.mode == 4)
-    return;
-  float cx, cy, gap, r, d = tdp();
-  ph_centres(&cx, &cy, &gap, &r);
-  gfx_opacity_push(a);
-  gfx_circle(cx, cy, r * 1.15f, BLACK_A(110));
-  icon_draw(paused() ? "p_play" : "p_pause", cx - r * 0.6f, cy - r * 0.6f, r * 1.2f, WHITE_A(250));
-  for (int s = -1; s <= 1; s += 2) {
-    float x = cx + s * gap;
-    gfx_circle(x, cy, r * 0.85f, BLACK_A(90));
-    icon_draw(s < 0 ? "p_rw" : "p_ff", x - r * 0.45f, cy - r * 0.45f, r * 0.9f, WHITE_A(235));
+  float a = P.phA.v, d = tdp(), H = SB_H, W = SB_W;
+  /* the controls are hidden and a seek runs (a double tap): a 3 dp line along the very bottom */
+  if (a <= 0.01f && P.skm && !P.osd && P.barA.v > 0.01f && dur() > 0) {
+    double t = P.seekT >= 0 ? P.seekT : video_time();
+    float p = fminf(1, fmaxf(0, (float)(t / dur())));
+    gfx_opacity_push(P.barA.v);
+    gfx_rect(0, H - 3 * d, W, 3 * d, WHITE_A(71));
+    gfx_rect(0, H - 3 * d, W * p, 3 * d, ACC);
+    gfx_opacity_pop();
   }
-  gfx_circle(26 * d + 18 * d, 30 * d, 20 * d, BLACK_A(100));
-  icon_draw("ph_back", 26 * d + 6 * d, 18 * d, 24 * d, WHITE_A(240));
-  gfx_opacity_pop();
+  if (a > 0.01f || P.phM.v > 0.01f || (P.phC.v > 0.01f && P.locked))
+    ph_geo(); /* (once a frame, and only while something of it shows) */
+  if (a > 0.01f) {
+    float s = P.phS.v; /* (a finger on the bar: everything else steps back) */
+    gfx_opacity_push(a);
+    /* the top: Back, the title over its second line, the menu's dots */
+    if (s > 0.01f) {
+      gfx_opacity_push(s);
+      icon_draw("ph_back", PHG.back.x + 12 * d, PHG.back.y + 12 * d, 24 * d, WHITE_A(255));
+      icon_draw("ph_more", PHG.more.x + 13 * d, PHG.more.y + 13 * d, 22 * d, WHITE_A(255));
+      char l2[160] = "";
+      if (P.isTrailer)
+        l2[0] = 0;
+      else if (P.episode > 0) {
+        char se[16];
+        if (P.season >= 0)
+          snprintf(se, sizeof se, "S%d:E%d", P.season, P.episode);
+        else
+          snprintf(se, sizeof se, "E%d", P.episode);
+        snprintf(l2, sizeof l2, "%s%s%s", se, P.epTitle[0] ? " · " : "", P.epTitle);
+      } else {
+        double du = dur();
+        char rt[32] = "";
+        if (du > 0) {
+          char h[16], m[16];
+          int mins = (int)(du / 60 + 0.5);
+          snprintf(h, sizeof h, "%d", mins / 60);
+          snprintf(m, sizeof m, "%d", mins % 60);
+          if (mins >= 60)
+            snprintf(rt, sizeof rt, "%s %s", T1("{h}h", "h", h), T1("{m}m", "m", m));
+          else
+            snprintf(rt, sizeof rt, "%s", T1("{m}m", "m", m));
+        }
+        snprintf(l2, sizeof l2, "%s%s%s", P.year, P.year[0] && rt[0] ? " · " : "", rt);
+      }
+      int p1 = ph_px(16), p2 = ph_px(12);
+      float bh = text_line_height(p1) + d + (l2[0] ? text_line_height(p2) : 0), ty = PHG.topY + 32 * d - bh / 2;
+      text_draw(P.name, PHG.titleX, ty, p1, 600, WHITE_A(255), 0, PHG.titleW, ALIGN_LEFT);
+      if (l2[0])
+        text_draw(l2, PHG.titleX, ty + text_line_height(p1) + d, p2, 400, WHITE_A(184), 0, PHG.titleW, ALIGN_LEFT);
+      /* the middle: back and on, play / pause (the loading ring takes its place) */
+      int step = atoi(store_get("seekStep", "10"));
+      if (step <= 0)
+        step = 10;
+      char sn[8];
+      snprintf(sn, sizeof sn, "%d", step);
+      float isz = 50 * d * PHG.k, cx = PHG.rw.x + PHG.rw.w / 2, cy = PHG.cy;
+      icon_draw("p_ring10", cx - isz / 2, cy - isz / 2, isz, WHITE_A(255));
+      text_draw(sn, cx, cy + 0.04f * isz - text_line_height(ph_px(13 * PHG.k)) / 2.0f, ph_px(13 * PHG.k), 700,
+                WHITE_A(255), 0, 0, ALIGN_CENTER);
+      cx = PHG.ff.x + PHG.ff.w / 2;
+      icon_draw("p_ring10f", cx - isz / 2, cy - isz / 2, isz, WHITE_A(255));
+      text_draw(sn, cx, cy + 0.04f * isz - text_line_height(ph_px(13 * PHG.k)) / 2.0f, ph_px(13 * PHG.k), 700,
+                WHITE_A(255), 0, 0, ALIGN_CENTER);
+      float psz = 56 * d * PHG.k, pk = 1 - fminf(1, P.bufA.v * 1.5f);
+      if (pk > 0.01f) {
+        gfx_opacity_push(pk);
+        icon_draw(paused() ? "p_play" : "p_pause", PHG.pp.x + PHG.pp.w / 2 - psz / 2, PHG.cy - psz / 2, psz,
+                  WHITE_A(255));
+        gfx_opacity_pop();
+      }
+      /* the action row */
+      for (int i = 0; i < PHG.nact; i++) {
+        const PhR *r = &PHG.act[i].r;
+        float ix = PHG.act[i].iconOnly ? r->x + r->w / 2 - 10 * d : r->x + 10 * d;
+        icon_draw(PHG.act[i].icon, ix, r->y + 14 * d, 20 * d, WHITE_A(242));
+        if (!PHG.act[i].iconOnly)
+          text_draw(PHG.act[i].lb, r->x + 38 * d, r->y + (r->h - text_line_height(ph_px(13))) / 2, ph_px(13), 500,
+                    WHITE_A(235), 0, 0, ALIGN_LEFT);
+      }
+      gfx_opacity_pop();
+    }
+    /* the bar: its times, the track (buffered, played), the knob; lower while a finger scrubs, the row gone */
+    double du = dur(), t = P.seekT >= 0 ? P.seekT : video_time();
+    float p = du > 0 ? fminf(1, fmaxf(0, (float)(t / du))) : 0, dy = 40 * d * (1 - s);
+    char c1[16], c2[18], r[16];
+    ph_clock(t, c1, sizeof c1);
+    ph_clock(du - t, r, sizeof r);
+    snprintf(c2, sizeof c2, "-%s", r);
+    int p12 = ph_px(12);
+    float th = (P.barDown || P.scrub) ? 6 * d : 4 * d, cy = PHG.barCy + dy, ty = cy - th / 2;
+    text_draw(c1, PHG.barX, PHG.timesY + dy, p12, 500, WHITE_A(224), 0, 0, ALIGN_LEFT);
+    text_draw(c2, PHG.barX + PHG.barW, PHG.timesY + dy, p12, 500, WHITE_A(224), 0, 0, ALIGN_RIGHT);
+    gfx_rrect(PHG.barX, ty, PHG.barW, th, th / 2, WHITE_A(71));
+    float be = du > 0 ? (float)(video_buffered_end() / du) : 0;
+    if (be > p)
+      gfx_rrect(PHG.barX, ty, PHG.barW * fminf(be, 1), th, th / 2, WHITE_A(107));
+    gfx_rrect(PHG.barX, ty, PHG.barW * p, th, th / 2, ACC);
+    float kx = PHG.barX + roundf(PHG.barW * p);
+    gfx_circle(kx, cy, 7 * d + 1.5f * d, RGBA(18, 18, 20, 153));
+    gfx_circle(kx, cy, 7 * d, ACC);
+    /* the bubble: the time it will land on over the change */
+    if (P.scrub && du > 0) {
+      char b1[16], b2[20], dl[16];
+      double dd = t - video_time();
+      ph_clock(t, b1, sizeof b1);
+      ph_clock(dd < 0 ? -dd : dd, dl, sizeof dl);
+      snprintf(b2, sizeof b2, "%s%s", dd < 0 ? "-" : "+", dl);
+      int pa = ph_px(15), pb = ph_px(11);
+      float w1 = text_width(b1, pa, 700, 0), w2 = text_width(b2, pb, 400, 0), bw = fmaxf(w1, w2) + 20 * d,
+            bh = 12 * d + text_line_height(pa) + text_line_height(pb), bx = kx - bw / 2, by = cy - 41 * d - bh;
+      bx = fminf(fmaxf(bx, 4 * d), W - bw - 4 * d);
+      gfx_rrect(bx, by, bw, bh, 10 * d, RGBA(18, 18, 20, 224));
+      text_draw(b1, bx + bw / 2, by + 6 * d, pa, 700, WHITE_A(255), 0, 0, ALIGN_CENTER);
+      text_draw(b2, bx + bw / 2, by + 6 * d + text_line_height(pa), pb, 400, WHITE_A(184), 0, 0, ALIGN_CENTER);
+    }
+    gfx_opacity_pop();
+  }
+  /* the menu */
+  if (P.phM.v > 0.01f) {
+    gfx_opacity_push(P.phM.v);
+    gfx_rrect(PHG.panel.x, PHG.panel.y, PHG.panel.w, PHG.panel.h, 12 * d, RGBA(24, 24, 28, 240));
+    gfx_ring(PHG.panel.x, PHG.panel.y, PHG.panel.w, PHG.panel.h, 12 * d, 1, WHITE_A(30));
+    for (int i = 0; i < PHG.nrow; i++) {
+      const PhR *r = &PHG.row[i].r;
+      int pr = ph_px(15);
+      text_draw(PHG.row[i].lb, r->x + 16 * d, r->y + (r->h - text_line_height(pr)) / 2, pr, 500, WHITE_A(240), 0,
+                r->w - 32 * d - 36 * d, ALIGN_LEFT);
+      if (PHG.row[i].on)
+        icon_draw("check", r->x + r->w - 16 * d - 20 * d, r->y + 14 * d, 20 * d, ACC);
+    }
+    gfx_opacity_pop();
+  }
+  /* the lock chip */
+  if (P.phC.v > 0.01f && P.locked) {
+    gfx_opacity_push(P.phC.v);
+    const PhR *c = &PHG.chip;
+    gfx_rrect(c->x, c->y, c->w, c->h, c->h / 2, RGBA(18, 18, 20, 209));
+    icon_draw("p_lock", c->x + 16 * d, c->y + c->h / 2 - 11 * d, 22 * d, WHITE_A(255));
+    int pa = ph_px(14), pb = ph_px(12);
+    float th = text_line_height(pa) + d + text_line_height(pb), ty = c->y + (c->h - th) / 2,
+          tx = c->x + 16 * d + 22 * d + 12 * d;
+    text_draw(T("Screen locked"), tx, ty, pa, 600, WHITE_A(255), 0, 0, ALIGN_LEFT);
+    text_draw(T("Tap to unlock"), tx, ty + text_line_height(pa) + d, pb, 400, WHITE_A(184), 0, 0, ALIGN_LEFT);
+    gfx_opacity_pop();
+  }
+}
+/* the lock's chip: where a tap on a locked screen shows it for 3 s */
+static void ph_chip_show(void) {
+  P.chipUntil = now_() + 3;
+}
+/* what a tap on an action item or a menu row does */
+static void ph_do(const char *id) {
+  if (!strcmp(id, "spd")) {
+    P.rateI = (P.rateI + 1) % 6;
+    video_set_rate(PH_RATES[P.rateI]);
+    arm_hide();
+  } else if (!strcmp(id, "lock")) {
+    P.locked = 1;
+    P.menu = 0;
+    TP.lastUpMs = 0;
+    hide_osd();
+  } else if (!strcmp(id, "nerd"))
+    store_set("nerdStats", nerds_on() ? "false" : "true");
+  else if (!strcmp(id, "beg"))
+    from_start();
+  else
+    act(id);
 }
 static void ph_bar_down(float x) { /* a finger takes the bar: the knob to it, the seek on its lift */
   P.row = 1;
@@ -8625,10 +9076,39 @@ static void ph_bar_down(float x) { /* a finger takes the bar: the knob to it, th
 void player_touch(int type, float x, float y) {
   if (!P.open || P.closing || !P.live)
     return;
-  float d = tdp(), L25 = text_line_height(25), barTop = SB_H - 54 - 94 - 30 - L25;
+  float d = tdp();
   if (tlog() && type != 1)
     fprintf(stderr, "[touch] %s t=%u ms (frame %.3f) at %.0f,%.0f osd %d mode %d dur %.1f\n", type ? "up" : "down",
             touch_evt_ms, now_(), x, y, P.osd, P.mode, dur());
+  if (P.locked) { /* every finger gesture is ignored but a tap: it shows the chip, a tap on the chip unlocks */
+    if (type == 0) {
+      TP.down = 1;
+      TP.moved = 0;
+      TP.x0 = x;
+      TP.y0 = y;
+    } else if (type == 1) {
+      if (TP.down && hypotf(x - TP.x0, y - TP.y0) > 10 * d)
+        TP.moved = 1;
+    } else if (TP.down) {
+      TP.down = 0;
+      TP.lastUpMs = 0;
+      if (!TP.moved) {
+        ph_geo();
+        if (P.phC.v > 0.5f && P.chipUntil > now_() && ph_hit(&PHG.chip, x, y)) {
+          P.locked = 0;
+          P.chipUntil = 0;
+          show_osd(1);
+          if (tlog())
+            fprintf(stderr, "[touch] locked: the chip's tap, unlocked\n");
+        } else {
+          ph_chip_show();
+          if (tlog())
+            fprintf(stderr, "[touch] locked: a tap, the chip shows\n");
+        }
+      }
+    }
+    return;
+  }
   if (type == 0) {
     TP.down = 1;
     TP.moved = 0;
@@ -8647,12 +9127,16 @@ void player_touch(int type, float x, float y) {
     if (P.mode == 2)
       player_ptr(0, x, y); /* (a tray: the row under the finger is pointed at, not picked: a drag moves through its
                               column, a lift picks it) */
-    int band = P.osd && P.mode != 2 && P.mode != 4 && y >= barTop - 22 * d && y <= barTop + L25 + 16 * d;
+    int band = 0;
+    if (P.osd && P.mode != 2 && P.mode != 4 && !P.menu) {
+      ph_geo();
+      band = ph_hit(&PHG.band, x, y);
+    }
     /* on the bar's band, a finger that may be a double tap's second tap only takes the bar if it moves */
     TP.onBar = band && !TP.quick;
     TP.barLater = band && TP.quick;
     if (TP.onBar && tlog())
-      fprintf(stderr, "[touch] -> the bar takes it (band %.0f-%.0f)\n", barTop - 22 * d, barTop + L25 + 16 * d);
+      fprintf(stderr, "[touch] -> the bar takes it (band %.0f-%.0f)\n", PHG.band.y, PHG.band.y + PHG.band.h);
     if (TP.onBar)
       ph_bar_down(x);
     return;
@@ -8662,9 +9146,12 @@ void player_touch(int type, float x, float y) {
       return;
     if (!TP.moved && hypotf(x - TP.x0, y - TP.y0) > 10 * d) {
       TP.moved = 1;
+      if (TP.onBar)
+        P.scrub = 1; /* a drag along the bar: the rest of the controls step back */
       if (TP.barLater) { /* it moved: a drag along the bar after all, not a tap */
         TP.barLater = 0;
         TP.onBar = 1;
+        P.scrub = 1;
         if (tlog())
           fprintf(stderr, "[touch] -> the bar takes it after all (it moved)\n");
         ph_bar_down(TP.x0);
@@ -8701,6 +9188,7 @@ void player_touch(int type, float x, float y) {
     return;
   TP.down = 0;
   if (TP.onBar) {
+    P.scrub = 0;
     TP.lastUpMs = 0;
     ptr_hv(1, x);
     double du = dur();
@@ -8753,30 +9241,45 @@ void player_touch(int type, float x, float y) {
     return;
   }
   if (P.osd) {
-    float cx, cy, gap, r;
-    ph_centres(&cx, &cy, &gap, &r);
-    if (ph_in(x, y, cx, cy, r * 1.3f)) {
+    ph_geo();
+    if (P.menu) { /* the menu takes the tap: a row does its thing, anywhere outside the panel closes it */
+      for (int i = 0; i < PHG.nrow; i++)
+        if (ph_hit(&PHG.row[i].r, x, y)) {
+          const char *id = PHG.row[i].id;
+          P.menu = 0;
+          ph_do(id);
+          return;
+        }
+      if (!ph_hit(&PHG.panel, x, y))
+        P.menu = 0;
+      return;
+    }
+    if (ph_hit(&PHG.pp, x, y)) {
       if (P.seekT >= 0)
         commit_seek();
       toggle();
       show_osd(1);
       return;
     }
-    for (int s = -1; s <= 1; s += 2)
-      if (ph_in(x, y, cx + s * gap, cy, r * 1.2f)) {
-        seek_by(s);
-        show_osd(1);
-        return;
-      }
-    if (x < 80 * d && y < 64 * d) {
+    if (ph_hit(&PHG.rw, x, y) || ph_hit(&PHG.ff, x, y)) {
+      seek_by(ph_hit(&PHG.rw, x, y) ? -1 : 1);
+      show_osd(1);
+      return;
+    }
+    if (ph_hit(&PHG.back, x, y)) {
       close_player(0, 0);
       return;
     }
-    if (y >= SB_H - 54 - 94 - 10 * d && y <= SB_H - 54 + 10 * d) {
-      player_ptr(1, x, y);
-      player_ptr(2, x, y);
+    if (ph_hit(&PHG.more, x, y)) {
+      P.menu = 1;
+      arm_hide();
       return;
-    } /* the buttons' row */
+    }
+    for (int i = 0; i < PHG.nact; i++)
+      if (ph_hit(&PHG.act[i].r, x, y)) {
+        ph_do(PHG.act[i].id);
+        return;
+      }
     hide_osd();
     return;
   }
@@ -8787,6 +9290,7 @@ void player_touch_cancel(void) {
     fprintf(stderr, "[touch] cancelled: down %d, on the bar %d\n", TP.down, TP.onBar);
   TP.down = 0;
   TP.lastUpMs = 0;
+  P.scrub = 0;
   if (TP.onBar) {
     P.barDown = 0;
     cancel_seek();
@@ -8795,7 +9299,10 @@ void player_touch_cancel(void) {
 }
 void player_touch2(int type, float x0, float y0, float x1, float y1) {
   if (tlog())
-    fprintf(stderr, "[touch] touch2 %s at %.0f,%.0f and %.0f,%.0f\n", type == 0 ? "land" : type == 1 ? "move" : "lift",
+    fprintf(stderr, "[touch] touch2 %s at %.0f,%.0f and %.0f,%.0f\n",
+            type == 0   ? "land"
+            : type == 1 ? "move"
+                        : "lift",
             x0, y0, x1, y1);
 }
 

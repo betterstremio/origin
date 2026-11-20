@@ -315,5 +315,10 @@
 "%s animated series": "مسلسلات الرسوم المتحركة · %s",
 "%s family films": "أفلام عائلية · %s",
 "%s family series": "مسلسلات عائلية · %s",
-"Because you watched %s": "لأنك شاهدت %s"
+"Because you watched %s": "لأنك شاهدت %s",
+"Speed": "Speed",
+"Lock": "Lock",
+"Screen locked": "Screen locked",
+"Tap to unlock": "Tap to unlock",
+"Fill": "Fill"
 }
