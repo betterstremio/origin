@@ -227,7 +227,13 @@ typedef struct Img {
 static unsigned phEv[5], phUps, phUpFrames, phUpHist[130];
 static long frUp, phPeak;
 static Img *upCur;
-static const long upBudget = 320L * 1024; /* per frame upload bytes (1 MB was tried: whole crops in one frame cost the frame 5 ms and the scroll test's p95 and late % rose) */
+#ifndef SB_UP_BUDGET_KB
+#define SB_UP_BUDGET_KB 320 /* per frame upload bytes (1 MB was tried on the TV: whole crops in one frame cost the frame 5 ms and the scroll test's p95 and late % rose) */
+#endif
+#ifndef SB_UP_PER_FRAME
+#define SB_UP_PER_FRAME 6 /* finished pictures put up per frame at most (the time cap in pump_loads still holds) */
+#endif
+static const long upBudget = SB_UP_BUDGET_KB * 1024L;
 static unsigned stEvict, stReturn, stRetFade; /* development: pictures evicted, shown again, and of those faded in */
 static int ctxRow = -1, focusRow = -1; /* the row being drawn; the focused row (set by the board each frame) */
 static unsigned focusAt, hgen = 1;
@@ -887,6 +893,10 @@ int img_init(const char *dir) {
   long nc = sysconf(_SC_NPROCESSORS_ONLN);
   if (nc >= 4 && (mb <= 0 || mb >= 1500))
     decMax = nc > 5 ? 4 : (int)nc - 1;
+#if SB_WINDOWED
+  if (nc > 6)
+    decMax = nc - 2 > 8 ? 8 : (int)nc - 2; /* a desktop CPU: every core but the drawing's and the system's, up to 8 */
+#endif
   int n = mb > 0 && mb < 1200 ? 6 : WORKERS_MAX;
   fprintf(stderr, "[img] %d workers, %d decoding at once\n", n, decMax);
   for (int i = 0; i < n; i++) {
@@ -1299,7 +1309,7 @@ int img_loaded(const char *url) {
    backdrop in one go was a 25-30 ms frame), so a large picture goes up in bands of rows over a few frames and is
    only shown once complete */
 #define UP_BUDGET upBudget /* this TV converts ~100 KB a millisecond for its GPU: ~3 ms a frame (more on a device over 2 GB: see img_init) */
-#define UP_URGENT (768L * 1024) /* a backdrop: in a few frames, as before (its fade waits for the whole picture) */
+#define UP_URGENT (upBudget > 768L * 1024 ? upBudget : 768L * 1024) /* a backdrop: in a few frames, as before (its fade waits for the whole picture) */
 static int upLog = -1; /* SB_UPLOG: each upload's size and time (development) */
 static void up_log(const char *what, long bytes, Uint64 t0) {
   if (upLog < 0)
@@ -1419,7 +1429,7 @@ static void pump_loads(void) {
   }
   t0 = SDL_GetPerformanceCounter();
   double hz = (double)SDL_GetPerformanceFrequency();
-  for (int n = 0; n < 6 && sent < UP_BUDGET; n++) {
+  for (int n = 0; n < SB_UP_PER_FRAME && sent < UP_BUDGET; n++) {
     if (sent && (double)(SDL_GetPerformanceCounter() - t0) * 1000.0 / hz > 3.0)
       return; /* first uploads also allocate: time counts too */
     pthread_mutex_lock(&mu);
