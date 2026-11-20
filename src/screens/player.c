@@ -2792,11 +2792,11 @@ static void seek_by(int dir) {
 static void commit_seek(void) {
   if (P.seekT < 0)
     return;
-  double t = P.seekT;
+  double t = P.seekT, was = tlog() ? video_time() : 0;
   P.seekT = -1;
   video_seek(t);
   if (tlog()) {
-    fprintf(stderr, "[touch] seek sent: %.1f -> %.1f\n", video_time(), t);
+    fprintf(stderr, "[touch] seek sent: %.1f -> %.1f\n", was, t);
     tlogTarget = t;
     tlogCheckAt = now_() + 1.5;
   }
@@ -5242,6 +5242,7 @@ static void prepare(const char *vid, double startAt, int keepSubs) {
   P.adxReq = adxReq;
   P.open = 1;
   P.openedAt = now_();
+  tlogCheckAt = 0; /* (a seek's check from the last film) */
   P.seekT = -1;
   P.curAud = -1;
   snprintf(P.curSub, sizeof P.curSub, "off");
@@ -5768,6 +5769,7 @@ static void close_player(int goNext, int goSim) {
   P.ssOn = 0;
   P.nx.tok = 0;
   P.sk.tok = 0;
+  tlogCheckAt = 0;
   save_progress(1);
   video_pause();
   /* the title's own picture fades back over the paused frame, the video goes, then the cover fades onto the app */
@@ -8566,10 +8568,12 @@ void player_ptr(int type, float x, float y) {
    events' own clock (a slow frame, such as the one that brings the controls in, must not stretch the gap) ---- */
 #define DTAP_MS 300
 static struct {
-  int down, moved, onBar, lastSide, osdBefore, quick;
+  int down, moved, onBar, barLater, lastSide, osdBefore, quick;
   float x0, y0, ylast, acc;
-  unsigned lastUpMs; /* when the last tap on the film lifted (0: no tap to follow) */
+  unsigned lastUpMs, downMs, gapMs; /* when the last tap on the film lifted (0: no tap to follow); this finger's landing
+                                       and how long after that lift */
 } TP;
+#define DTAP_HOLD_MS 450 /* a second finger left down this long is a press, not a tap */
 static int ph_side(float x) {
   return x < SB_W / 3 ? -1 : x > SB_W * 2 / 3 ? 1 : 0;
 }
@@ -8607,6 +8611,17 @@ static void ph_controls_draw(void) {
   icon_draw("ph_back", 26 * d + 6 * d, 18 * d, 24 * d, WHITE_A(240));
   gfx_opacity_pop();
 }
+static void ph_bar_down(float x) { /* a finger takes the bar: the knob to it, the seek on its lift */
+  P.row = 1;
+  ptr_hv(1, x);
+  P.barDown = 1;
+  show_osd(1);
+  double du = dur();
+  if (du > 0) {
+    P.seekT = P.hvP * du;
+    P.seekCommitAt = now_() + 1e6;
+  }
+}
 void player_touch(int type, float x, float y) {
   if (!P.open || P.closing || !P.live)
     return;
@@ -8623,31 +8638,38 @@ void player_touch(int type, float x, float y) {
     TP.acc = 0;
     /* a second tap on the same side, landing in time: it belongs to a double tap, whatever the first tap brought up
        (the controls it showed must not catch it: the bar's band runs the screen's width) */
-    TP.quick = TP.lastUpMs && ph_side(x) && ph_side(x) == TP.lastSide && touch_evt_ms - TP.lastUpMs <= DTAP_MS;
+    TP.downMs = touch_evt_ms;
+    TP.gapMs = TP.lastUpMs ? touch_evt_ms - TP.lastUpMs : 0;
+    TP.quick = TP.lastUpMs && ph_side(x) && ph_side(x) == TP.lastSide && TP.gapMs <= DTAP_MS;
+    if (tlog() && TP.lastUpMs)
+      fprintf(stderr, "[touch] landed %u ms after the last lift%s\n", TP.gapMs,
+              TP.quick ? ": may be a double tap" : "");
     if (P.mode == 2)
       player_ptr(0, x, y); /* (a tray: the row under the finger is pointed at, not picked: a drag moves through its
                               column, a lift picks it) */
-    TP.onBar = !TP.quick && P.osd && P.mode != 2 && P.mode != 4 && y >= barTop - 22 * d && y <= barTop + L25 + 16 * d;
+    int band = P.osd && P.mode != 2 && P.mode != 4 && y >= barTop - 22 * d && y <= barTop + L25 + 16 * d;
+    /* on the bar's band, a finger that may be a double tap's second tap only takes the bar if it moves */
+    TP.onBar = band && !TP.quick;
+    TP.barLater = band && TP.quick;
     if (TP.onBar && tlog())
       fprintf(stderr, "[touch] -> the bar takes it (band %.0f-%.0f)\n", barTop - 22 * d, barTop + L25 + 16 * d);
-    if (TP.onBar) {
-      P.row = 1;
-      ptr_hv(1, x);
-      P.barDown = 1;
-      show_osd(1);
-      double du = dur();
-      if (du > 0) {
-        P.seekT = P.hvP * du;
-        P.seekCommitAt = now_() + 1e6;
-      }
-    }
+    if (TP.onBar)
+      ph_bar_down(x);
     return;
   }
   if (type == 1) {
     if (!TP.down)
       return;
-    if (!TP.moved && hypotf(x - TP.x0, y - TP.y0) > 10 * d)
+    if (!TP.moved && hypotf(x - TP.x0, y - TP.y0) > 10 * d) {
       TP.moved = 1;
+      if (TP.barLater) { /* it moved: a drag along the bar after all, not a tap */
+        TP.barLater = 0;
+        TP.onBar = 1;
+        if (tlog())
+          fprintf(stderr, "[touch] -> the bar takes it after all (it moved)\n");
+        ph_bar_down(TP.x0);
+      }
+    }
     if (TP.onBar) {
       ptr_hv(1, x);
       double du = dur();
@@ -8698,9 +8720,11 @@ void player_touch(int type, float x, float y) {
     return;
   }
   int side = ph_side(TP.x0);
+  if (TP.quick && touch_evt_ms - TP.downMs > DTAP_HOLD_MS)
+    TP.quick = 0; /* held down: a press, not the double tap's second tap */
   if (tlog())
-    fprintf(stderr, "[touch] film tap side %d, last side %d, landed %u ms after the last lift%s\n", side, TP.lastSide,
-            TP.lastUpMs ? touch_evt_ms - TP.lastUpMs : 0, TP.quick ? ": DOUBLE" : "");
+    fprintf(stderr, "[touch] film tap side %d, last side %d, held %u ms%s\n", side, TP.lastSide,
+            touch_evt_ms - TP.downMs, TP.quick ? ": DOUBLE" : "");
   if (TP.quick) { /* a double tap on a side (or one more tap of it): a step back or on, each tap the same step */
     TP.lastUpMs = touch_evt_ms;
     P.rep = 0;
