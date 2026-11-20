@@ -321,8 +321,8 @@
 "Screen locked": "Ekran kilitli",
 "Tap to unlock": "Kilidi açmak için dokun",
 "Fill": "Doldur",
-"Pinch out for Zoom, in for Original": "Zoom için aç, Orijinal için kıs",
-"Pinch in for Fill": "Doldurmak için kıs",
-"Pinch out for Fill": "Doldurmak için aç",
+"Pinch out for Zoom, in for Original": "Aç: Yakınlaştır, sıkıştır: Orijinal",
+"Pinch in for Fill": "Sıkıştır: Doldur",
+"Pinch out for Fill": "Aç: Doldur",
 "Fixed": "Sabit"
 }
