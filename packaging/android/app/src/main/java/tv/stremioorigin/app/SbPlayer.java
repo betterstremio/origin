@@ -134,11 +134,13 @@ public final class SbPlayer {
             // not carry on over this one: it held a film silent for seconds
             if (volAnim != null) { volAnim.cancel(); volAnim = null; }
             player.setVolume(1f);
+            player.setPlaybackParameters(androidx.media3.common.PlaybackParameters.DEFAULT);
             player.prepare(); player.setPlayWhenReady(true);
             refresh();
         });
     }
     public static void unload() { ui.post(() -> { if (volAnim != null) { volAnim.cancel(); volAnim = null; } if (player != null) { player.stop(); player.clearMediaItems(); } clip.setVisibility(View.INVISIBLE); subs.setCues(new ArrayList<>()); keepOn(false); everReady = firstFrame = false; refresh(); }); }
+    public static void setRate(final float rate) { ui.post(() -> { if (player != null) player.setPlaybackParameters(new androidx.media3.common.PlaybackParameters(rate)); }); }
     public static void play() { ui.post(() -> { if (player != null) player.play(); }); }
     public static void pause() { ui.post(() -> { if (player != null) player.pause(); }); }
     public static void seek(double sec) { ui.post(() -> { if (player != null) { seeking = true; player.seekTo((long) (sec * 1000)); refresh(); } }); }

@@ -27,6 +27,8 @@ void player_key(int k, int down);
 void player_tick(float dt);
 void player_draw(void);
 void player_touch(int type, float x, float y); /* a phone's finger on the film: 0 down, 1 moved, 2 up (layout units) */
+void player_touch2(int type, float x0, float y0, float x1, float y1); /* two fingers on the film: 0 the second lands, 1 moved, 2 one lifted (the pinch ends) */
+void player_touch_cancel(void); /* the system took the finger away, or a second finger came: drop what the finger started, act on nothing */
 /* the next play's captions when it is a trailer (type "other"): set before player_play, shown with the CC button; the
    trailer's own name (the tag over the art and in the title block) is the stream's name */
 void player_trailer_subs(const TrailerSub *subs, int n);

@@ -11,7 +11,8 @@
 #include <string.h>
 
 static jclass cls;
-static jmethodID mLoad, mUnload, mPlay, mPause, mSeek, mVol, mPoll, mWin, mCrop, mTracks, mSelA, mSelT, mErr, mHdr;
+static jmethodID mLoad, mUnload, mPlay, mPause, mSeek, mVol, mPoll, mWin, mCrop, mTracks, mSelA, mSelT, mErr, mHdr,
+    mRate;
 static struct {
   double st, t, dur, buf, w, h, fps, live, media, settling, audioBad, audioCur;
 } S;
@@ -66,6 +67,7 @@ int video_init(const char *appId) {
   M(mSelT, "selectText", "(I)V");
   M(mErr, "error", "()Ljava/lang/String;");
   M(mHdr, "hdr", "()Ljava/lang/String;");
+  M(mRate, "setRate", "(F)V");
 #undef M
   fprintf(stderr, "[video] ExoPlayer bridge ready\n");
   return 1;
@@ -178,6 +180,17 @@ void video_set_volume(int pct, int easeMs) {
     return;
   (*e)->CallStaticVoidMethod(e, cls, mVol, pct, easeMs);
   clear_exc(e, "volume");
+}
+int video_set_rate(float rate) {
+  JNIEnv *e = env();
+  if (!cls || !e)
+    return 0;
+  (*e)->CallStaticVoidMethod(e, cls, mRate, (jfloat)rate);
+  clear_exc(e, "rate");
+  return 1;
+}
+int video_rate_supported(void) {
+  return 1;
 }
 int video_settling(void) {
   return S.settling != 0;

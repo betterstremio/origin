@@ -29,6 +29,8 @@ const char *video_error(void);
 int video_live(void); /* 1 once a first frame has been shown */
 int video_has_media(void); /* the TV has taken the stream (its media handle exists) */
 void video_set_volume(int pct, int easeMs); /* the stream's volume, 0-100, reached over easeMs */
+int video_set_rate(float rate); /* playback speed, 1 = normal; returns 1 when applied, 0 when this platform can't */
+int video_rate_supported(void); /* 1 when video_set_rate works here */
 int video_settling(void); /* 1 while a seek is on its way (asked, not yet done): the picture is not where it will be */
 int video_width(void);
 int video_height(void);

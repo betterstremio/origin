@@ -308,6 +308,8 @@ VidState video_state(void) { return st; }
 const char *video_error(void) { return err; }
 int video_live(void) { return liveShown; }
 int video_has_media(void) { return pl != NULL && prepared; }
+int video_set_rate(float rate) { (void)rate; return 0; }
+int video_rate_supported(void) { return 0; }
 int video_settling(void) { return seeking; }
 int video_width(void) { return vW; }
 int video_height(void) { return vH; }

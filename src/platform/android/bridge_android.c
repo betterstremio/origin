@@ -73,7 +73,8 @@ int plat_install_poll(char *msg, int cap) {
 
 /* ---- phones and tablets: MainActivity's ui* methods (each hops to the UI thread itself) ---- */
 static jclass act;
-static jmethodID mOri, mImm, mHap, mSafe, mOpen;
+static jmethodID mOri, mImm, mHap, mSafe, mOpen, mBrG, mBrS, mVoG, mVoS, mGest;
+static volatile int touchCancelled;
 static int act_ready(JNIEnv *e) {
   if (act)
     return 1;
@@ -91,7 +92,12 @@ static int act_ready(JNIEnv *e) {
   mHap = (*e)->GetStaticMethodID(e, act, "uiHaptic", "()V");
   mSafe = (*e)->GetStaticMethodID(e, act, "uiSafeArea", "()Ljava/lang/String;");
   mOpen = (*e)->GetStaticMethodID(e, act, "uiOpenUrl", "(Ljava/lang/String;)Z");
-  if (!mOri || !mImm || !mHap || !mSafe || !mOpen) {
+  mBrG = (*e)->GetStaticMethodID(e, act, "uiBrightnessGet", "()I");
+  mBrS = (*e)->GetStaticMethodID(e, act, "uiBrightnessSet", "(I)V");
+  mVoG = (*e)->GetStaticMethodID(e, act, "uiVolumeGet", "()I");
+  mVoS = (*e)->GetStaticMethodID(e, act, "uiVolumeSet", "(I)I");
+  mGest = (*e)->GetStaticMethodID(e, act, "uiGestureInsets", "()Ljava/lang/String;");
+  if (!mOri || !mImm || !mHap || !mSafe || !mOpen || !mBrG || !mBrS || !mVoG || !mVoS || !mGest) {
     (*e)->ExceptionClear(e);
     (*e)->DeleteGlobalRef(e, act);
     act = NULL;
@@ -153,4 +159,59 @@ int plat_open_url(const char *url) {
   }
   (*e)->DeleteLocalRef(e, a);
   return ok != 0;
+}
+static int call_ret_int(jmethodID m, int arg, int hasArg, int fail) {
+  JNIEnv *e = env();
+  if (!act_ready(e))
+    return fail;
+  jint r = hasArg ? (*e)->CallStaticIntMethod(e, act, m, (jint)arg) : (*e)->CallStaticIntMethod(e, act, m);
+  if ((*e)->ExceptionCheck(e)) {
+    (*e)->ExceptionClear(e);
+    return fail;
+  }
+  return (int)r;
+}
+int plat_brightness_get(void) {
+  return call_ret_int(mBrG, 0, 0, -1);
+}
+int plat_brightness_set(int pct) {
+  if (!act_ready(env()))
+    return 0;
+  call_int(mBrS, pct);
+  return 1;
+}
+int plat_sysvol_get(void) {
+  return call_ret_int(mVoG, 0, 0, -1);
+}
+int plat_sysvol_set(int pct) {
+  return call_ret_int(mVoS, pct, 1, 0);
+}
+void plat_gesture_insets(int *left, int *top, int *right, int *bottom) {
+  *left = *top = *right = *bottom = 0;
+  JNIEnv *e = env();
+  if (!act_ready(e))
+    return;
+  jstring js = (jstring)(*e)->CallStaticObjectMethod(e, act, mGest);
+  if ((*e)->ExceptionCheck(e)) {
+    (*e)->ExceptionClear(e);
+    return;
+  }
+  const char *s = js ? (*e)->GetStringUTFChars(e, js, NULL) : NULL;
+  if (s) {
+    sscanf(s, "%d,%d,%d,%d", left, top, right, bottom);
+    (*e)->ReleaseStringUTFChars(e, js, s);
+  }
+  if (js)
+    (*e)->DeleteLocalRef(e, js);
+}
+/* MainActivity.dispatchTouchEvent calls this on the UI thread before SDL turns an ACTION_CANCEL into lifts */
+JNIEXPORT void JNICALL Java_tv_stremioorigin_app_MainActivity_nativeTouchCancel(JNIEnv *e, jclass c) {
+  (void)e;
+  (void)c;
+  touchCancelled = 1;
+}
+int plat_touch_cancelled(void) {
+  int v = touchCancelled;
+  touchCancelled = 0;
+  return v;
 }

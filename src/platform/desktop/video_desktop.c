@@ -96,6 +96,13 @@ const char *video_error(void) {
 int video_live(void) {
   return live;
 }
+int video_set_rate(float rate) {
+  (void)rate;
+  return 0;
+}
+int video_rate_supported(void) {
+  return 0;
+}
 int video_settling(void) {
   return 0;
 }

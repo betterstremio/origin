@@ -64,6 +64,14 @@ void plat_immersive(int on);
 void plat_haptic(void);
 void plat_safe_area(int *top, int *bottom, int *left, int *right);
 int plat_open_url(const char *url);
+/* the window's brightness and the system's media volume, for a phone's swipes on the film (0-100; stubs elsewhere) */
+int plat_brightness_get(void); /* this window's brightness 0-100; when it follows the system, the system's level (0-100); -1 unknown/unsupported */
+int plat_brightness_set(int pct); /* 0-100 for this window; -1 = follow the system again; returns 1 done, 0 unsupported */
+int plat_sysvol_get(void); /* the system's media volume 0-100; -1 unsupported */
+int plat_sysvol_set(int pct); /* returns 1 done, 0 unsupported, -2 fixed-volume route (can't change) */
+void plat_gesture_insets(int *left, int *top, int *right, int *bottom); /* the system's gesture edges in window px; 0 where none */
+/* the system took the finger away (Android's ACTION_CANCEL, which SDL reports as a lift): 1 once, then 0 */
+int plat_touch_cancelled(void);
 #if SB_PLAT_GL
 /* where the platform makes the GL surface itself (target.h): the context on window w (NULL on failure), the swap, the
    swap interval, and the surface's size in pixels */

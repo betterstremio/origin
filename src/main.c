@@ -382,7 +382,8 @@ static void run_script(const char *script, int frame) {
     return;
   char buf[1024];
   snprintf(buf, sizeof buf, "%s", script);
-  for (char *tok = strtok(buf, ","); tok; tok = strtok(NULL, ",")) {
+  char *save = NULL;
+  for (char *tok = strtok_r(buf, ",", &save); tok; tok = strtok_r(NULL, ",", &save)) {
     int f = atoi(tok);
     char *c = strchr(tok, ':');
     if (!c)
@@ -430,6 +431,21 @@ static void run_script(const char *script, int frame) {
       touch_evt_ms = SDL_GetTicks();
       if (sscanf(c + 5, "%f %f", &x, &y) == 2)
         touch_up(x, y);
+      continue;
+    }
+    if (f == frame && (!strncmp(c + 1, "f2down ", 7) || !strncmp(c + 1, "f2move ", 7) || !strncmp(c + 1, "f2up ", 5))) {
+      float x0, y0, x1, y1;
+      touch_evt_ms = SDL_GetTicks();
+      int type = c[3] == 'd' ? 0 : c[3] == 'm' ? 1 : 2; /* "f2down", "f2move", "f2up" */
+      if (sscanf(c + (type == 2 ? 5 : 7), "%f %f %f %f", &x0, &y0, &x1, &y1) == 4) {
+        if (type == 0)
+          touch_cancel();
+        player_touch2(type, x0, y0, x1, y1);
+      }
+      continue;
+    } /* two fingers on the film: "906:f2down 1400 250 800 300,912:f2move ...,918:f2up ..." */
+    if (f == frame && !strncmp(c + 1, "fcancel", 7)) {
+      touch_cancel();
       continue;
     }
     if (f == frame && !strncmp(c + 1, "tap ", 4)) {
@@ -638,6 +654,11 @@ static int curHid; /* the cursor hidden over a film that has the mouse still */
  */
 static SDL_FingerID fingerId;
 static int fingerOn, mouseFinger;
+/* while a film plays, a second finger is followed too (a pinch): its id, both fingers' layout positions, and the wait
+   for every finger to lift once the pinch is over or the system took a finger away, so the one left down is no tap */
+static SDL_FingerID fingerId2;
+static int finger2On, fingerSwallow;
+static float fingerX[2], fingerY[2];
 int main(int argc, char **argv) {
   scrollin_launch_params(argc, argv);
   setlocale(LC_NUMERIC, "C");
@@ -921,15 +942,62 @@ int main(int argc, char **argv) {
         to_layout(win, (int)(e.tfinger.x * ww), (int)(e.tfinger.y * wh), &x, &y);
         touch_evt_ms = e.tfinger.timestamp;
         if (e.type == SDL_FINGERDOWN) {
-          if (fingerOn)
+          if (!fingerOn && !finger2On)
+            plat_touch_cancelled(); /* (a cancel left over from a touch nobody followed) */
+          if (fingerOn && !finger2On && !fingerSwallow && player_open()) { /* a second finger on the film */
+            finger2On = 1;
+            fingerId2 = e.tfinger.fingerId;
+            fingerX[1] = x;
+            fingerY[1] = y;
+            touch_cancel();
+            player_touch2(0, fingerX[0], fingerY[0], x, y);
+            continue;
+          }
+          if (fingerOn || fingerSwallow)
             continue;
           fingerOn = 1;
           fingerId = e.tfinger.fingerId;
+          fingerX[0] = x;
+          fingerY[0] = y;
           touch_down(x, y);
-        } else if (!fingerOn || e.tfinger.fingerId != fingerId)
           continue;
-        else if (e.type == SDL_FINGERMOTION)
-          touch_move(x, y);
+        }
+        int which = fingerOn && e.tfinger.fingerId == fingerId     ? 0
+                    : finger2On && e.tfinger.fingerId == fingerId2 ? 1
+                                                                   : -1;
+        if (which < 0)
+          continue;
+        if (e.type == SDL_FINGERMOTION) {
+          if (fingerSwallow)
+            continue;
+          fingerX[which] = x;
+          fingerY[which] = y;
+          if (finger2On)
+            player_touch2(1, fingerX[0], fingerY[0], fingerX[1], fingerY[1]);
+          else
+            touch_move(x, y);
+          continue;
+        }
+        /* a lift */
+        int cancelled = plat_touch_cancelled();
+        fingerX[which] = x;
+        fingerY[which] = y;
+        if (cancelled) { /* the system took the fingers away: SDL reports them as lifts, which act on nothing */
+          if (finger2On)
+            player_touch2(2, fingerX[0], fingerY[0], fingerX[1], fingerY[1]);
+          touch_cancel();
+          fingerOn = finger2On = fingerSwallow = 0;
+        } else if (finger2On) { /* the pinch ends; the finger left down is no tap */
+          player_touch2(2, fingerX[0], fingerY[0], fingerX[1], fingerY[1]);
+          if (which == 0) {
+            fingerId = fingerId2;
+            fingerX[0] = fingerX[1];
+            fingerY[0] = fingerY[1];
+          }
+          finger2On = 0;
+          fingerSwallow = 1;
+        } else if (fingerSwallow)
+          fingerOn = fingerSwallow = 0;
         else {
           fingerOn = 0;
           touch_up(x, y);
@@ -1025,7 +1093,7 @@ int main(int argc, char **argv) {
         form_safe_refresh();
         if (form_touch()) {
           touch_cancel();
-          fingerOn = 0;
+          fingerOn = finger2On = fingerSwallow = 0;
           fprintf(stderr, "[form] surface %dx%d: canvas %.0fx%.0f\n", dw, dh, SB_W, SB_H);
         }
       }

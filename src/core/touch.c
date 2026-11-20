@@ -299,6 +299,8 @@ void touch_cancel(void) {
     F.drag->vel = 0;
   }
   memset(&F, 0, sizeof F);
+  if (player_open())
+    player_touch_cancel();
 }
 static float holdR[4];
 void touch_hold_rect(float *x, float *y, float *w, float *h) {

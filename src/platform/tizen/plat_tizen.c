@@ -169,4 +169,24 @@ void plat_haptic(void) {}
 void plat_safe_area(int *top, int *bottom, int *left, int *right) {
   *top = *bottom = *left = *right = 0;
 }
+int plat_brightness_get(void) {
+  return -1;
+}
+int plat_brightness_set(int pct) {
+  (void)pct;
+  return 0;
+}
+int plat_sysvol_get(void) {
+  return -1;
+}
+int plat_sysvol_set(int pct) {
+  (void)pct;
+  return 0;
+}
+void plat_gesture_insets(int *left, int *top, int *right, int *bottom) {
+  *left = *top = *right = *bottom = 0;
+}
+int plat_touch_cancelled(void) {
+  return 0;
+}
 int plat_open_url(const char *url) { (void)url; return 0; }

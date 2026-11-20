@@ -8782,6 +8782,22 @@ void player_touch(int type, float x, float y) {
   }
   show_osd(1);
 }
+void player_touch_cancel(void) {
+  if (tlog())
+    fprintf(stderr, "[touch] cancelled: down %d, on the bar %d\n", TP.down, TP.onBar);
+  TP.down = 0;
+  TP.lastUpMs = 0;
+  if (TP.onBar) {
+    P.barDown = 0;
+    cancel_seek();
+    TP.onBar = 0;
+  }
+}
+void player_touch2(int type, float x0, float y0, float x1, float y1) {
+  if (tlog())
+    fprintf(stderr, "[touch] touch2 %s at %.0f,%.0f and %.0f,%.0f\n", type == 0 ? "land" : type == 1 ? "move" : "lift",
+            x0, y0, x1, y1);
+}
 
 /* Stats for nerds: what plays and how, a few short lines (n of them filled) */
 int player_nerd_lines(char (*out)[120], int max) {

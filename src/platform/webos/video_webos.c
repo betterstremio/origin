@@ -1057,6 +1057,13 @@ int video_live(void) {
   pthread_mutex_unlock(&mu);
   return l;
 }
+int video_set_rate(float rate) {
+  (void)rate;
+  return 0;
+}
+int video_rate_supported(void) {
+  return 0;
+}
 int video_settling(void) {
   return seekTarget >= 0 || (seekWait && SDL_GetTicks() - seekWaitAt < 8000);
 }

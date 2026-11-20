@@ -522,6 +522,13 @@ int video_live(void) {
 int video_has_media(void) {
   return S.active && (S.started || S.pendingStarts > 0);
 }
+int video_set_rate(float rate) {
+  (void)rate;
+  return 0;
+}
+int video_rate_supported(void) {
+  return 0;
+}
 int video_settling(void) {
   return seekTarget >= 0 || S.seeking;
 }
