@@ -23,7 +23,7 @@
 #include "core/stremio.h"
 #include "core/json.h"
 
-#define MAXG 24
+#define MAXG (ADDONS_MAX + 1) /* "Last used", then one group per addon */
 #define MAXITEMS 151
 #define SW 960.0f /* the sheet */
 #define PADX 52.0f
@@ -40,6 +40,12 @@ typedef struct {
   Stream *items;
   int n;
   int resume;
+  /* its best stream for this TV, scored once when its streams come (and again only if the speed or length
+     changes), so the pick over every addon compares one stream per addon, not all of them, on each answer */
+  const Stream *best;
+  int bestOk, bestDur, bestCapsOn;
+  double bestMbps;
+  TvCaps bestCaps;
 } Group;
 static struct {
   int open, zone; /* 0 list, 1 chips */
@@ -49,7 +55,7 @@ static struct {
   int closing;
   SGlass glass;
   Group groups[MAXG];
-  int ng;
+  int ng, per; /* per: streams kept per addon */
   unsigned tok;
   int loading;
   double t;
@@ -144,6 +150,43 @@ static void rebuild(void) {
   double now = app_now();
   int n = 0;
   double nw[MAXITEMS];
+  /* All, with more rows than fit: each addon an equal share from its top, the rows left over to the addons with
+     more, and the focused row always kept (the first addons used to fill it, and the later ones' rows were only
+     under their tabs, #18) */
+  int take[MAXG];
+  const Stream *keep = selKind == R_PLAIN ? sel : NULL;
+  for (int g = 0; g < S.ng; g++)
+    take[g] = S.groups[g].n;
+  int keepG = -1, keepI = 0;
+  if (keep) {
+    int g = S.itemGroup[S.idx];
+    for (int i = 0; g >= 0 && g < S.ng && i < S.groups[g].n && keepG < 0; i++)
+      if (&S.groups[g].items[i] == keep)
+        keepG = g, keepI = i;
+  }
+  for (int pass = 0; S.filter < 0 && pass < 2; pass++) {
+    int sum = 0, room = MAXITEMS - 1 - pass; /* (pass 1: one row kept for the focused one, left out by pass 0) */
+    for (int g = 0; g < S.ng; g++)
+      sum += take[g] = S.groups[g].n;
+    if (sum > room) {
+      int q = 0, t = 0;
+      for (;; q++) {
+        int u = 0;
+        for (int g = 0; g < S.ng; g++)
+          u += S.groups[g].n < q + 1 ? S.groups[g].n : q + 1;
+        if (u > room)
+          break;
+        t = u;
+      }
+      for (int g = 0; g < S.ng; g++) {
+        take[g] = S.groups[g].n < q ? S.groups[g].n : q;
+        if (t < room && S.groups[g].n > take[g])
+          take[g]++, t++;
+      }
+    }
+    if (keepG < 0 || keepI < take[keepG])
+      break;
+  }
   for (int g = 0; g < S.ng && n < MAXITEMS - 1; g++) {
     if (!S.groups[g].n)
       continue;
@@ -151,6 +194,8 @@ static void rebuild(void) {
       continue;
     for (int i = 0; i < S.groups[g].n && n < MAXITEMS - 1; i++) {
       const Stream *s = &S.groups[g].items[i];
+      if (i >= take[g] && s != keep)
+        continue;
       S.items[n] = s;
       S.itemGroup[n] = g;
       S.kind[n] = S.groups[g].resume ? R_RESUME : R_PLAIN;
@@ -160,13 +205,34 @@ static void rebuild(void) {
   } /* rows new to the list fade in (never pop) */
   /* best stream on: the pick for this TV right after the resume row */
   if (best_on() && S.filter < 0 && n) {
-    const Stream *list[MAXITEMS];
-    int m = 0;
-    for (int i = 0; i < n; i++)
-      if (S.kind[i] == R_PLAIN)
-        list[m++] = S.items[i];
+    /* every stream that came, not only the rows shown: each addon's own best, then the best of those (the same
+       pick: the overall best is also the best of its addon, and the order stays the addons' order) */
+    const Stream *list[MAXG];
+    int m = 0, dur = best_dur(sb_meta_cached(S.type, S.id), S.type);
+    double mbps = best_net_mbps();
+    const TvCaps *cp = best_caps();
+    TvCaps caps;
+    memset(&caps, 0, sizeof caps);
+    if (cp)
+      caps = *cp;
+    for (int g = 0; g < S.ng; g++) {
+      Group *G = &S.groups[g];
+      if (G->resume || !G->n)
+        continue;
+      if (!G->bestOk || G->bestDur != dur || G->bestMbps != mbps || G->bestCapsOn != (cp != NULL) ||
+          memcmp(&G->bestCaps, &caps, sizeof caps)) {
+        const Stream *one[40];
+        int k = 0;
+        for (int i = 0; i < G->n && k < 40; i++)
+          one[k++] = &G->items[i];
+        G->best = best_pick(one, k, dur, NULL, mbps, NULL);
+        G->bestOk = 1, G->bestDur = dur, G->bestMbps = mbps, G->bestCapsOn = cp != NULL, G->bestCaps = caps;
+      }
+      if (G->best)
+        list[m++] = G->best;
+    }
     BestRate r;
-    const Stream *b = m ? best_pick(list, m, best_dur(sb_meta_cached(S.type, S.id), S.type), NULL, -1, &r) : NULL;
+    const Stream *b = m ? best_pick(list, m, dur, NULL, mbps, &r) : NULL;
     if (b) {
       int at = S.kind[0] == R_RESUME ? 1 : 0;
       memmove(S.items + at + 1, S.items + at, (n - at) * sizeof *S.items);
@@ -207,19 +273,35 @@ static void rebuild(void) {
   S.laid = 0;
 }
 static void add(const Stream *arr, int n, int gIdx, const char *gName, int resume) {
-  if (gIdx >= MAXG)
+  if (gIdx >= MAXG) {
+    static unsigned told; /* once per lookup */
+    if (told != S.tok)
+      fprintf(stderr, "[streams] more than %d addons answered: the rest are left out of the list\n", ADDONS_MAX);
+    told = S.tok;
     return;
+  }
   Group *g = &S.groups[gIdx];
   if (gIdx >= S.ng)
     S.ng = gIdx + 1;
   if (!g->name[0])
     snprintf(g->name, sizeof g->name, "%s", gName ? gName : T("Addon"));
   g->resume = resume;
-  int k = n < 40 - g->n ? n : 40 - g->n;
+  int lim = resume || !S.per ? 40 : S.per, k = n < lim - g->n ? n : lim - g->n;
   if (k > 0) {
     g->items = realloc(g->items, (g->n + k) * sizeof *g->items);
     memcpy(g->items + g->n, arr, k * sizeof *arr);
+    /* cut to its share: its best stream for this TV stays (in place of the last kept), so the best fit sees it */
+    if (k < n && !resume && best_on()) {
+      const Stream *all[40];
+      int m = n < 40 ? n : 40;
+      for (int i = 0; i < m; i++)
+        all[i] = &arr[i];
+      const Stream *b = best_pick(all, m, best_dur(sb_meta_cached(S.type, S.id), S.type), NULL, -1, NULL);
+      if (b && b - arr >= k)
+        g->items[g->n + k - 1] = *b;
+    }
     g->n += k;
+    g->bestOk = 0;
   }
   count_redo();
   if (S.open) {
@@ -280,6 +362,8 @@ void streams_show(const char *type, const char *id, const char *vid, const char 
   snprintf(S.ep, sizeof S.ep, "%s", epLabel ? epLabel : "");
   /* minimised and reopened: keep the results (and the focus) instead of asking every addon again */
   if (!strcmp(k, S.key) && (S.loading || S.ng) && app_now() - S.t < 600) {
+    for (int g = 0; g < S.ng; g++)
+      S.groups[g].bestOk = 0; /* (what the TV plays or the settings may have changed since: scored again) */
     render_chips();
     rebuild();
     return;
@@ -297,6 +381,15 @@ void streams_show(const char *type, const char *id, const char *vid, const char 
   S.filter = -1;
   S.chipIdx = 0;
   S.nchips = 0;
+  {
+    /* streams kept per addon: 40, and with more than 24 addons serving the title a share of 960 (at least 15), so a
+       big addon list keeps no more than 24 addons of 40 always did (a Stream is ~6.5 KB: 64 x 40 would be 16 MB) */
+    char nm[ADDONS_MAX][96];
+    int na = sb_stream_addons(type, vid, nm, ADDONS_MAX);
+    S.per = na > 24 ? 960 / na : 40;
+    if (S.per < 15)
+      S.per = 15;
+  }
   S.tok++;
   S.loading = 1;
   qt_set(&S.chipsX, 0);
