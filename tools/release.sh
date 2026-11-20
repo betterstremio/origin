@@ -1,6 +1,9 @@
 #!/bin/bash
 # A release in two halves:
 #   tools/release.sh build X.Y.Z               Linux or WSL: every package from empty folders, into dist/X.Y.Z/
+#   tools/release.sh mac X.Y.Z                 on a Mac, from the same commit: the macOS DMG into dist/X.Y.Z/ (copy
+#                                              it, its .sha256 and COMMIT.macos to the publishing machine's dist/X.Y.Z/;
+#                                              build leaves them there)
 #   tools/release.sh publish X.Y.Z NOTES.md    where git and gh are signed in: the checks, main pushed, one GitHub release
 #                                              with every package as its own file
 # Each platform's updater picks its own file from the release (src/platform/<target>/target.h, SB_PKG_KIND).
@@ -13,7 +16,7 @@ SLUG="${REPO_SLUG:-betterstremio/origin}"
 AUTHOR="${RELEASE_AUTHOR:-Better Stremio <better-stremio@users.noreply.github.com>}"
 D="$ROOT/dist/$V"
 die() { echo "STOPPED: $*"; exit 1; }
-[[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "usage: tools/release.sh build|publish X.Y.Z [NOTES.md]"
+[[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "usage: tools/release.sh build|mac|publish X.Y.Z [NOTES.md]"
 g() {   # git for this checkout, also from WSL when the worktree's link is a Windows path
   if git -C "$ROOT" rev-parse >/dev/null 2>&1; then git -C "$ROOT" "$@"
   else git --git-dir="$(sed -n 's/^gitdir: //p' "$ROOT/.git" | sed -E 's#^([A-Za-z]):#/mnt/\L\1#')" --work-tree="$ROOT" "$@"; fi
@@ -25,6 +28,8 @@ FILES=("${APPID}_${V}_arm.ipk" "${APPID}_${V}_arm.ipk.sha256" "${APPID}_${V}_and
 FILES+=("${APPID}_${V}_android-phone-beta.apk")
 # Samsung TVs (from 3.0.0, preview): installed by hand with Apps2Samsung; the app only says a newer one is out
 FILES+=("${APPID}_${V}_tizen-beta.tpk" "${APPID}_${V}_tizen-beta.tpk.sha256")
+# Macs (from 3.0.2, beta): made on a Mac (mac below), so build does not make or check them; publish needs them
+MAC_FILES=("${APPID}_${V}_macos-arm64.dmg" "${APPID}_${V}_macos-arm64.dmg.sha256")
 
 case "$CMD" in
 build)
@@ -34,7 +39,7 @@ build)
   [ -f "$ORIGIN_BUILD/keys/android-release.jks" ] || die "no Android release key: a new one would break every update"
   [ -d "$ORIGIN_BUILD/official/data" ] || die "no $ORIGIN_BUILD/official: the IPK takes its P2P and DTS libraries from it"
   grep -q "\"version\": \"$V\"" "$ROOT/assets/whatsnew.json" || echo "note: assets/whatsnew.json is not $V, so no What's new card shows for this version"
-  rm -rf "$D"; mkdir -p "$D"
+  mkdir -p "$D"; find "$D" -mindepth 1 ! -name "${MAC_FILES[0]}*" ! -name COMMIT.macos -exec rm -rf {} +   # (the Mac's files stay)
   OUT="$D" bash "$ROOT/packaging/webos/pack.sh" --clean
   bash "$ROOT/tools/android/build-apk.sh" --clean
   for k in android-arm64 android-armv7 android; do cp "$BUILD_ROOT/android/apk/${APPID}_${V}_$k.apk" "$D/"; done
@@ -49,12 +54,28 @@ build)
   for f in "${FILES[@]}"; do [ -f "$D/$f" ] || die "missing $f"; done
   g rev-parse HEAD > "$D/COMMIT"
   ls -l "$D" | awk 'NR>1 {printf "  %-48s %6.1f MB\n", $NF, $5/1048576}'
-  echo "built $V from $(cut -c1-7 "$D/COMMIT"): check them, then tools/release.sh publish $V NOTES.md"
+  echo "built $V from $(cut -c1-7 "$D/COMMIT"): check them, add the Mac's (tools/release.sh mac $V), then tools/release.sh publish $V NOTES.md"
+  ;;
+mac)
+  [ "$(uname -s)" = Darwin ] || die "the macOS package is made on a Mac"
+  [ -z "$(g status --porcelain)" ] || die "uncommitted changes"
+  [ "$(cat "$ROOT/VERSION")" = "$V" ] || die "VERSION says $(cat "$ROOT/VERSION"): commit the new version first"
+  grep -q '^NUVIO_SUPABASE_URL=.' "$KEYS" && grep -q '^NUVIO_SUPABASE_ANON_KEY=.' "$KEYS" || die "no Nuvio settings in $KEYS: the package would have no Nuvio sign-in"
+  [ -f "$ROOT/build/mac/libsbengine.dylib" ] || die "no P2P engine: tools/build-engine.sh mac"
+  mkdir -p "$D"; rm -f "$D/${MAC_FILES[0]}" "$D/${MAC_FILES[1]}" "$D/COMMIT.macos"
+  OUT="$D" bash "$ROOT/packaging/macos/pack.sh" --clean
+  for f in "${MAC_FILES[@]}"; do [ -f "$D/$f" ] || die "missing $f"; done
+  g rev-parse HEAD > "$D/COMMIT.macos"
+  echo "built the Mac's $V from $(cut -c1-7 "$D/COMMIT.macos"): copy ${MAC_FILES[0]}, its .sha256 and COMMIT.macos to dist/$V where the release is published"
   ;;
 publish)
   NOTES="${3:-}"; [ -f "$NOTES" ] || die "no notes file"
   for f in "${FILES[@]}"; do [ -f "$D/$f" ] || die "missing dist/$V/$f: run build first"; done
   [ "$(cat "$D/COMMIT" 2>/dev/null)" = "$(g rev-parse HEAD)" ] || die "dist/$V was not built from this commit: run build again"
+  for f in "${MAC_FILES[@]}"; do [ -f "$D/$f" ] || die "missing dist/$V/$f: run tools/release.sh mac $V on a Mac and copy it here"; done
+  [ "$(cat "$D/COMMIT.macos" 2>/dev/null)" = "$(g rev-parse HEAD)" ] || die "the Mac's DMG was not built from this commit: run mac again"
+  [ "$(sha256sum "$D/${MAC_FILES[0]}" | cut -c1-64)" = "$(cut -c1-64 "$D/${MAC_FILES[1]}")" ] || die "the Mac DMG does not match its .sha256"
+  FILES+=("${MAC_FILES[@]}")
   [ -z "$(g status --porcelain)" ] || die "uncommitted changes"
   [ "$(sha256sum "$D/${FILES[0]}" | cut -c1-64)" = "$(cut -c1-64 "$D/${FILES[1]}")" ] || die "the IPK does not match its .sha256"
   [ "$(sha256sum "$D/${FILES[5]}" | cut -c1-64)" = "$(cut -c1-64 "$D/${FILES[6]}")" ] || die "the Windows setup does not match its .sha256"
@@ -87,5 +108,5 @@ publish)
     git -C "$SITE" -c credential.helper= -c credential.helper='!gh auth git-credential' push -q "https://github.com/${SITE_SLUG:-betterstremio/betterstremio.github.io}.git" HEAD:main && echo "site: webOS listing $V pushed"
   else echo "NOTE: no site clone at $SITE: run tools/webos-feed.sh $V $NOTES <site> and push it, or TVs fall back to GitHub's API"; fi
   ;;
-*) die "usage: tools/release.sh build|publish X.Y.Z [NOTES.md]";;
+*) die "usage: tools/release.sh build|mac|publish X.Y.Z [NOTES.md]";;
 esac

@@ -2566,9 +2566,12 @@ int welcome_covers(void) {
 
 /* whatsnew.json: { "version", "items": [ { "title", "text", "icon" } or "a line", ... ], "support": { "title",
    "message", "url" } } An item may carry "needs": "cast" | "usb" | "dts" | "tv" (or a list of them: left out where the
-   package lacks one) and "title_<package>" / "text_<package>" (its words there; package: webos, android, windows) */
+   package lacks one) and "title_<package>" / "text_<package>" (its words there; package: webos, android, windows,
+   macos) */
 static const char *wn_pkg(void) {
-#if SB_WINDOWED
+#if SB_WINDOWED && defined(__APPLE__)
+  return "macos";
+#elif SB_WINDOWED
   return "windows";
 #elif defined(__ANDROID__)
   return "android";

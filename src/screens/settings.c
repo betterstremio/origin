@@ -454,7 +454,10 @@ static int about_opts(void) {
   aboutSeen = update_serial();
   if (av) {
     Setting *s = &supS[n++];
-#if SB_MANUAL_UPDATE
+#if SB_UPDATE_IN_BROWSER
+    set_act(s, "__upd", T1("Download version {v}", "v", av),
+            update_msg()[0] ? update_msg() : T("Opens the new version in your browser"));
+#elif SB_MANUAL_UPDATE
     set_act(s, "__upd", T1("Version {v} is available", "v", av), T("Install the update with Apps2Samsung"));
 #else
     set_act(s, "__upd",

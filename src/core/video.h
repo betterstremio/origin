@@ -58,4 +58,9 @@ int video_set_crop(int sx, int sy, int sw, int sh, float dx, float dy, float dw,
 void video_set_surface(int w, int h); /* the drawable's size: the plane's rectangle is read in its pixels */
 int video_audio_unsupported(void); /* 1 when the TV plays the picture but not this audio track */
 void video_pump(void); /* delivers the platform's events; call per frame */
+#if SB_VIDEO_UNDER
+/* where the video is a texture rather than a plane under the window (macOS): its newest frame drawn and shown under
+   what the frame holds, where that is see-through (gfx_end calls it) */
+void video_frame_under(void);
+#endif
 #endif

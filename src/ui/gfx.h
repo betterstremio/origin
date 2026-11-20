@@ -78,6 +78,11 @@ void gfx_rrect_v(float x, float y, float w, float h, float radius, uint32_t top,
 void gfx_rrect_h(float x, float y, float w, float h, float radius, uint32_t left, uint32_t right);
 void gfx_hole(float x, float y, float w, float h, float radius,
               float a); /* the window made see-through there by a (0..1): the video plane under it shows */
+#if SB_VIDEO_UNDER
+void gfx_under(GLuint tex, float x, float y, float w, float h, float u0, float v0, float u1,
+               float v1); /* a picture put under what is drawn, showing where that is see-through (the video) */
+void gfx_restore_state(void); /* GL as gfx left it, after another renderer drew in its context (mpv) */
+#endif
 void gfx_ring(float x, float y, float w, float h, float radius, float thickness,
               uint32_t color); /* outline, drawn inside */
 void gfx_ring_out(float x, float y, float w, float h, float radius, float thickness,

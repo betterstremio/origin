@@ -608,7 +608,7 @@ static int idle_k(void) {
 }
 static void desktop_apply(void) {
   int k = dIdle ? idle_k() : dK;
-  GL_INTERVAL(k);
+  GL_INTERVAL(vsyncOn ? k : 0); /* (without vsync, the Mac's: the loop alone keeps the monitor's rate) */
   pace_set_hz(dHz / k);
 }
 /* one frame while the window's border is dragged (plat_live_draw: Windows' own loop runs then, not this one): the new
@@ -769,8 +769,7 @@ int main(int argc, char **argv) {
                            the loop paces itself instead */
   pace_init();
 #if SB_WINDOWED
-  if (vsyncOn)
-    desktop_rate(win);
+  desktop_rate(win);
 #endif
 #endif
   plat_post_window(win);
@@ -1100,7 +1099,7 @@ int main(int argc, char **argv) {
         }
       }
 #if SB_WINDOWED
-      else if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_DISPLAY_CHANGED && vsyncOn)
+      else if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_DISPLAY_CHANGED)
         desktop_rate(win);
 #endif
     }
@@ -1350,6 +1349,9 @@ int main(int argc, char **argv) {
       static Uint32 hzNext;
       if (hzState < 0) {
         hzState = !vsyncOn && !getenv("SB_HZ") && !getenv("SB_PACE") ? 0 : 3;
+#if SB_WINDOWED
+        hzState = 3; /* (a desktop has its monitor's rate from the display mode: desktop_rate) */
+#endif
         follow = hzState == 0;
       }
       if (hzState == 0 && frame > 300 && SDL_GetTicks() >= hzNext && app_idle() > 3 && !player_open() &&
