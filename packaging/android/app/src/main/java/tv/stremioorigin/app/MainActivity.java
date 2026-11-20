@@ -6,6 +6,7 @@ import android.content.pm.ActivityInfo;
 import android.content.pm.PackageInfo;
 import android.content.res.AssetManager;
 import android.graphics.Color;
+import android.graphics.Matrix;
 import android.graphics.PixelFormat;
 import android.media.MediaCodecInfo;
 import android.media.MediaCodecList;
@@ -18,10 +19,12 @@ import android.view.DisplayCutout;
 import android.view.HapticFeedbackConstants;
 import android.view.KeyEvent;
 import android.view.InputDevice;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
+import android.widget.RelativeLayout;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -30,6 +33,7 @@ import java.io.OutputStream;
 import java.util.Locale;
 
 import org.libsdl.app.SDLActivity;
+import org.libsdl.app.SDLSurface;
 
 /* SDL's activity, plus what the C side reads before it starts (environment variables, see
    src/platform/android/plat_android.c): the assets copied out of the APK, the data and library folders, the
@@ -50,6 +54,10 @@ public class MainActivity extends SDLActivity {
     public static String envList() { StringBuilder b = new StringBuilder(); for (java.util.Map.Entry<String, String> e : env.entrySet()) b.append(e.getKey()).append('=').append(e.getValue().replace('\n', ' ')).append('\n'); return b.toString(); }
 
     @Override protected String[] getLibraries() { return new String[] { "SDL2", "curl", "main" }; }
+
+    @Override protected SDLSurface createSDLSurface(Context c) {
+        return touch ? super.createSDLSurface(c) : new TvSurface(c);
+    }
 
     @Override protected void onCreate(Bundle saved) {
         self = this;
@@ -73,6 +81,53 @@ public class MainActivity extends SDLActivity {
         SbPlayer.attach(this, box);            // the video frame and the subtitle view, under SDL's layout
         box.addView(mLayout, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         setContentView(box);
+    }
+
+    static class TvSurface extends SDLSurface {
+        int fixedW, fixedH;
+        final Matrix inputScale = new Matrix();
+
+        TvSurface(Context c) {
+            super(c);
+            // Keep the view at box size when the buffer is fixed.
+            setLayoutParams(new RelativeLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            View.OnGenericMotionListener motion = getMotionListener();
+            setOnGenericMotionListener((v, e) -> {
+                if (e.getActionMasked() != MotionEvent.ACTION_HOVER_MOVE || !e.isFromSource(InputDevice.SOURCE_MOUSE))
+                    return motion.onGenericMotion(v, e);
+                MotionEvent scaled = bufferEvent(e);
+                try { return motion.onGenericMotion(v, scaled); }
+                finally { if (scaled != e) scaled.recycle(); }
+            });
+        }
+
+        @Override protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+            super.onSizeChanged(w, h, oldw, oldh);
+            if (w <= 0 || h <= 0) return;
+            double scale = Math.min(1920.0 / w, 1080.0 / h);
+            int fw = scale < 1 ? Math.max(1, (int)Math.round(w * scale)) : 0;
+            int fh = scale < 1 ? Math.max(1, (int)Math.round(h * scale)) : 0;
+            if (fw == fixedW && fh == fixedH) return;
+            fixedW = fw; fixedH = fh;
+            if (fw > 0) getHolder().setFixedSize(fw, fh);
+            else getHolder().setSizeFromLayout();
+        }
+
+        // SDL uses the buffer size for mouse pixels and for normalizing touches.
+        MotionEvent bufferEvent(MotionEvent e) {
+            int w = getWidth(), h = getHeight();
+            if (w <= 0 || h <= 0 || !mIsSurfaceReady || (w == mWidth && h == mHeight)) return e;
+            inputScale.setScale(mWidth / w, mHeight / h);
+            MotionEvent scaled = MotionEvent.obtain(e);
+            scaled.transform(inputScale);
+            return scaled;
+        }
+
+        @Override public boolean onTouch(View v, MotionEvent e) {
+            MotionEvent scaled = bufferEvent(e);
+            try { return super.onTouch(v, scaled); }
+            finally { if (scaled != e) scaled.recycle(); }
+        }
     }
 
     /* a phone sent to the back (Home, another app, the screen off): whatever plays stops at once, the film or a card's
