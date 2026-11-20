@@ -13,6 +13,7 @@ int anime_map_kitsu(int alid); /* the Kitsu id ARM gave, 0 when none */
 int anime_map_season(int alid); /* the TVDB season of this AniList entry, 0 when unknown */
 /* the AniList entry of an IMDb id: the one with the lowest season (season 1 first), 0 when none is known */
 int anime_map_alid(const char *imdb);
+int anime_map_ready(void); /* 1 once the file has been read (starts reading it) */
 /* every AniList entry known to map to this IMDb id (all seasons of a show), with its Kitsu id (0 when none): fills up
    to max of each, returns how many */
 int anime_map_aliases(const char *imdb, int *alids, int *kitsus, int max);

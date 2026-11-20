@@ -606,6 +606,11 @@ int anime_map_season(int alid) {
   return at >= 0 && known_entry(&entries[at]) ? entries[at].season : 0;
 }
 
+int anime_map_ready(void) {
+  start_load();
+  return loaded;
+}
+
 int anime_map_alid(const char *imdb) {
   start_load();
   if (!loaded)

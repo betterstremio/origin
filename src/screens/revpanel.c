@@ -10,6 +10,7 @@
 #include "core/keys.h"
 #include "core/i18n.h"
 #include "core/json.h"
+#include "core/tmdb.h"
 #include "core/hit.h"
 #include "core/trakt.h"
 #include "core/trailer.h"
@@ -616,11 +617,17 @@ static void layout(void) {
   }
   if (!is_ep()) {
     const char *ll = js_str(m, "locLogo", NULL);
+    const TmdbLoc *L = tmdb_loc(R.it.type, R.it.id, 1); /* (m is the shared copy: the page's TMDB logo is not in it) */
+    if (L && L->logo && *L->logo)
+      ll = L->logo;
     Item it = R.it;
     if (m)
       sb_fill_item(&it, m, R.it.type);
     char lu[512];
-    sb_logo_of(&it, lu, sizeof lu);
+    if (js_bool(m, "locNoLogo", 0) || (L && L->noLogo))
+      lu[0] = 0; /* only another script's logo: the name */
+    else
+      sb_logo_of(&it, lu, sizeof lu);
     snprintf(R.logo, sizeof R.logo, "%s", ll && *ll ? ll : lu);
   } else
     R.logo[0] = 0; /* the title page's own logo (its cached copy) */

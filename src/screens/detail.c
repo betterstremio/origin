@@ -1199,6 +1199,10 @@ static void show_more(void) {
   timer_start(&D.moreIn, 0.42f);
 }
 static void logo_pick(void) {
+  if (js_bool(D.meta, "locNoLogo", 0)) { /* TMDB has only another script's logo: the name is drawn */
+    D.logoUrl[0] = 0;
+    return;
+  }
   const char *l = js_str(D.meta, "locLogo", NULL);
   if (!l || !*l)
     l = NULL;

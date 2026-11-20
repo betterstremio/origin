@@ -1303,6 +1303,8 @@ static void logo_src(const Item *it, char *out, size_t cap) {
   const TmdbLoc *L = tmdb_loc(it->type, it->id, 1);
   if (L && L->logo && L->logo[0])
     snprintf(out, cap, "%s", L->logo);
+  else if (L && L->noLogo)
+    out[0] = 0; /* only a logo in another script: the name */
   else
     sb_logo_of(it, out, cap);
 }

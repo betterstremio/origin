@@ -2,7 +2,8 @@
    the user's own key (added from the phone: the TV keyboard is no place for 32 characters). Cinemeta is
    English only. One find + one details call per title (+ one per season for a series' page), kept 3 days
    on disk so a title costs nothing the second time. What TMDB has no translation for stays empty: the
-   English stays. English UI = no lookups.
+   English stays. English UI = no lookups, but for anime IMDb
+   ids (known to the AniList map): their English logo only.
 
    Everything here is for the main thread and never blocks: a lookup that is not known yet is queued for
    the workers and answered by a later frame (draw code reads tmdb_loc() every frame; nothing here does
@@ -19,6 +20,7 @@ typedef struct {
   const char *name, *overview, *logo, *poster; /* "" when TMDB has none in the app's language */
   const char *genres[8];
   int ngenres; /* TMDB's genre names, in the app's language */
+  int noLogo; /* TMDB has only logos in another script: draw the name, not the metahub logo */
   int light; /* a row's lookup: no episode list (the page asks again) */
   const TmdbEp *eps;
   int neps; /* sorted by season, episode; TMDB's stand-in names left out */
@@ -48,7 +50,8 @@ int tmdb_key_from_nuvio(void); /* the key in use came from the Nuvio account */
 /* changes whenever lookups start again (a key added or removed, another language): screens drop what they
    applied */
 unsigned tmdb_generation(void);
-int tmdb_wanted(const char *id); /* the UI is not English, there is a key, and it is an IMDb id */
+int tmdb_wanted(const char *id); /* the UI is not English, there is a key, and it is an IMDb id (in English, anime ids
+                                    are asked for the logo only) */
 
 /* the title in the app's language: NULL while unknown (then it is asked for), when TMDB has nothing for it
    or when lookups are off. light = 1 for rows (no episodes); 0 for a title page (a series' episodes too). */

@@ -6,6 +6,7 @@
 #include "core/i18n.h"
 #include "core/app.h"
 #include "core/json.h"
+#include "core/anime_map.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -85,6 +86,7 @@ static Loc *loc_from_json(const cJSON *v) {
   l->overview = dupe(js_str(v, "overview", ""));
   l->logo = dupe(js_str(v, "logo", ""));
   l->poster = dupe(js_str(v, "poster", ""));
+  l->pub.noLogo = js_num(v, "nologo", 0) > 0;
   const cJSON *g;
   cJSON_ArrayForEach(g, js_arr(v, "genres"))
     if (cJSON_IsString(g) && l->pub.ngenres < 8)
@@ -269,7 +271,7 @@ enum { E_OK = 0, E_BADKEY, E_NET };
 typedef struct Job {
   struct Job *next;
   char type[8], id[16], lang[8], key[420];
-  int light, err;
+  int light, anime, err; /* anime: an IMDb id of the AniList map: its logo may come in English (or as text) */
   unsigned gen;
   Loc *v;
   int none;
@@ -363,8 +365,17 @@ static cJSON *fetch(const Job *j, int *err, int *none) {
   int tid = (int)js_num(!strcmp(kind, "tv") ? tv : mv, "id", 0);
   cJSON_Delete(f);
   char baseLang[3] = { j->lang[0], j->lang[1], 0 };
-  snprintf(p, sizeof p, "/%s/%d?language=%s&append_to_response=images,translations&include_image_language=%s", kind,
-           tid, j->lang, baseLang);
+  int enOnly = !strcmp(j->lang, "en"); /* English UI: only the title's logo is asked for */
+  if (enOnly)
+    snprintf(p, sizeof p, "/%s/%d?language=en&append_to_response=images&include_image_language=en,null,ja,zh,ko", kind,
+             tid);
+  else if (j->anime)
+    snprintf(p, sizeof p,
+             "/%s/%d?language=%s&append_to_response=images,translations&include_image_language=%s,en,null,ja,zh,ko",
+             kind, tid, j->lang, baseLang);
+  else
+    snprintf(p, sizeof p, "/%s/%d?language=%s&append_to_response=images,translations&include_image_language=%s", kind,
+             tid, j->lang, baseLang);
   cJSON *d = tmdb_get(p, j->key, &st);
   if (!d || !js_num(d, "id", 0)) {
     cJSON_Delete(d);
@@ -393,16 +404,43 @@ static cJSON *fetch(const Job *j, int *err, int *none) {
     }
   }
   cJSON *v = cJSON_CreateObject(), *gs = cJSON_CreateArray();
+  if (enOnly)
+    name = ov = "";
   cJSON_AddStringToObject(v, "name", name);
   cJSON_AddStringToObject(v, "overview", ov);
-  cJSON_ArrayForEach(t, js_arr(d, "genres")) {
+  cJSON_ArrayForEach(t, enOnly ? NULL : js_arr(d, "genres")) { /* (English: the logo only, the genres stay) */
     const char *g = js_str(t, "name", "");
     if (*g)
       cJSON_AddItemToArray(gs, cJSON_CreateString(g));
   }
   cJSON_AddItemToObject(v, "genres", gs);
   const cJSON *im = js_obj(d, "images");
-  const char *lg = best_image(js_arr(im, "logos"), baseLang), *po = best_image(js_arr(im, "posters"), baseLang);
+  const cJSON *logos = js_arr(im, "logos");
+  const char *lg = best_image(logos, baseLang), *po = enOnly ? "" : best_image(js_arr(im, "posters"), baseLang);
+  int noLogo = 0;
+  if (j->anime) { /* the UI language, else English, else a language-less one; only another script: show the name */
+    if (!*lg && strcmp(baseLang, "en"))
+      lg = best_image(logos, "en");
+    if (!*lg)
+      lg = best_image(logos, "");
+    if (!*lg) { /* (an SVG counts here: an English one leaves metahub's logo, a Japanese-only one shows the name) */
+      int usable = 0, other = 0;
+      const cJSON *x;
+      cJSON_ArrayForEach(x, logos) {
+        const char *ll = js_str(x, "iso_639_1", "");
+        if (!*js_str(x, "file_path", ""))
+          continue;
+        if (!*ll || !strcmp(ll, baseLang) || !strcmp(ll, "en"))
+          usable = 1;
+        else
+          other = 1;
+      }
+      noLogo = other && !usable;
+    }
+    cJSON_AddNumberToObject(v, "lv", 3);
+  }
+  if (noLogo)
+    cJSON_AddNumberToObject(v, "nologo", 1);
   char u[600];
   snprintf(u, sizeof u, "%s%s", *lg ? IMG : "", lg);
   cJSON_AddStringToObject(v, "logo", u);
@@ -414,7 +452,7 @@ static cJSON *fetch(const Job *j, int *err, int *none) {
     cJSON_Delete(d);
     return v;
   }
-  if (j->light) {
+  if (j->light || enOnly) {
     cJSON_AddNumberToObject(v, "lt", 1);
     cJSON_Delete(d);
     return v;
@@ -492,7 +530,8 @@ static void run(Job *j) {
   cJSON *c = t ? cJSON_Parse(t) : NULL;
   free(t);
   const cJSON *cv0 = js_obj(c, "v");
-  if (cv0 && now_ms() - js_num(c, "at", 0) < FRESH_MS && (j->light || !js_num(cv0, "lt", 0))) { /* on disk and fresh */
+  if (cv0 && now_ms() - js_num(c, "at", 0) < FRESH_MS && (j->light || !js_num(cv0, "lt", 0)) &&
+      (!j->anime || js_num(cv0, "lv", 0) >= 3)) { /* on disk and fresh */
     if (js_num(cv0, "none", 0))
       j->none = 1;
     else
@@ -507,6 +546,8 @@ static void run(Job *j) {
   if (j->none) {
     v = cJSON_CreateObject();
     cJSON_AddNumberToObject(v, "none", 1);
+    if (j->anime)
+      cJSON_AddNumberToObject(v, "lv", 3); /* (kept 3 days like the rest) */
   } else
     j->v = loc_from_json(v);
   cJSON *o = cJSON_CreateObject();
@@ -700,6 +741,18 @@ static void drain(void) {
     free(j);
   }
 }
+static int is_imdb(const char *id) {
+  if (!id || strncmp(id, "tt", 2))
+    return 0;
+  size_t n = 0;
+  for (const char *p = id + 2; *p; p++, n++)
+    if (*p < '0' || *p > '9')
+      return 0;
+  return n >= 5 && n <= 10;
+}
+static int anime_id(const char *id) { /* main thread only (the AniList map) */
+  return is_imdb(id) && app_anime_on() && anime_map_alid(id) > 0; /* (the map is read only with the Anime tab on) */
+}
 static void enqueue(const char *type, const char *id, int light, int first) {
   Job *j = calloc(1, sizeof *j);
   snprintf(j->type, sizeof j->type, "%s", !strcmp(type, "series") ? "series" : "movie");
@@ -707,6 +760,7 @@ static void enqueue(const char *type, const char *id, int light, int first) {
   snprintf(j->lang, sizeof j->lang, "%s", i18n_lang());
   snprintf(j->key, sizeof j->key, "%s", key);
   j->light = light;
+  j->anime = anime_id(id);
   j->gen = gen;
   pthread_mutex_lock(&mu);
   if (!workersOn) {
@@ -746,15 +800,6 @@ static void to_front(const char *id) { /* still waiting in the queue: ahead of t
       break;
     }
   pthread_mutex_unlock(&mu);
-}
-static int is_imdb(const char *id) {
-  if (!id || strncmp(id, "tt", 2))
-    return 0;
-  size_t n = 0;
-  for (const char *p = id + 2; *p; p++, n++)
-    if (*p < '0' || *p > '9')
-      return 0;
-  return n >= 5 && n <= 10;
 }
 
 void tmdb_init(void) {
@@ -854,9 +899,19 @@ int tmdb_wanted(const char *id) {
   drain();
   return key[0] && strcmp(i18n_lang(), "en") && is_imdb(id);
 }
+static int logo_only(const char *id) { /* English UI: an anime's logo is asked for, nothing else */
+  drain();
+  return key[0] && !strcmp(i18n_lang(), "en") && anime_id(id);
+}
+static int map_pending(const char *id) { /* English, Anime tab on, the AniList map still being read: not known yet */
+  return key[0] && !strcmp(i18n_lang(), "en") && is_imdb(id) && app_anime_on() && !anime_map_ready();
+}
 static Ent *ask(const char *type, const char *id, int light) {
-  if (!tmdb_wanted(id))
-    return NULL;
+  if (!tmdb_wanted(id)) {
+    if (!logo_only(id))
+      return NULL;
+    light = 1; /* never the series' episodes in English */
+  }
   Ent *e = find(id, 1);
   if (!e)
     return NULL;
@@ -878,7 +933,7 @@ static Ent *ask(const char *type, const char *id, int light) {
 int tmdb_state(const char *type, const char *id, int light) {
   Ent *e = ask(type, id, light);
   if (!e)
-    return TMDB_OFF;
+    return !light && map_pending(id) ? TMDB_PENDING : TMDB_OFF; /* (a page opened before the map is in asks again) */
   if (e->state == S_PENDING)
     return TMDB_PENDING;
   if (e->fullAsked && !light && !strcmp(type, "series"))
@@ -896,6 +951,10 @@ void tmdb_first(const char *type, const char *id, int light) {
     to_front(id);
 }
 int tmdb_wait(TmdbWait *w, const char *type, const char *id, int light, float maxSec) {
+  if (logo_only(id) || (!light && map_pending(id))) { /* the logo comes in place: neither page nor hero waits */
+    tmdb_first(type, id, 1);
+    return 1;
+  }
   if (strcmp(w->id, id) || w->light != light) {
     snprintf(w->id, sizeof w->id, "%s", id);
     w->light = light;
@@ -956,7 +1015,10 @@ void tmdb_apply_meta(cJSON *m, const TmdbLoc *L) {
       cJSON_DeleteItemFromObjectCaseSensitive(m, "genres");
     cJSON_AddItemToObject(m, "genres", g);
   }
-  if (*L->logo)
+  if (L->noLogo) {
+    cJSON_DeleteItemFromObjectCaseSensitive(m, "locNoLogo");
+    cJSON_AddTrueToObject(m, "locNoLogo");
+  } else if (*L->logo)
     set_str(m, "locLogo", L->logo);
   if (*L->poster)
     set_str(m, "locPoster", L->poster);
