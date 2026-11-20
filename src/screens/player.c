@@ -8930,7 +8930,12 @@ static void ph_geo(void) {
     }
     mw = fmaxf(200 * d, mw + 32 * d + 36 * d + 8 * d);
     float px = PHG.more.x + PHG.more.w - mw, py = PHG.more.y + PHG.more.h + 4 * d;
-    float full = PHG.nrow * 48 * d + 8 * d, room = H - 12 * d - py, ph = full > room ? fmaxf(room, 56 * d) : full;
+    float full = PHG.nrow * 48 * d + 8 * d, room = H - 12 * d - py;
+    if (room < fminf(full, 56 * d)) { /* (a short window: the panel moves up to stay on the screen) */
+      py = H - 12 * d - fminf(full, 56 * d);
+      room = H - 12 * d - py;
+    }
+    float ph = full > room ? room : full;
     GS.menuMax = full - ph; /* (short screens: the list scrolls inside the panel) */
     GS.menuOff = fminf(fmaxf(GS.menuOff, 0), GS.menuMax);
     PHG.panel = (PhR){ px, py, mw, ph };
@@ -9527,6 +9532,8 @@ void player_touch(int type, float x, float y) {
     TP.quick = TP.lastUpMs && ph_side(x) && ph_side(x) == TP.lastSide && TP.gapMs <= DTAP_MS && !ph_interactive(x, y);
     if (TP.quick)
       GS.tapAt = 0; /* (the first tap of a double tap: it never changes the controls) */
+    else if (GS.tapAt && !GS.tapShow && ph_interactive(x, y))
+      GS.tapAt = 0; /* (a waiting tap would hide the controls this finger is on: the control wins, they stay) */
     else
       ph_tap_fire(); /* (a tap that waited and found no second one: it acts now, before this finger does) */
     if (tlog() && TP.lastUpMs)
@@ -9578,7 +9585,8 @@ void player_touch(int type, float x, float y) {
     if (GS.swOn && !GS.holdOn)
       ph_swipe_move(y);
     if (TP.menuDrag) {
-      GS.menuOff = fminf(fmaxf(TP.menuOff0 + (TP.y0 - y), 0), GS.menuMax);
+      if (TP.moved)
+        GS.menuOff = fminf(fmaxf(TP.menuOff0 + (TP.y0 - y), 0), GS.menuMax);
       return;
     }
     if (TP.onBar) {

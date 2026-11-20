@@ -74,7 +74,8 @@ int plat_install_poll(char *msg, int cap) {
 /* ---- phones and tablets: MainActivity's ui* methods (each hops to the UI thread itself) ---- */
 static jclass act;
 static jmethodID mOri, mImm, mHap, mSafe, mOpen, mBrG, mBrS, mVoG, mVoS, mGest;
-static Uint32 touchCancelEv; /* registered once, on the main thread (SDL_PushEvent is thread-safe) */
+static SDL_atomic_t touchCancelEv; /* the event type, registered once on the app thread (0 not yet, -1 none to be had);
+                                      SDL_PushEvent is thread-safe */
 static int act_ready(JNIEnv *e) {
   if (act)
     return 1;
@@ -208,15 +209,20 @@ void plat_gesture_insets(int *left, int *top, int *right, int *bottom) {
 JNIEXPORT void JNICALL Java_tv_stremioorigin_app_MainActivity_nativeTouchCancel(JNIEnv *e, jclass c) {
   (void)e;
   (void)c;
-  if (!touchCancelEv || touchCancelEv == (Uint32)-1)
+  int t = SDL_AtomicGet(&touchCancelEv); /* (read once: the SDL thread publishes it) */
+  if (t <= 0)
     return;
   SDL_Event ev;
   SDL_zero(ev);
-  ev.type = touchCancelEv;
+  ev.type = (Uint32)t;
   SDL_PushEvent(&ev);
 }
 unsigned plat_touch_cancel_event(void) {
-  if (!touchCancelEv)
-    touchCancelEv = SDL_RegisterEvents(1);
-  return touchCancelEv == (Uint32)-1 ? 0 : touchCancelEv;
+  int t = SDL_AtomicGet(&touchCancelEv);
+  if (!t) {
+    Uint32 r = SDL_RegisterEvents(1);
+    t = r == (Uint32)-1 ? -1 : (int)r;
+    SDL_AtomicSet(&touchCancelEv, t);
+  }
+  return t > 0 ? (unsigned)t : 0;
 }
