@@ -9,7 +9,9 @@
 #include "core/i18n.h"
 #include "core/store.h"
 #include "core/json.h"
+#include "core/addons.h"
 #include "core/best.h"
+#include "core/subs.h"
 #include "ui/glass.h"
 #include "ui/gfx.h"
 #include "ui/text.h"
@@ -120,8 +122,10 @@ static const Opt ACCENT_OPTS[] = { { "logo", "From the logo" },
 #define NCAT 11
 #define MAXROWS 48
 static Setting recsS[12];
-static Setting playBase[8], playS[8], subsS[7], audS[6], lookS[4], langS[2], keyS[5], addonS[40], acctS[1], supS[7],
+static Setting playBase[8], playS[8], subsS[9], audS[6], lookS[4], langS[2], keyS[5], addonS[40], acctS[1], supS[7],
     profS[4];
+static Opt subProviderOpts[ADDONS_MAX + 1];
+static char subProviderKeys[ADDONS_MAX][SUBS_PROVIDER_KEY_SIZE], subProviderNames[ADDONS_MAX][96];
 static Cat cats[NCAT];
 static int ncat; /* (Keys leaves when this build carries every key) */
 
@@ -187,6 +191,27 @@ static void set_s(Setting *s, const char *k, const char *lb, const char *ds, con
 static void set_act(Setting *s, const char *k, const char *lb, const char *ds) {
   set_s(s, k, lb, ds, NULL, 0, "");
   s->action = 1;
+}
+static void subs_provider_opts(void) {
+  const cJSON *ad;
+  int n = 0;
+  subProviderOpts[0] = (Opt){ "", "Automatic" };
+  cJSON_ArrayForEach(ad, sb_addons_account()) {
+    if (n >= ADDONS_MAX)
+      break;
+    if (!addon_serves_subs(ad, "movie", NULL) && !addon_serves_subs(ad, "series", NULL))
+      continue;
+    sb_addon_key(ad, subProviderKeys[n], sizeof subProviderKeys[n]);
+    int same = 0;
+    while (same < n && strcmp(subProviderKeys[same], subProviderKeys[n]))
+      same++;
+    if (same < n || !subProviderKeys[n][0])
+      continue;
+    snprintf(subProviderNames[n], sizeof subProviderNames[n], "%s", addon_name(ad));
+    subProviderOpts[n + 1] = (Opt){ subProviderKeys[n], subProviderNames[n] };
+    n++;
+  }
+  subsS[1].nopts = n + 1;
 }
 /* a switch per addon: on or off on this TV only */
 static int addon_opts(void) {
@@ -574,12 +599,17 @@ static void build(void) {
   playBase[6].sub = 1; /* (shown right under the trailers while they are on: play_layout; drawn as theirs, set in) */
   usb_row();
   set_s(&subsS[0], "subsLang", "Default subtitles", "Chosen by itself when a film starts", LANG_OPTS, 18, "eng");
-  set_s(&subsS[1], "subtitleSize", "Size", "Also in the player, under Subtitles", SIZES, 7, "2");
-  set_s(&subsS[2], "subsColor", "Colour", "", COLORS, 6, "#ffffff");
-  set_s(&subsS[3], "subsOpacity", "Opacity", "Lower lets the picture show through the words", SUBOP, 6, "100");
-  set_s(&subsS[4], "subsOutlineColor", "Outline", "", OUTL, 2, "#000000");
-  set_s(&subsS[5], "subsBgStyle", "Background", "", BGS, 3, "0");
-  set_s(&subsS[6], "subsAssStyle", "Styled subtitles",
+  set_s(&subsS[1], "subsProvider", "Preferred subtitle add-on",
+        "Used for the default subtitle language when the file has no matching track", subProviderOpts, 1, "");
+  subs_provider_opts();
+  set_s(&subsS[2], "subsOpenSubtitles", "OpenSubtitles v3",
+        "Include Origin's built-in subtitle results and sync references", OO, 2, "true");
+  set_s(&subsS[3], "subtitleSize", "Size", "Also in the player, under Subtitles", SIZES, 7, "2");
+  set_s(&subsS[4], "subsColor", "Colour", "", COLORS, 6, "#ffffff");
+  set_s(&subsS[5], "subsOpacity", "Opacity", "Lower lets the picture show through the words", SUBOP, 6, "100");
+  set_s(&subsS[6], "subsOutlineColor", "Outline", "", OUTL, 2, "#000000");
+  set_s(&subsS[7], "subsBgStyle", "Background", "", BGS, 3, "0");
+  set_s(&subsS[8], "subsAssStyle", "Styled subtitles",
         "Signs, fonts and effects as the film\xe2\x80\x99s own ASS / SSA subtitles draw them", ASSO, 2, "styled");
   int naud = 0; /* (DTS: only where the app converts it; the startup sound: only where the package has one) */
   set_s(&audS[naud++], "enableDefaultAudioTrack", "Auto audio track",
@@ -607,8 +637,8 @@ static void build(void) {
     s->dyn[n].v = "en";
     s->dyn[n].lb = "English";
     n++;
-    static const char *ORDER[] = { "fr", "es", "de", "it", "pt", "nl", "pl", "tr", "ru", "ar" }; /* the web's order */
-    for (int j = 0; j < 10 && n < 40; j++) {
+    static const char *ORDER[] = { "fr", "es", "de", "it", "pt", "pt-BR", "nl", "pl", "tr", "ru", "ar" };
+    for (size_t j = 0; j < sizeof ORDER / sizeof ORDER[0] && n < 40; j++) {
       int have = 0;
       for (int i = 0; i < i18n_lang_count(); i++)
         if (!strcmp(i18n_lang_code(i), ORDER[j]))
@@ -650,7 +680,7 @@ static void build(void) {
   Cat c[NCAT] = {
     { "Watch", "Playback", "set_play", "Seek step, next episode, picture size", NULL, playS, 6,
       0 }, /* (the count: play_layout) */
-    { "Watch", "Subtitles", "set_subs", "Language, size, colour, opacity, background", "subs", subsS, 7, 0 },
+    { "Watch", "Subtitles", "set_subs", "Language, size, colour, opacity, background", "subs", subsS, 9, 0 },
     { "Watch", "Audio", "set_aud", "Default audio language, DTS, interface sounds", NULL, audS, naud, 0 },
     { "Watch", "For You", "g_spark", "Recommendations on Home, region, languages", NULL, recsS, nr, 0 },
     { "Screens", "Appearance", "set_look", "Accent colour, Catalogue tab, Anime tab", "look", lookS, 4, 0 },
@@ -775,6 +805,7 @@ static void on_sync_addons(int changed, void *ud) {
   if (changed)
     board_invalidate();
   cats[5].n = addon_opts();
+  subs_provider_opts();
   if (S.cat == 5 && S.idx >= cats[5].n)
     S.idx = cats[5].n - 1;
   S.dirty = 1;
@@ -973,6 +1004,7 @@ static void set_val(Setting *o, const char *v, int dir) {
   if (!strncmp(o->k, "adOn_", 5)) {
     board_invalidate();
     cats[5].n = addon_opts();
+    subs_provider_opts();
     return;
   } /* an addon on/off here: rows, metadata and streams follow */
   if (!strcmp(o->k, "bingeWatch"))
@@ -1217,6 +1249,8 @@ static void hl_draw(const Hl *p, float x, float w, float oy) {
 /* ---- the drill-in choice list ---- */
 static void open_pick(void) {
   const Setting *o = &cats[S.cat].opts[S.idx];
+  if (o == &subsS[1])
+    subs_provider_opts();
   const char *cur = cur_val(o);
   S.pick = 0;
   for (int j = 0; j < o->nopts; j++)

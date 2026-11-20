@@ -698,6 +698,7 @@ static const char *row_desc(int i) {
 #define DS_PX 26
 #define DS_LH 37.0f /* 26px at 1.42 */
 #define ICO 26.0f /* the play mark before the best and resume names, and its room */
+#define CACHE_ICO 24.0f
 static float head_h(void) {
   return 26 + text_line_height(24) + 10;
 }
@@ -720,7 +721,8 @@ static void layout(void) {
     row_name(i, nm, sizeof S.nm[i]);
     const char *ds = row_desc(i);
     int ico = S.kind[i] != R_PLAIN;
-    int nl = text_wrap_count(nm, LW - 48 - (ico ? ICO + 10 : 0), 2, NM_PX, 600, 0.2f),
+    float cacheW = stream_cache_icon(S.items[i]) ? CACHE_ICO + 12 : 0;
+    int nl = text_wrap_count(nm, LW - 48 - (ico ? ICO + 10 : 0) - cacheW, 2, NM_PX, 600, 0.2f),
         dl = ds[0] ? text_wrap_count(ds, LW - 48, DS_MAX, DS_PX, 400, 0) : 0;
     S.itemY[i] = y;
     S.itemH[i] = 18 + nl * NM_LH + 8 + dl * DS_LH + 20;
@@ -1113,15 +1115,19 @@ a name line and two lines of words in the waiting look), fading down the list */
     hit_add(x0, iy, LW, ih, item_focus, item_act, i, 0);
     const char *nm = S.nm[i];
     const char *ds = row_desc(i);
+    const char *cache = stream_cache_icon(S.items[i]);
+    float cacheW = cache ? CACHE_ICO + 12 : 0;
     int ico = S.kind[i] != R_PLAIN;
     float tx = rtl ? lx - 24 + nx : x0 + 24 + nx, ty = iy + 18 + ny;
     uint32_t nc = f ? ACC_FG : ACC3;
+    if (cache)
+      icon_draw(cache, rtl ? x0 + 24 + nx : lx - 24 - CACHE_ICO + nx, ty + (NM_LH - CACHE_ICO) / 2, CACHE_ICO, nc);
     if (ico) {
       icon_draw("play", rtl ? tx - ICO : tx, ty + (NM_LH - ICO) / 2 + 1, ICO, nc);
       tx += rtl ? -(ICO + 10) : ICO + 10;
     }
-    int nl = text_draw_wrapped(nm, tx, ty + (NM_LH - text_line_height(NM_PX)) / 2, LW - 48 - (ico ? ICO + 10 : 0), 2,
-                               NM_PX, 600, nc, 0.2f, al, NM_LH);
+    int nl = text_draw_wrapped(nm, tx, ty + (NM_LH - text_line_height(NM_PX)) / 2,
+                               LW - 48 - (ico ? ICO + 10 : 0) - cacheW, 2, NM_PX, 600, nc, 0.2f, al, NM_LH);
     ty += nl * NM_LH + 8;
     if (ds[0])
       text_draw_wrapped(ds, rtl ? lx - 24 + nx : x0 + 24 + nx, ty + (DS_LH - text_line_height(DS_PX)) / 2, LW - 48,

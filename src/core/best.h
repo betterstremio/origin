@@ -53,6 +53,7 @@ typedef struct {
 } BestRate; /* mute: its text names only DTS / TrueHD and this TV can't decode it */
 /* 0 = the stream is left out (a cam, an uncached debrid file, a thin swarm, above the panel) */
 int best_rate(const Stream *s, const TvCaps *c, double mbps, double durMin, BestRate *out);
+StreamCache best_stream_cache_label(const char *name, const char *description);
 /* the pick among n streams: the panel's own resolution first, then lower ones, each only among streams the line
    carries, and in each the ones whose sound plays here before the DTS / TrueHD-only ones; NULL when nothing is left. c
    NULL = the kept caps (or a 1080p panel), mbps < 0 = the measured speed */

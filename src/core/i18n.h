@@ -6,7 +6,7 @@ void i18n_lock(void);
 void i18n_unlock(void); /* around T() calls made off the main thread */
 int i18n_init(const char *assetDir, const char *lang); /* lang: "auto", "en", "ar", "fr"... */
 const char *i18n_lang(void);
-const char *i18n_tv_lang(void); /* the TV's own UI language, two letters ("fr") */
+const char *i18n_tv_lang(void); /* the platform UI language, with the region for supported variants */
 int i18n_rtl(void);
 unsigned i18n_gen(void); /* bumps with every language change: strings kept by screens are made again */
 const char *T(const char *en);

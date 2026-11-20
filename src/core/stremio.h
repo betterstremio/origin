@@ -116,6 +116,7 @@ int lib_id_is_anime(const char *type,
 int lib_cw_items_k(ItemList *out, int kind); /* Continue Watching of one kind, newest first: every one there is */
 int lib_watch_again_items(ItemList *out, int noAnime, int max);
 int lib_cw_items(ItemList *out); /* Continue Watching, newest first (all kinds) */
+int lib_cw_remove(const char *id); /* dismiss the row's card, keeping its playback progress */
 typedef struct {
   char vid[80];
   float pct, leftMin;
@@ -148,13 +149,20 @@ unsigned lib_version(void); /* bumps on every change: boards rebuild when it mov
    (opened on another device, never played); hdrs / rhdrs: proxyHeaders' request and response headers ("Name: value"
    lines) sent with every request for it; binge: behaviorHints.bingeGroup; size / hash: videoSize / videoHash */
 #define SB_URL_MAX 4096 /* some addons' debrid links run past 2 KB (their whole setup sealed in the address) */
+typedef enum { STREAM_CACHE_UNKNOWN, STREAM_CACHE_READY, STREAM_CACHE_PENDING } StreamCache;
 typedef struct {
   char addon[96], name[256], title[512], url[SB_URL_MAX], filename[256];
   int p2p;
   char ext[512], hdrs[512], rhdrs[256], binge[96], hash[24];
   double size;
   int notWeb, nsubs;
+  unsigned long long addonKey;
+  StreamCache cache;
 } Stream;
+typedef struct {
+  char name[96];
+  unsigned long long key;
+} StreamAddon;
 typedef struct {
   char name[96];
   Stream *items;
@@ -172,9 +180,9 @@ void sb_streams_cancel(unsigned tok);
 typedef void (*StreamAnsCb)(int pending, int count, void *ud);
 unsigned sb_streams_ex(const char *type, const char *vid, StreamPartCb part, StreamDoneCb done, StreamAnsCb ans,
                        void *ud);
-/* the addons that serve streams for this video, in the user's order (their names); then one of them alone, by that
+/* the addons that serve streams for this video, in the user's order; then one of them alone, by that
  * place */
-int sb_stream_addons(const char *type, const char *vid, char (*names)[96], int max); /* names NULL: count only */
+int sb_stream_addons(const char *type, const char *vid, StreamAddon *out, int max); /* out NULL: count only */
 unsigned sb_streams_one(const char *type, const char *vid, int which, StreamPartCb part, StreamDoneCb done, void *ud);
 void sb_stream_info(const Stream *s, char *out, size_t cap);
 /* the last played stream of a title/episode */
@@ -183,13 +191,14 @@ void sb_remember_stream(const char *id, const char *vid, const Stream *s);
 
 /* ---- subtitles ---- */
 /* from: where it came from (the stream itself, a subtitles addon, the OpenSubtitles fallback); addon: that source's
-   name; label: the addon's own label for it ("" when none); order: the addon's place in the list */
+   name; label: the addon's own label for it ("" when none); order: the addon's place in the list;
+   preferred: the track's rank in the preferred provider's language results (0 when absent) */
 enum { SUB_STREAM = 0, SUB_ADDON = 1, SUB_FALLBACK = 2 };
 typedef struct {
   char lang[24], name[64], url[1024];
   int n;
   char addon[64], label[96];
-  int from, order;
+  int from, order, preferred;
   char rel[96];
   int hm;
   double fps;

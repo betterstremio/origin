@@ -408,6 +408,7 @@ static struct {
   /* the addons' subtitles (the stream's own, then each subtitles addon's), apart from the built-in list in ext */
   SubEntry *adx;
   int nAdx, adxLoading, adxTry;
+  int adxUsePreference, adxPreferredPending;
   double adxRetryAt;
   unsigned adxReq;
   /* tray */ struct {
@@ -432,7 +433,7 @@ static struct {
   struct {
     char vid[80];
     struct {
-      char name[96];
+      StreamAddon addon;
       Stream *items;
       float *h;
       int n, st, open;
@@ -918,6 +919,7 @@ static int tv_has_text(int n) {
   return 0;
 }
 static void subs_off(void) {
+  P.autoSubDone = 1;
   sync_stop(0);
   snprintf(P.curSub, sizeof P.curSub, "off");
   subs_free(P.cues, P.ncues);
@@ -974,6 +976,7 @@ static int sub_row(int list, const SubEntry *l, int n) {
 }
 static void set_ext_sub(int list, const SubEntry *e) {
   const char *u = e->url;
+  P.autoSubDone = 1;
   sync_stop(0);
   snprintf(P.curSub, sizeof P.curSub, "ext:%s", u);
   P.pick.list = list;
@@ -991,6 +994,7 @@ static void set_ext_sub(int list, const SubEntry *e) {
   refresh_tray(4);
 }
 static void set_emb_sub(int n) {
+  P.autoSubDone = 1;
   sync_stop(0);
   snprintf(P.curSub, sizeof P.curSub, "emb:%d", n);
   subs_free(P.cues, P.ncues);
@@ -1121,7 +1125,6 @@ static void auto_sub(void) {
     if (lang_match(P.emb[j].lang, w) && (em < 0 || (P.emb[em].forced && !P.emb[j].forced)))
       em = j;
   if (em >= 0) {
-    P.autoSubDone = 1;
     set_emb_sub(P.emb[em].idx);
     return;
   } /* embedded wins: it is in sync with the file */
@@ -1130,16 +1133,31 @@ static void auto_sub(void) {
       P.embWaitAt = now_() + 8;
     return;
   } /* the file's own tracks get 8 s to show up first */
+  if (P.adxUsePreference) {
+    int preferred = -1;
+    for (int i = 0; i < P.nAdx; i++)
+      if (P.adx[i].preferred && lang_match(P.adx[i].lang, w) &&
+          (preferred < 0 || P.adx[i].preferred < P.adx[preferred].preferred))
+        preferred = i;
+    if (preferred >= 0) {
+      set_ext_sub(2, &P.adx[preferred]);
+      sync_auto_arm();
+      return;
+    }
+    if (P.adxPreferredPending || (P.extLoading && !P.extRetryAt && !P.nExt))
+      return;
+  }
   for (int i = 0; i < P.nExt; i++)
     if (lang_match(P.ext[i].lang, w)) {
-      P.autoSubDone = 1;
       set_ext_sub(1, &P.ext[i]);
       sync_auto_arm();
       return;
     }
+  /* With an explicit preference, use the installed order for fallback even when its requests finish out of order. */
+  if (P.adxUsePreference && P.adxLoading && !P.adxRetryAt)
+    return;
   for (int i = 0; i < P.nAdx; i++)
     if (lang_match(P.adx[i].lang, w)) {
-      P.autoSubDone = 1;
       set_ext_sub(2, &P.adx[i]);
       sync_auto_arm();
       return;
@@ -1195,6 +1213,7 @@ static void cc_toggle(void) {
   trailer_sub_load(&trSubs[pick], on_tr_cues, (void *)(uintptr_t)P.trSubTok);
 }
 /* the built-in OpenSubtitles list; no answer: asked again 15, 30 and 45 s later */
+static unsigned subtitleRequest;
 static void on_subs(SubEntry *subs, int n, int ok, void *ud) {
   if (!P.open || (unsigned)(uintptr_t)ud != P.subReq) {
     free(subs);
@@ -1203,38 +1222,54 @@ static void on_subs(SubEntry *subs, int n, int ok, void *ud) {
   if (!ok && P.extTry < 3) {
     free(subs);
     P.extRetryAt = now_() + (P.extTry + 1) * 15;
+    auto_sub();
     return;
   }
   free(P.ext);
   P.ext = subs;
   P.nExt = n;
   P.extLoading = 0;
-  if (n)
-    auto_sub();
+  auto_sub();
   refresh_tray(4);
 }
 /* the addons' lists (the stream's own, every subtitles addon's): each answer replaces the list with all that came so
    far; nothing from anyone: asked again 15, 30 and 45 s later */
-static void on_adx(SubEntry *subs, int n, int final, int ok, void *ud) {
+static void on_adx(SubEntry *subs, int n, int final, int ok, int preferredPending, void *ud) {
   if (!P.open || (unsigned)(uintptr_t)ud != P.adxReq) {
     free(subs);
     return;
   }
+  P.adxPreferredPending = preferredPending;
   if (final && !ok && !n && P.adxTry < 3 && P.nSubAddons) {
     free(subs);
     P.adxRetryAt = now_() + (P.adxTry + 1) * 15;
+    auto_sub();
     return;
   }
   free(P.adx);
   P.adx = subs;
   P.nAdx = n;
   P.adxLoading = !final;
-  if (n)
-    auto_sub();
+  auto_sub();
   refresh_tray(4);
 }
 static int hashable(const char *u) {
   return !strncmp(u, "http", 4) && !strstr(u, ".m3u8");
+}
+static int builtin_subs_on(void) {
+  return strcmp(store_get("subsOpenSubtitles", "true"), "false") != 0;
+}
+static void fill_sub_query(SubQuery *q) {
+  memset(q, 0, sizeof *q);
+  snprintf(q->type, sizeof q->type, "%s", P.type);
+  snprintf(q->vid, sizeof q->vid, "%s", P.vid);
+  snprintf(q->url, sizeof q->url, "%s", P.url);
+  snprintf(q->filename, sizeof q->filename, "%s", P.st.filename);
+  subs_filename_from_url(P.st.url[0] ? P.st.url : P.url, q->filename, sizeof q->filename);
+  snprintf(q->hash, sizeof q->hash, "%s", P.st.hash);
+  q->size = P.st.size > 0 ? P.st.size : P.size;
+  q->hashable = hashable(P.url);
+  q->skipOpenSubtitles = !builtin_subs_on();
 }
 static char artName[256], artPoster[512], artBg[512],
     artLogo[512]; /* the next play's title and pictures as handed over (a phone's) */
@@ -1243,13 +1278,12 @@ static int castSubsN = -1; /* the next play's subtitles as a phone sent them (-1
 static void load_ext_subs(int n) {
   if (!P.type[0] || !P.vid[0] || P.isTrailer)
     return;
-  P.extLoading = 1;
   if (castSubsN >= 0) {
     int k = castSubsN;
     castSubsN = -1;
     SubEntry *l = calloc(16, sizeof *l);
     memcpy(l, castSubs, sizeof castSubs);
-    P.subReq++;
+    P.subReq = ++subtitleRequest;
     on_subs(l, k, 1, (void *)(uintptr_t)P.subReq);
     return;
   } /* cast: the phone's own list */
@@ -1266,29 +1300,29 @@ static void load_ext_subs(int n) {
       l[k].from = SUB_FALLBACK;
       k++;
     }
-    P.subReq++;
+    P.subReq = ++subtitleRequest;
     on_subs(l, k, 1, (void *)(uintptr_t)P.subReq);
     return;
   }
+  if (!builtin_subs_on()) {
+    P.extLoading = 0;
+    return;
+  }
+  P.extLoading = 1;
   P.extTry = n;
-  P.subReq++;
+  P.subReq = ++subtitleRequest;
   subs_list(P.type, P.vid, on_subs, (void *)(uintptr_t)P.subReq);
 }
 static void load_addon_subs(int n) {
   if (!P.type[0] || !P.vid[0] || P.isTrailer || getenv("SB_PLAY_SUBS"))
     return;
+  const char *preferred = store_get("subsProvider", "");
+  P.adxUsePreference = !!*preferred;
   P.adxTry = n;
-  P.adxReq++;
+  P.adxReq = ++subtitleRequest;
   P.nSubAddons = subs_addons_for(P.type, P.vid);
   SubQuery q;
-  memset(&q, 0, sizeof q);
-  snprintf(q.type, sizeof q.type, "%s", P.type);
-  snprintf(q.vid, sizeof q.vid, "%s", P.vid);
-  snprintf(q.url, sizeof q.url, "%s", P.url);
-  snprintf(q.filename, sizeof q.filename, "%s", P.st.filename);
-  snprintf(q.hash, sizeof q.hash, "%s", P.st.hash);
-  q.size = P.st.size > 0 ? P.st.size : P.size;
-  q.hashable = hashable(P.url);
+  fill_sub_query(&q);
   SubEntry *own = NULL;
   int nown = sb_stream_subs(&P.st, &own);
   if (!P.nSubAddons && !nown) {
@@ -1296,7 +1330,7 @@ static void load_addon_subs(int n) {
     return;
   } /* nobody to ask */
   P.adxLoading = 1;
-  subs_find(&q, own, nown, on_adx, (void *)(uintptr_t)P.adxReq);
+  subs_find(&q, own, nown, preferred, on_adx, (void *)(uintptr_t)P.adxReq);
   free(own);
 }
 /* the file's subtitle tracks: read from the stream itself when it is a Matroska file (named, styled, delayed like the
@@ -1470,18 +1504,11 @@ static void sync_by_ref(const char *why) {
     }
   }
   SubQuery q;
-  memset(&q, 0, sizeof q);
-  snprintf(q.type, sizeof q.type, "%s", P.type);
-  snprintf(q.vid, sizeof q.vid, "%s", P.vid);
-  snprintf(q.url, sizeof q.url, "%s", P.url);
-  snprintf(q.filename, sizeof q.filename, "%s", P.st.filename);
-  snprintf(q.hash, sizeof q.hash, "%s", P.st.hash);
-  q.size = P.st.size > 0 ? P.st.size : P.size;
-  q.hashable = hashable(P.url);
+  fill_sub_query(&q);
   if (!q.hash[0])
     subs_hash_of(P.url, q.hash, &q.size);
   q.fps = video_fps();
-  int canHash = (q.hash[0] || q.hashable) && q.type[0] && q.vid[0];
+  int canHash = !q.skipOpenSubtitles && (q.hash[0] || q.hashable) && q.type[0] && q.vid[0];
   fprintf(stderr, "[sync] %s: another subtitle made for this file as the reference (%d listed, hash %s)\n", why, n,
           q.hash[0] ? q.hash
           : canHash ? "to work out"
@@ -3305,6 +3332,7 @@ typedef struct {
 static struct {
   SRow *r;
   int n, cap, idx;
+  int focusPlaying, playingGroup, playingItem;
   Mo y, plY, plH, plA;
   float tot;
 } SR;
@@ -3512,6 +3540,42 @@ static void srcs_free(void) {
   SR.idx = -1;
 }
 static void src_rows(void);
+static int src_same_addon(unsigned long long key, const char *name) {
+  if (P.st.addonKey && key)
+    return P.st.addonKey == key;
+  return P.st.addon[0] && !strcmp(name, P.st.addon);
+}
+static int src_match(const Stream *s) {
+  if (!s->url[0])
+    return 0;
+  int sameAddon = src_same_addon(s->addonKey, s->addon);
+  if (!sameAddon && (P.st.addonKey || P.st.addon[0]))
+    return 0;
+  if (!strcmp(s->url, P.st.url) || !strcmp(s->url, P.url) || (P.altTried && !strcmp(s->url, P.alt)))
+    return 3;
+  if (s->p2p && P.st.p2p) {
+    size_t n = strcspn(s->url, "?");
+    if (strcspn(P.st.url, "?") == n && !strncasecmp(s->url, P.st.url, n))
+      return 3;
+  }
+  if (sameAddon && P.st.hash[0] && !strcmp(s->hash, P.st.hash))
+    return 2;
+  if (sameAddon && P.st.filename[0] && !strcmp(s->filename, P.st.filename))
+    return 1;
+  if (sameAddon && P.st.title[0] && !strcmp(s->title, P.st.title) && !strcmp(s->name, P.st.name))
+    return 1;
+  return 0;
+}
+static int src_playing_group(void) {
+  if (strcmp(P.srcs.vid, P.vid))
+    return -1;
+  for (int i = 0; i < P.srcs.ng; i++) {
+    const StreamAddon *addon = &P.srcs.g[i].addon;
+    if (src_same_addon(addon->key, addon->name))
+      return i;
+  }
+  return -1;
+}
 static int src_find(unsigned tok) {
   if (!tok)
     return -1;
@@ -3545,8 +3609,26 @@ static void on_src_done(int total, void *ud) {
   if (k < 0)
     return;
   P.srcs.g[k].tok = 0;
-  P.srcs.g[k].st = P.srcs.g[k].n ? 2 : 3;
   __typeof__(P.srcs.g[0]) *g = &P.srcs.g[k];
+  /* A refreshed or shortened list may omit the stream whose file is still playing. */
+  if (k == src_playing_group() && P.st.url[0]) {
+    int found = 0;
+    for (int i = 0; i < g->n && !found; i++)
+      found = src_match(&g->items[i]);
+    if (!found) {
+      Stream *items = realloc(g->items, (g->n + 1) * sizeof *items);
+      if (items) {
+        g->items = items;
+        float *heights = realloc(g->h, (g->n + 1) * sizeof *heights);
+        if (heights) {
+          g->h = heights;
+          g->h[g->n] = 0;
+          g->items[g->n++] = P.st;
+        }
+      }
+    }
+  }
+  g->st = g->n ? 2 : 3;
   int any = 0;
   for (int i = 0; i < g->n; i++)
     if (g->items[i].url[0])
@@ -3594,24 +3676,20 @@ static void srcs_begin(const char *vid) {
   if (P.srcs.on && !strcmp(P.srcs.vid, vid))
     return;
   srcs_free();
-  char (*names)[96] = malloc(ADDONS_MAX * sizeof *names);
-  if (!names)
+  StreamAddon *addons = malloc(ADDONS_MAX * sizeof *addons);
+  if (!addons)
     return;
   snprintf(P.srcs.vid, sizeof P.srcs.vid, "%s", vid);
   P.srcs.on = 1;
-  int n = sb_stream_addons(P.type, vid, names, ADDONS_MAX);
+  int n = sb_stream_addons(P.type, vid, addons, ADDONS_MAX);
   for (int i = 0; i < n; i++) {
-    snprintf(P.srcs.g[i].name, sizeof P.srcs.g[i].name, "%s", names[i][0] ? names[i] : T("Addon"));
+    P.srcs.g[i].addon = addons[i];
+    if (!P.srcs.g[i].addon.name[0])
+      snprintf(P.srcs.g[i].addon.name, sizeof P.srcs.g[i].addon.name, "%s", T("Addon"));
     P.srcs.g[i].open = 1;
   }
-  free(names);
+  free(addons);
   P.srcs.ng = n;
-}
-static int src_on(const Stream *s) {
-  char info[700];
-  sb_stream_info(s, info, sizeof info);
-  return !strcmp(s->url, P.url) || !strcmp(s->url, P.st.url) || !strcmp(s->url, P.alt) ||
-         (P.sname[0] && !strncmp(info, P.sname, 200) && !strcmp(s->addon, P.saddon));
 }
 /* a stream row's height: its name (up to 3 lines) and its words (up to 6), each cut with an ellipsis past that */
 #define SN_PX 27 /* a stream's name: 27 px on 34 */
@@ -3619,8 +3697,10 @@ static int src_on(const Stream *s) {
 #define SD_PX 24 /* its words: 24 px on 33, at most SD_MAX lines */
 #define SD_LH 33.0f
 #define SD_MAX 6
+#define SRC_CACHE_ICO 24.0f
 static float src_row_h(const Stream *s) {
-  int nl = text_wrap_count(s->name[0] ? s->name : s->addon, SRC_RW - 44 - 150, 3, SN_PX, 700, 0),
+  float cacheW = stream_cache_icon(s) ? SRC_CACHE_ICO + 10 : 0;
+  int nl = text_wrap_count(s->name[0] ? s->name : s->addon, SRC_RW - 44 - 150 - cacheW, 3, SN_PX, 700, 0),
       dl = s->title[0] ? text_wrap_count(s->title, SRC_RW - 44, SD_MAX, SD_PX, 400, 0) : 0;
   return 18 + (nl ? nl : 1) * SN_LH + (dl ? 8 + dl * SD_LH : 0) + 18;
 }
@@ -3649,6 +3729,25 @@ static void src_rows(void) {
     fk = SR.r[SR.idx].k;
     fg = SR.r[SR.idx].g;
     fi = SR.r[SR.idx].i;
+  }
+  SR.playingGroup = SR.playingItem = -1;
+  if (!strcmp(P.srcs.vid, P.vid)) {
+    int quality = 0;
+    for (int g = 0; g < P.srcs.ng; g++)
+      for (int i = 0; i < P.srcs.g[g].n; i++) {
+        int match = src_match(&P.srcs.g[g].items[i]);
+        if (match > quality) {
+          quality = match;
+          SR.playingGroup = g;
+          SR.playingItem = i;
+        }
+      }
+    if (SR.focusPlaying && SR.playingGroup >= 0 && !P.srcs.g[SR.playingGroup].open) {
+      __typeof__(P.srcs.g[0]) *g = &P.srcs.g[SR.playingGroup];
+      g->open = 1;
+      g->leaving = 0;
+      mo_to(&g->fa, 1, .26f, C_OUT, 0);
+    }
   }
   SR.n = 0;
   for (int g = 0; g < P.srcs.ng; g++) {
@@ -3717,7 +3816,14 @@ static void src_rows(void) {
   }
   SR.tot = y;
   SR.idx = -1;
-  if (fk >= 0)
+  if (SR.focusPlaying && SR.playingGroup >= 0)
+    for (int i = 0; i < SR.n; i++)
+      if (SR.r[i].k == 3 && SR.r[i].g == SR.playingGroup && SR.r[i].i == SR.playingItem) {
+        SR.idx = i;
+        SR.focusPlaying = 0;
+        break;
+      }
+  if (SR.idx < 0 && fk >= 0)
     for (int i = 0; i < SR.n; i++)
       if (SR.r[i].k == fk && SR.r[i].g == fg && SR.r[i].i == fi) {
         SR.idx = i;
@@ -3729,12 +3835,15 @@ static void src_rows(void) {
         SR.idx = i;
         break;
       } /* its row went: its addon's header */
-  if (SR.idx < 0)
-    for (int i = 0; i < SR.n; i++)
-      if (SR.r[i].k == 3 && src_on(&P.srcs.g[SR.r[i].g].items[SR.r[i].i])) {
-        SR.idx = i;
-        break;
-      } /* fresh: the one playing, else the first */
+  if (SR.idx < 0 && SR.focusPlaying) {
+    int group = src_playing_group();
+    if (group >= 0)
+      for (int i = 0; i < SR.n; i++)
+        if (SR.r[i].k == 5 && SR.r[i].g == group) {
+          SR.idx = i;
+          break;
+        }
+  } /* the source is still loading: wait on its addon's header */
   if (SR.idx < 0)
     for (int i = 0; i < SR.n; i++)
       if (src_focusable(i)) {
@@ -3999,7 +4108,8 @@ static void tray_data(void) {
     x->d = 0;
     snprintf(x->lb, 200, "%s", T("Reset"));
     snprintf(x->u, 1024, "dly");
-    if (P.isTrailer) { /* one list: Off + the languages */
+    if (P.isTrailer || (!addonsTab && !builtin_subs_on() && !P.nExt)) {
+      /* One track list when the built-in provider is off; trailers put their languages under Off. */
       TCol *m = c1;
       for (int i = 0; i < c2->n; i++)
         if (c2->items[i].k == 4) {
@@ -4199,16 +4309,18 @@ static void tray_data(void) {
     P.tray.tab = 0;
     srcs_begin(t.kind == 5 ? P.tray.epvid : P.vid);
     src_rows();
-    if (P.srcs.ng)
-      src_ask(0);
+    int group = t.kind == 2 ? src_playing_group() : -1;
+    src_ask(group >= 0 ? group : 0);
   }
 }
 static void render_tray(int fresh) {
   if (!P.tray.kind)
     return;
   if (src_tray()) {
-    if (fresh)
+    if (fresh) {
       SR.idx = -1;
+      SR.focusPlaying = P.tray.kind == 2;
+    }
     tray_data();
     P.tray.zone = 0;
     return;
@@ -4329,6 +4441,7 @@ static void dly_open(void);
 static void close_tray(void) {
   if (P.tray.kind == 4)
     subTab = P.tray.tab;
+  SR.focusPlaying = 0;
   P.mode = 1;
   P.tray.kind = -P.tray.kind;
   tray_origin();
@@ -4513,6 +4626,8 @@ static int tray_key(int k) {
     return 1;
   }
   if (src_tray()) {
+    if (k == K_UP || k == K_DOWN || k == K_OK)
+      SR.focusPlaying = 0;
     if (k == K_UP || k == K_DOWN) {
       int d = k == K_DOWN ? 1 : -1, j = -1;
       for (int i = SR.idx + d; i >= 0 && i < SR.n; i += d)
@@ -5269,19 +5384,12 @@ static void prepare(const char *vid, double startAt, int keepSubs) {
     if (P.isP2p || P.resolving)
       p2p_player_closed();
   }
-  SubEntry *keep = NULL, *keepA = NULL;
-  int nkeep = 0, nkeepA = 0;
-  if (again && keepSubs && !strcmp(vid, P.vid)) {
-    if (P.nExt) {
-      keep = P.ext;
-      nkeep = P.nExt;
-      P.ext = NULL;
-    }
-    if (P.nAdx) {
-      keepA = P.adx;
-      nkeepA = P.nAdx;
-      P.adx = NULL;
-    }
+  SubEntry *keep = NULL;
+  int nkeep = 0;
+  if (again && keepSubs && !strcmp(vid, P.vid) && P.nExt && builtin_subs_on()) {
+    keep = P.ext;
+    nkeep = P.nExt;
+    P.ext = NULL;
   }
   cJSON *meta = P.meta;
   P.meta = NULL;
@@ -5300,7 +5408,6 @@ static void prepare(const char *vid, double startAt, int keepSubs) {
   snprintf(bg, sizeof bg, "%s", P.bg);
   char logo[512];
   snprintf(logo, sizeof logo, "%s", P.logo);
-  unsigned subReq = P.subReq, adxReq = P.adxReq;
   char v[80];
   snprintf(v, sizeof v, "%s", vid && *vid ? vid : id);
   int keepRate = form_touch() && again && !strcmp(v, P.vid) ? P.rateI : 0; /* the same title keeps its speed */
@@ -5309,8 +5416,6 @@ static void prepare(const char *vid, double startAt, int keepSubs) {
   P.rateI = keepRate;
   ph_rate_sync(); /* (the player's side agrees: load() reapplies what it holds) */
   sub_reset();
-  P.subReq = subReq;
-  P.adxReq = adxReq;
   P.open = 1;
   P.openedAt = now_();
   tlogCheckAt = 0; /* (a seek's check from the last film) */
@@ -5327,8 +5432,6 @@ static void prepare(const char *vid, double startAt, int keepSubs) {
   P.meta = meta;
   P.ext = keep;
   P.nExt = nkeep;
-  P.adx = keepA;
-  P.nAdx = nkeepA;
   P.startAt = startAt;
   aspect_load();
   set_status("");
@@ -7871,7 +7974,7 @@ static void draw_srcs(float ix, float top, float W) {
       if (g->open && !g->st && na < 16)
         ask[na++] = r->g;
       char up[120];
-      snprintf(up, sizeof up, "%s", g->name);
+      snprintf(up, sizeof up, "%s", g->addon.name);
       text_upper(up, sizeof up);
       float ty = y + (h - text_line_height(22)) / 2;
       text_draw(up, 22, ty, 22, 800, f ? WHITE_A(255) : WHITE_A(199), 1.4f, RW - 200, ALIGN_LEFT);
@@ -7897,13 +8000,17 @@ static void draw_srcs(float ix, float top, float W) {
       SRC_NEXT
     }
     const Stream *st = &P.srcs.g[r->g].items[r->i];
-    int on = src_on(st);
+    int on = r->g == SR.playingGroup && r->i == SR.playingItem;
     if (!f)
       gfx_rrect(0, y, RW, h, 20, WHITE_A(11));
     if (on && !f)
       gfx_ring(0, y, RW, h, 20, 2, acc_a(0.7f));
-    int nl = text_draw_wrapped(st->name[0] ? st->name : st->addon, 22, y + 18 + (SN_LH - LN) / 2, RW - 44 - 150, 3,
-                               SN_PX, 700, WHITE_A(255), 0, ALIGN_LEFT, SN_LH);
+    const char *cache = stream_cache_icon(st);
+    float cacheW = cache ? SRC_CACHE_ICO + 10 : 0;
+    if (cache)
+      icon_draw(cache, 22, y + 18 + (SN_LH - SRC_CACHE_ICO) / 2, SRC_CACHE_ICO, WHITE_A(255));
+    int nl = text_draw_wrapped(st->name[0] ? st->name : st->addon, 22 + cacheW, y + 18 + (SN_LH - LN) / 2,
+                               RW - 44 - 150 - cacheW, 3, SN_PX, 700, WHITE_A(255), 0, ALIGN_LEFT, SN_LH);
     if (nl < 1)
       nl = 1;
     if (st->title[0])
@@ -8401,6 +8508,8 @@ static void ptr_tray(float x, float y, int down) {
       if (ly >= SR.r[i].y && ly <= SR.r[i].y + SR.r[i].h) {
         if (!src_focusable(i))
           return;
+        if (down || SR.idx != i || P.tray.onBtn)
+          SR.focusPlaying = 0;
         if (SR.idx != i || P.tray.onBtn) {
           SR.idx = i;
           P.tray.onBtn = 0;

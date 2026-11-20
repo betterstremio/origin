@@ -71,7 +71,7 @@ static const char *PK[] = {
 };
 #define NPK (int)(sizeof PK / sizeof PK[0])
 static struct {
-  char lang[4];
+  char lang[8];
   int rtl;
   char *t[NPK];
 } str;

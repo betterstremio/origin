@@ -205,6 +205,7 @@ void sb_forget_local(void) {
   store_remove("user");
   store_remove("addons");
   store_remove("lib");
+  store_remove("cwDismissed");
   store_remove("streams");
   store_flush();
   lib_invalidate();
@@ -1502,10 +1503,17 @@ static void item_from_lib(Item *out, const cJSON *l) {
   out->progress = d > 0 ? (float)(t / d) : 0;
   out->left = d > 0 ? (float)((d - t) / 60000.0) : 0;
 }
-static int cmp_mtime(const void *a, const void *b) {
-  double x = tms(cJSON_GetObjectItemCaseSensitive(*(cJSON **)a, "_mtime")),
-         y = tms(cJSON_GetObjectItemCaseSensitive(*(cJSON **)b, "_mtime"));
-  return x < y ? 1 : x > y ? -1 : 0;
+typedef struct {
+  const cJSON *item;
+  double watched;
+} CwPick;
+static int cmp_cw(const void *a, const void *b) {
+  const CwPick *x = a, *y = b;
+  if (x->watched < y->watched)
+    return 1;
+  if (x->watched > y->watched)
+    return -1;
+  return strcmp(js_str(x->item, "_id", ""), js_str(y->item, "_id", ""));
 }
 int lib_id_is_anime(const char *type, const char *id) {
   if (type && !strcmp(type, "anime"))
@@ -1603,9 +1611,9 @@ void lib_anime_tick(void) {
   animeProbeAt = now + 60000;
 }
 int lib_cw_items_k(ItemList *out, int kind) {
-  cJSON *lib = lib_arr();
+  const cJSON *lib = lib_arr(), *dismissed = store_node("cwDismissed");
   int base = kind & 7, noAnime = kind & LIB_CW_NO_ANIME;
-  cJSON **picks = NULL;
+  CwPick *picks = NULL;
   int n = 0, cap = 0;
   const cJSON *it;
   cJSON_ArrayForEach(it, lib) {
@@ -1620,6 +1628,14 @@ int lib_cw_items_k(ItemList *out, int kind) {
       continue;
     if (!js_str(it, "name", "")[0])
       continue;
+    double watched = tms(cJSON_GetObjectItemCaseSensitive(s, "lastWatched"));
+    const cJSON *mark = cJSON_GetObjectItemCaseSensitive(dismissed, js_str(it, "_id", ""));
+    if (mark) {
+      const char *vid = js_str(s, "video_id", "");
+      if (watched <= js_num(mark, "at", 0) ||
+          (to == js_num(mark, "offset", 0) && !strcmp(vid, js_str(mark, "vid", ""))))
+        continue;
+    }
     int anime = (noAnime || base == LIB_CW_ANIME) && lib_item_is_anime(it);
     int want;
     if (base == LIB_CW_SERIES)
@@ -1634,23 +1650,24 @@ int lib_cw_items_k(ItemList *out, int kind) {
       continue;
     if (n == cap) {
       int ncap = cap ? cap * 2 : 32;
-      cJSON **grow = realloc(picks, sizeof(cJSON *) * (size_t)ncap);
+      CwPick *grow = realloc(picks, sizeof *picks * (size_t)ncap);
       if (!grow)
         break; /* out of memory: the ones found so far */
       picks = grow;
       cap = ncap;
     }
-    picks[n++] = (cJSON *)it;
+    double recency = watched > 0 ? watched : tms(cJSON_GetObjectItemCaseSensitive(it, "_mtime"));
+    picks[n++] = (CwPick){ it, recency };
   }
   if (n)
-    qsort(picks, n, sizeof picks[0], cmp_mtime);
+    qsort(picks, n, sizeof *picks, cmp_cw);
   out->items = calloc(n ? n : 1, sizeof(Item));
   if (!out->items)
     n = 0;
   out->n = n;
   out->total = n;
   for (int i = 0; i < n; i++) {
-    item_from_lib(&out->items[i], picks[i]);
+    item_from_lib(&out->items[i], picks[i].item);
     out->items[i].cw = 1;
     out->items[i].anime = base == LIB_CW_ANIME;
   }
@@ -1659,6 +1676,37 @@ int lib_cw_items_k(ItemList *out, int kind) {
 }
 int lib_cw_items(ItemList *out) {
   return lib_cw_items_k(out, LIB_CW_ALL);
+}
+/* Dismissal stays with the profile on this device. Account sync can update the resume position independently. */
+int lib_cw_remove(const char *id) {
+  const cJSON *state = js_obj(lib_get(id), "state");
+  if (!state)
+    return 0;
+  cJSON *dismissed = store_node("cwDismissed");
+  if (!cJSON_IsObject(dismissed)) {
+    dismissed = cJSON_CreateObject();
+    if (!dismissed)
+      return 0;
+    store_set_node("cwDismissed", dismissed);
+  }
+  double now = (double)time(NULL) * 1000;
+  double watched = tms(cJSON_GetObjectItemCaseSensitive(state, "lastWatched"));
+  cJSON *mark = cJSON_CreateObject();
+  if (!mark)
+    return 0;
+  int saved =
+      cJSON_AddNumberToObject(mark, "at", watched > now ? watched : now) &&
+      cJSON_AddNumberToObject(mark, "offset", js_num(state, "timeOffset", 0)) &&
+      cJSON_AddStringToObject(mark, "vid", js_str(state, "video_id", "")) &&
+      (cJSON_GetObjectItemCaseSensitive(dismissed, id) ? cJSON_ReplaceItemInObjectCaseSensitive(dismissed, id, mark)
+                                                       : cJSON_AddItemToObject(dismissed, id, mark));
+  if (!saved) {
+    cJSON_Delete(mark);
+    return 0;
+  }
+  store_set_node("cwDismissed", dismissed);
+  lib_invalidate();
+  return 1;
 }
 int lib_watch_again_items(ItemList *out, int noAnime, int max) {
   *out = (ItemList){ 0 };
@@ -1750,6 +1798,11 @@ void lib_set_progress(const char *id, const Item *it, const char *vid, double to
   cJSON_AddStringToObject(s, "video_id", vid ? vid : "");
   cJSON_DeleteItemFromObjectCaseSensitive(s, "lastWatched");
   cJSON_AddStringToObject(s, "lastWatched", iso);
+  cJSON *dismissed = store_node("cwDismissed");
+  if (to > 0 && cJSON_GetObjectItemCaseSensitive(dismissed, id)) {
+    cJSON_DeleteItemFromObjectCaseSensitive(dismissed, id);
+    store_set_node("cwDismissed", dismissed);
+  }
   /* kept here every time; sent to the account at most once a minute, and at a pause, the close and the end
      (the sync picks up anything that did not go) */
   int push = force || strcmp(progId, id) || SDL_GetTicks() - progPushT >= 60000;
@@ -2577,6 +2630,13 @@ static int stream_parse(Stream *o, const cJSON *s, const char *addon) {
   copy_str(o->name, sizeof o->name, js_str(s, "name", ""));
   copy_str(o->title, sizeof o->title, js_str(s, "description", js_str(s, "title", "")));
   const cJSON *bh = js_obj(s, "behaviorHints");
+  const cJSON *cached = cJSON_GetObjectItemCaseSensitive(bh, "cached");
+  if (o->url[0] && !o->p2p && strncmp(o->url, "ytid:", 5)) {
+    if (cJSON_IsBool(cached))
+      o->cache = cJSON_IsTrue(cached) ? STREAM_CACHE_READY : STREAM_CACHE_PENDING;
+    else
+      o->cache = best_stream_cache_label(o->name, o->title);
+  }
   copy_str(o->filename, sizeof o->filename, js_str(bh, "filename", ""));
   copy_str(o->binge, sizeof o->binge, js_str(bh, "bingeGroup", ""));
   o->notWeb = js_bool(bh, "notWebReady", 0);
@@ -2663,7 +2723,12 @@ typedef struct {
   StreamReq *req;
   int idx;
   char name[96];
+  unsigned long long addonKey;
 } StreamPart;
+static unsigned long long stream_addon_key(const cJSON *addon) {
+  const char *url = js_str(addon, "transportUrl", "");
+  return url[0] ? str_hash(url) : 0;
+}
 static unsigned streamTok;
 static void streams_answer(StreamPart *p, const cJSON *arr) {
   StreamReq *r = p->req;
@@ -2681,8 +2746,10 @@ static void streams_answer(StreamPart *p, const cJSON *arr) {
     cJSON_ArrayForEach(s, arr) {
       if (g.n >= na)
         break;
-      if (stream_parse(&g.items[g.n], s, p->name))
+      if (stream_parse(&g.items[g.n], s, p->name)) {
+        g.items[g.n].addonKey = p->addonKey;
         g.n++;
+      }
     }
   for (int i = 0; i < g.n; i++)
     if (sb_stream_is_limit(&g.items[i])) {
@@ -2785,10 +2852,12 @@ unsigned sb_streams_ex(const char *type, const char *vid, StreamPartCb part, Str
 unsigned sb_streams_one(const char *type, const char *vid, int which, StreamPartCb part, StreamDoneCb done, void *ud) {
   return streams_req(type, vid, which, part, done, NULL, ud);
 }
-int sb_stream_addons(const char *type, const char *vid, char (*names)[96], int max) {
+int sb_stream_addons(const char *type, const char *vid, StreamAddon *out, int max) {
   if (video_streams(type, vid)) {
-    if (names && max > 0)
-      copy_str(names[0], 96, T("This title"));
+    if (out && max > 0) {
+      copy_str(out[0].name, sizeof out[0].name, T("This title"));
+      out[0].key = 0;
+    }
     return max > 0;
   }
   cJSON *a = sb_addons();
@@ -2800,8 +2869,10 @@ int sb_stream_addons(const char *type, const char *vid, char (*names)[96], int m
         break;
       if (!addon_serves(ad, "stream", type, vid))
         continue;
-      if (names)
-        copy_str(names[n], 96, addon_name(ad));
+      if (out) {
+        copy_str(out[n].name, sizeof out[n].name, addon_name(ad));
+        out[n].key = stream_addon_key(ad);
+      }
       n++;
     }
   return n;
@@ -2850,6 +2921,7 @@ static unsigned streams_req(const char *type, const char *vid, int only, StreamP
       p->req = r;
       p->idx = idx++;
       copy_str(p->name, sizeof p->name, addon_name(ad));
+      p->addonKey = stream_addon_key(ad);
       char base[ADDON_URL_MAX], url[ADDON_URL_MAX + 512];
       addon_base(ad, base, sizeof base);
       addon_url(url, sizeof url, base, "stream", type, vid, NULL);
@@ -2914,6 +2986,12 @@ int sb_resume_stream(const char *id, const char *vid, Stream *out) {
   copy_str(out->addon, sizeof out->addon, js_str(s, "addon", ""));
   copy_str(out->title, sizeof out->title, js_str(s, "title", ""));
   out->p2p = !strncmp(out->url, "p2p://", 6);
+  out->addonKey = strtoull(js_str(s, "addonKey", ""), NULL, 16);
+  int cache = (int)js_num(s, "cache", STREAM_CACHE_UNKNOWN);
+  if (cache == STREAM_CACHE_READY || cache == STREAM_CACHE_PENDING)
+    out->cache = cache;
+  else if (out->url[0] && !out->p2p && strncmp(out->url, "ytid:", 5))
+    out->cache = best_stream_cache_label(out->name, out->title);
   copy_str(out->hdrs, sizeof out->hdrs, js_str(s, "hdrs", ""));
   copy_str(out->rhdrs, sizeof out->rhdrs, js_str(s, "rhdrs", ""));
   copy_str(out->binge, sizeof out->binge, js_str(s, "binge", ""));
@@ -2949,6 +3027,13 @@ void sb_remember_stream(const char *id, const char *vid, const Stream *s) {
   cJSON_AddStringToObject(o, "addon", s->addon);
   cJSON_AddStringToObject(o, "title", s->title);
   cJSON_AddStringToObject(o, "acct", sb_user_id()); /* whose it is */
+  if (s->addonKey) {
+    char key[17];
+    snprintf(key, sizeof key, "%llx", s->addonKey);
+    cJSON_AddStringToObject(o, "addonKey", key);
+  }
+  if (s->cache != STREAM_CACHE_UNKNOWN)
+    cJSON_AddNumberToObject(o, "cache", s->cache);
   /* what the stream needs again to play the same way: its headers, its group for the next episode, its file's facts */
   if (s->hdrs[0])
     cJSON_AddStringToObject(o, "hdrs", s->hdrs);

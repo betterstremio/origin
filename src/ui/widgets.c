@@ -19,6 +19,17 @@
 static char markId[64];
 static double markAt; /* the title just marked as watched: its badge pops in (card_mark_pop) */
 
+const char *stream_cache_icon(const Stream *s) {
+  switch (s->cache) {
+  case STREAM_CACHE_READY:
+    return "stream_cached";
+  case STREAM_CACHE_PENDING:
+    return "stream_uncached";
+  default:
+    return NULL;
+  }
+}
+
 void glass_rrect(float x, float y, float w, float h, float r, uint32_t base, float sheenTop, float sheenBottom,
                  float edge) {
   gfx_rrect(x, y, w, h, r, base);

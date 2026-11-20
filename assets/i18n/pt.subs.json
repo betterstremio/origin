@@ -1,1 +1,7 @@
-{"Couldn’t load these subtitles": "Não foi possível carregar estas legendas"}
+{
+  "Couldn’t load these subtitles": "Não foi possível carregar estas legendas",
+  "Automatic": "Automático",
+  "Preferred subtitle add-on": "Complemento de legendas preferido",
+  "Used for the default subtitle language when the file has no matching track": "Usado para o idioma padrão das legendas quando o vídeo não tem uma faixa nesse idioma",
+  "Include Origin's built-in subtitle results and sync references": "Inclui as legendas e as referências de sincronização do OpenSubtitles integrado no Origin"
+}

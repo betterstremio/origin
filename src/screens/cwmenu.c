@@ -28,7 +28,7 @@
 #define CW 640.0f
 #define PX 36.0f
 #define IH 64.0f /* an option, and 4 between them */
-enum { A_STREAMS, A_PLAY, A_RESTART, A_DETAILS, A_WATCHED, A_TRAILER, A_SIMILAR, A_REVIEWS, A_LIB };
+enum { A_STREAMS, A_PLAY, A_RESTART, A_DETAILS, A_WATCHED, A_TRAILER, A_SIMILAR, A_REVIEWS, A_LIB, A_REMOVE_CW };
 static struct {
   int open, closing, idx, n;
   int acts[9];
@@ -329,6 +329,13 @@ static void act(int a) {
     menu_close();
     app_play_from_start(&it);
     break;
+  case A_REMOVE_CW:
+    menu_close();
+    if (lib_cw_remove(it.id)) {
+      sound_play(SND_TOGGLE);
+      app_refresh_boards();
+    }
+    break;
   case A_DETAILS: {
     menu_close();
     DetailParams p;
@@ -566,6 +573,8 @@ void cwmenu_show(const Item *it) {
   CwInfo ci;
   if (lib_cw_info(it, &ci) && (!it->ep || !strcmp(ci.vid, it->videoId)))
     add(A_RESTART, "restart", T("Watch from the beginning"));
+  if (it->cw)
+    add(A_REMOVE_CW, "minus", T("Remove from Continue Watching"));
   if (!it->ep)
     add(A_DETAILS, "info", T("Details"));
   int canMark = strcmp(it->type, "series") || strchr(it->videoId, ':');

@@ -975,16 +975,12 @@ static void *ref_main(void *arg) {
     finish(j, r);
     return NULL;
   }
-  if (!q->hash[0] && q->hashable && !j->cancel) {
-    double sz = q->size;
-    char h[17];
-    if (subs_os_hash(q->url, &sz, h)) {
-      snprintf(q->hash, sizeof q->hash, "%s", h);
-      q->size = sz;
-    }
+  if (!q->skipOpenSubtitles && !j->cancel) {
+    if (!q->hash[0] && q->hashable)
+      subs_os_hash(q);
+    if (q->hash[0] && q->type[0] && q->vid[0] && !j->cancel)
+      by_hash(j);
   }
-  if (q->hash[0] && q->type[0] && q->vid[0] && !j->cancel)
-    by_hash(j);
   rank(j);
   {
     int use = 0;
@@ -1171,24 +1167,6 @@ SubSync *subsync_start_ref(const Cue *X, int nx, double center, const SubQuery *
   j->q = *q;
   snprintf(j->cur, sizeof j->cur, "%s", curUrl ? curUrl : "");
   subs_lang_canon(curLang ? curLang : "", j->curLang, sizeof j->curLang);
-  if (!j->q.filename[0]) { /* the file's name from its address (debrid links end with it) */
-    const char *u = q->url, *e = u + strcspn(u, "?#"), *b = e;
-    while (b > u && b[-1] != '/')
-      b--;
-    size_t o = 0;
-    for (const char *p = b; p < e && o + 1 < sizeof j->q.filename; p++) {
-      if (*p == '%' && p + 2 < e) {
-        unsigned v;
-        if (sscanf(p + 1, "%2x", &v) == 1) {
-          j->q.filename[o++] = (char)v;
-          p += 2;
-          continue;
-        }
-      }
-      j->q.filename[o++] = *p == '+' ? ' ' : *p;
-    }
-    j->q.filename[o] = 0;
-  }
   for (int i = 0; i < nrefs; i++) {
     SyncRef r = refs[i];
     subs_lang_canon(refs[i].lang, r.lang, sizeof r.lang);

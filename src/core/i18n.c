@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <dirent.h>
 
 static cJSON *dict;
@@ -41,9 +42,11 @@ static void index_build(void) {
       idx[i] = it;
     }
 }
-static const char *codes[] = { "en", "ar", "fr", "es", "de", "it", "pt", "ru", "tr", "pl", "nl" };
-static const char *names[] = { "English",   "العربية", "Français", "Español", "Deutsch",   "Italiano",
-                               "Português", "Русский", "Türkçe",   "Polski",  "Nederlands" };
+static const struct {
+  const char *code, *name;
+} languages[] = { { "en", "English" }, { "ar", "العربية" },  { "fr", "Français" },  { "es", "Español" },
+                  { "de", "Deutsch" }, { "it", "Italiano" }, { "pt", "Português" }, { "pt-BR", "Português (Brasil)" },
+                  { "ru", "Русский" }, { "tr", "Türkçe" },   { "pl", "Polski" },    { "nl", "Nederlands" } };
 
 static char *read_all(const char *p) {
   FILE *f = fopen(p, "rb");
@@ -58,14 +61,17 @@ static char *read_all(const char *p) {
   fclose(f);
   return b;
 }
-static int known(const char *c) {
-  for (int i = 0; i < 11; i++)
-    if (!strcmp(codes[i], c))
-      return 1;
-  return 0;
+static const char *lang_name(const char *code) {
+  for (int i = 0; i < i18n_lang_count(); i++)
+    if (!strcmp(languages[i].code, code))
+      return languages[i].name;
+  return NULL;
 }
-/* the TV's own language, two letters: its settings service (asked once, the answer kept for the next start),
-   else the last answer it gave, else the environment */
+static int brazilian_locale(const char *loc) {
+  return !strncasecmp(loc, "pt", 2) && (loc[2] == '-' || loc[2] == '_') && !strncasecmp(loc + 3, "BR", 2) &&
+         (!loc[5] || loc[5] == '.' || loc[5] == '@');
+}
+/* Use the platform locale, its last saved value, or the environment. Keep the region for supported variants. */
 static char tvLang[8];
 const char *i18n_tv_lang(void) {
   if (tvLang[0])
@@ -79,6 +85,10 @@ const char *i18n_tv_lang(void) {
     loc = getenv("LANG");
   if (!loc || strlen(loc) < 2)
     loc = "en";
+  if (brazilian_locale(loc)) {
+    snprintf(tvLang, sizeof tvLang, "%s", "pt-BR");
+    return tvLang;
+  }
   tvLang[0] = (char)(loc[0] | 32);
   tvLang[1] = (char)(loc[1] | 32);
   tvLang[2] = 0;
@@ -99,7 +109,7 @@ static void first_run_defaults(void) {
                                 { "ko", "kor" }, { "zh", "chi" } };
   const char *tv = i18n_tv_lang(), *c = NULL;
   for (size_t i = 0; i < sizeof M / sizeof M[0]; i++)
-    if (!strcmp(M[i][0], tv))
+    if (!strncmp(M[i][0], tv, 2))
       c = M[i][1];
   if (!c)
     return;
@@ -112,60 +122,66 @@ static unsigned langGen = 1;
 unsigned i18n_gen(void) {
   return langGen;
 }
+static void merge_strings(const char *path) {
+  char *text = read_all(path);
+  if (!text)
+    return;
+  cJSON *part = cJSON_Parse(text);
+  free(text);
+  if (!cJSON_IsObject(part)) {
+    fprintf(stderr, "[i18n] bad %s\n", path);
+    cJSON_Delete(part);
+    return;
+  }
+  const cJSON *it;
+  cJSON_ArrayForEach(it, part)
+    if (cJSON_IsString(it) && it->string) {
+      cJSON_DeleteItemFromObjectCaseSensitive(dict, it->string);
+      cJSON_AddStringToObject(dict, it->string, it->valuestring);
+    }
+  cJSON_Delete(part);
+}
+/* Load the base dictionary, then the feature dictionaries for the same locale. */
+static void load_strings(const char *dir, const char *code) {
+  char path[1400];
+  snprintf(path, sizeof path, "%s/%s.json", dir, code);
+  merge_strings(path);
+  DIR *d = opendir(dir);
+  struct dirent *e;
+  size_t ll = strlen(code);
+  while (d && (e = readdir(d))) {
+    size_t n = strlen(e->d_name);
+    if (n <= ll + 6 || strncmp(e->d_name, code, ll) || e->d_name[ll] != '.' || strcmp(e->d_name + n - 5, ".json"))
+      continue;
+    snprintf(path, sizeof path, "%s/%s", dir, e->d_name);
+    merge_strings(path);
+  }
+  if (d)
+    closedir(d);
+}
 static int init_(const char *assetDir, const char *want) {
   langGen++;
-  /* "auto" (or a language this build lacks): the TV's language when the app has it, else English */
-  if (want && (!strcmp(want, "en") || known(want)))
+  /* "auto" uses the platform language when supported, otherwise English. */
+  if (want && brazilian_locale(want))
+    snprintf(lang, sizeof lang, "%s", "pt-BR");
+  else if (want && lang_name(want))
     snprintf(lang, sizeof lang, "%s", want);
   else {
     const char *tv = i18n_tv_lang();
-    snprintf(lang, sizeof lang, "%s", known(tv) ? tv : "en");
+    snprintf(lang, sizeof lang, "%s", lang_name(tv) ? tv : "en");
   }
   first_run_defaults();
-  if (dict) {
-    cJSON_Delete(dict);
-    dict = NULL;
-  }
-  /* <lang>.json, then every <lang>.<part>.json beside it (each feature ships its own strings) */
+  cJSON_Delete(dict);
+  dict = NULL;
   if (strcmp(lang, "en")) {
-    char dir[1100], p[1400];
+    char dir[1100];
     snprintf(dir, sizeof dir, "%s/i18n", assetDir);
-    snprintf(p, sizeof p, "%s/%s.json", dir, lang);
-    char *t = read_all(p);
-    if (t) {
-      dict = cJSON_Parse(t);
-      free(t);
+    dict = cJSON_CreateObject();
+    if (dict) {
+      if (!strcmp(lang, "pt-BR"))
+        load_strings(dir, "pt");
+      load_strings(dir, lang);
     }
-    if (!dict)
-      dict = cJSON_CreateObject();
-    DIR *d = opendir(dir);
-    struct dirent *e;
-    size_t ll = strlen(lang);
-    while (d && (e = readdir(d))) {
-      size_t n = strlen(e->d_name);
-      if (n <= ll + 6 || strncmp(e->d_name, lang, ll) || e->d_name[ll] != '.' || strcmp(e->d_name + n - 5, ".json") ||
-          n == ll + 5)
-        continue;
-      snprintf(p, sizeof p, "%s/%s", dir, e->d_name);
-      char *x = read_all(p);
-      if (!x)
-        continue;
-      cJSON *part = cJSON_Parse(x);
-      free(x);
-      if (!part) {
-        fprintf(stderr, "[i18n] bad %s\n", e->d_name);
-        continue;
-      }
-      cJSON *it;
-      cJSON_ArrayForEach(it, part)
-        if (cJSON_IsString(it) && it->string) {
-          cJSON_DeleteItemFromObjectCaseSensitive(dict, it->string);
-          cJSON_AddStringToObject(dict, it->string, it->valuestring);
-        }
-      cJSON_Delete(part);
-    }
-    if (d)
-      closedir(d);
   }
   index_build();
   rtl = !strcmp(lang, "ar");
@@ -251,14 +267,12 @@ const char *T2(const char *en, const char *k1, const char *v1, const char *k2, c
   return b;
 }
 const char *i18n_lang_name(const char *code) {
-  for (int i = 0; i < 11; i++)
-    if (!strcmp(codes[i], code))
-      return names[i];
-  return code;
+  const char *name = lang_name(code);
+  return name ? name : code;
 }
 int i18n_lang_count(void) {
-  return 11;
+  return (int)(sizeof languages / sizeof languages[0]);
 }
 const char *i18n_lang_code(int i) {
-  return i >= 0 && i < 11 ? codes[i] : "en";
+  return i >= 0 && i < i18n_lang_count() ? languages[i].code : "en";
 }

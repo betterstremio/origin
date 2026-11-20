@@ -266,7 +266,7 @@ const char *nv_email(void) {
   return js_str(store_node("nvUser"), "email", "");
 }
 static int syncGen = 1; /* moves with the profile: anything still out for the old one is dropped */
-static const char *const SCOPED[] = { "addons", "lib", "streams", "recsDismissed", "nvLastSync" };
+static const char *const SCOPED[] = { "addons", "lib", "streams", "recsDismissed", "cwDismissed", "nvLastSync" };
 #define NSCOPED ((int)(sizeof SCOPED / sizeof *SCOPED))
 void nv_scope(int index, char *out, size_t cap) { /* the file names of a profile's own data */
   char o[96];
@@ -298,7 +298,8 @@ void nv_logout(void) {
 /* one is in use (acctKind); the other's own data waits in a file: Stremio's in acct/stremio.json, a Nuvio profile's in
    its usual one. Nuvio's session keys have names of their own and simply stay. A Stremio user who never adds Nuvio
    never comes here */
-static const char *const ACCT_KEYS[] = { "authKey", "user", "addons", "lib", "streams", "recsDismissed", "nvLastSync" };
+static const char *const ACCT_KEYS[] = { "authKey", "user",          "addons",      "lib",
+                                         "streams", "recsDismissed", "cwDismissed", "nvLastSync" };
 #define NACCT ((int)(sizeof ACCT_KEYS / sizeof *ACCT_KEYS))
 static int stremio_file(void) {
   char p[1400];

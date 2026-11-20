@@ -307,8 +307,11 @@ static void draw(void) {
       const char *head = S.kind[i] == R_RESUME ? T("Last played")
                          : S.kind[i] == R_BEST ? T("Best for this device")
                                                : s->addon;
+      const char *cache = stream_cache_icon(s);
+      if (cache)
+        icon_draw(cache, tx + rw - 18, ty, 18, PH_TXT2);
       text_draw(head, tx, ty, PH_TX_SMALL, 700, S.kind[i] != R_PLAIN ? col_mix(ACC, 0xffffffffu, 0.35f) : PH_TXT2, 0.2f,
-                rw, ALIGN_LEFT);
+                rw - (cache ? 24 : 0), ALIGN_LEFT);
       ty += 18;
       int a = text_draw_wrapped(nm, tx, ty, rw, 2, PH_TX_BODY + 1, 700, PH_TXT, 0, ALIGN_LEFT, 20);
       ty += a * 20;

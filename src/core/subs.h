@@ -31,18 +31,21 @@ void subs_list(const char *type, const char *vid, void (*cb)(SubEntry *subs, int
    (hashable: the url can be read in ranges; it is worked out first, off the drawing thread), its size and file name
    when known. own: the subtitles the stream carried, listed first. cb (through subs_pump) after each answer with
    everything so far (malloc'd: the callback's owner frees it); final once every source answered or failed; ok: how many
-   answered */
+   answered; preferredPending: the preferred add-on still has a request in flight */
+#define SUBS_PROVIDER_KEY_SIZE 300
 typedef struct {
   char type[16], vid[80], url[4096], filename[256], hash[24];
   double size;
-  int hashable;
+  int hashable, skipOpenSubtitles;
   double fps;
 } SubQuery; /* fps: the picture's, when known (Auto-sync) */
-void subs_find(const SubQuery *q, const SubEntry *own, int nown,
-               void (*cb)(SubEntry *subs, int n, int final, int ok, void *ud), void *ud);
+void subs_find(const SubQuery *q, const SubEntry *own, int nown, const char *preferred,
+               void (*cb)(SubEntry *subs, int n, int final, int ok, int preferredPending, void *ud), void *ud);
 int subs_addons_for(const char *type, const char *vid); /* installed subtitles addons serving it */
-int subs_os_hash(const char *url, double *size,
-                 char out[17]); /* worker threads only (it blocks); *size: known size or 0 */
+/* The path's final component, if it looks like a media filename; never includes the host, query or fragment. */
+void subs_filename_from_url(const char *url, char *filename, size_t cap);
+/* Worker threads only. Update the size from the range response and fill in a missing filename when possible. */
+void subs_os_hash(SubQuery *q);
 int subs_hash_of(const char *url, char out[24],
                  double *size); /* the hash subs_find worked out for this url, if it did (any thread) */
 struct cJSON;

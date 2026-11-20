@@ -268,7 +268,7 @@ static void *offer_thread(void *a) {
 enum { E_OK = 0, E_BADKEY, E_NET };
 typedef struct Job {
   struct Job *next;
-  char type[8], id[16], lang[4], key[420];
+  char type[8], id[16], lang[8], key[420];
   int light, err;
   unsigned gen;
   Loc *v;
@@ -362,8 +362,9 @@ static cJSON *fetch(const Job *j, int *err, int *none) {
   }
   int tid = (int)js_num(!strcmp(kind, "tv") ? tv : mv, "id", 0);
   cJSON_Delete(f);
+  char baseLang[3] = { j->lang[0], j->lang[1], 0 };
   snprintf(p, sizeof p, "/%s/%d?language=%s&append_to_response=images,translations&include_image_language=%s", kind,
-           tid, j->lang, j->lang);
+           tid, j->lang, baseLang);
   cJSON *d = tmdb_get(p, j->key, &st);
   if (!d || !js_num(d, "id", 0)) {
     cJSON_Delete(d);
@@ -371,18 +372,25 @@ static cJSON *fetch(const Job *j, int *err, int *none) {
     return NULL;
   }
   const char *name = "", *ov = "";
+  int nameExact = 0, ovExact = 0;
   const cJSON *t;
   cJSON_ArrayForEach(t, js_arr(js_obj(d, "translations"), "translations")) {
     const cJSON *td = js_obj(t, "data");
-    if (!td || strcmp(js_str(t, "iso_639_1", ""), j->lang))
+    if (!td || strcmp(js_str(t, "iso_639_1", ""), baseLang))
       continue;
-    if (!*name) {
-      name = js_str(td, "title", "");
-      if (!*name)
-        name = js_str(td, "name", "");
+    int exact = j->lang[2] == '-' && !strcmp(js_str(t, "iso_3166_1", ""), j->lang + 3);
+    const char *title = js_str(td, "title", "");
+    if (!*title)
+      title = js_str(td, "name", "");
+    const char *overview = js_str(td, "overview", "");
+    if (*title && (!*name || (exact && !nameExact))) {
+      name = title;
+      nameExact = exact;
     }
-    if (!*ov)
-      ov = js_str(td, "overview", "");
+    if (*overview && (!*ov || (exact && !ovExact))) {
+      ov = overview;
+      ovExact = exact;
+    }
   }
   cJSON *v = cJSON_CreateObject(), *gs = cJSON_CreateArray();
   cJSON_AddStringToObject(v, "name", name);
@@ -394,7 +402,7 @@ static cJSON *fetch(const Job *j, int *err, int *none) {
   }
   cJSON_AddItemToObject(v, "genres", gs);
   const cJSON *im = js_obj(d, "images");
-  const char *lg = best_image(js_arr(im, "logos"), j->lang), *po = best_image(js_arr(im, "posters"), j->lang);
+  const char *lg = best_image(js_arr(im, "logos"), baseLang), *po = best_image(js_arr(im, "posters"), baseLang);
   char u[600];
   snprintf(u, sizeof u, "%s%s", *lg ? IMG : "", lg);
   cJSON_AddStringToObject(v, "logo", u);

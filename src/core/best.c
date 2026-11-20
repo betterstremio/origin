@@ -50,6 +50,28 @@ static void lower(const char *s, char *out, size_t cap) {
   }
   out[i] = 0;
 }
+StreamCache best_stream_cache_label(const char *name, const char *description) {
+  char raw[sizeof((Stream *)0)->name + sizeof((Stream *)0)->title], label[sizeof raw];
+  snprintf(raw, sizeof raw, "%s %s", name, description);
+  lower(raw, label, sizeof label);
+  if (has_word(label, "uncached") || strstr(label, "not cached") || strstr(label, "needs to download") ||
+      strstr(label, "download]") || strstr(label, "\xe2\x8f\xb3") || strstr(label, "\xe2\x8c\x9b"))
+    return STREAM_CACHE_PENDING;
+  int ready = has_word(label, "cached") || strstr(label, "\xe2\x9a\xa1");
+  for (const char *p = label; (p = strchr(p, '[')); p++) {
+    int n = 0;
+    while (p[1 + n] >= 'a' && p[1 + n] <= 'z')
+      n++;
+    if (n < 2 || n > 3)
+      continue;
+    const char *tag = p + 1 + n;
+    if (!strncmp(tag, "\xe2\xac\x87]", 4) || !strncmp(tag, "\xe2\xac\x87\xef\xb8\x8f]", 7))
+      return STREAM_CACHE_PENDING;
+    if (tag[0] == '+' && tag[1] == ']')
+      ready = 1;
+  }
+  return ready ? STREAM_CACHE_READY : STREAM_CACHE_UNKNOWN;
+}
 static void blank(char *s, const char *set) {
   for (; *s; s++)
     if (strchr(set, *s))

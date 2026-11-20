@@ -30,8 +30,8 @@ typedef struct {
 /* X: the subtitle's own times (original, unshifted); R: the reference's lines near center (copied, any order) */
 SubSync *subsync_start(const Cue *X, int nx, const SyncLine *R, int nr, double center);
 /* When the file has no text track: another subtitle made for this file as the reference, looked for, downloaded and
-   matched on the job's thread (by the file's hash on OpenSubtitles first, then refs: hm / own first, then by how well
-   rel matches the file's name; curUrl, the subtitle being synced, is never its own reference). q: the stream (its
+   matched on the job's thread (by the file's hash on OpenSubtitles when enabled, then refs: hm / own first, then by how
+   well rel matches the file's name; curUrl, the subtitle being synced, is never its own reference). q: the stream (its
    hash is worked out when it can be read in ranges). Logged as [sync]. */
 typedef struct {
   char url[1024], lang[24], rel[96], from[64];

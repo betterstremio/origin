@@ -5,6 +5,7 @@
 #include "core/addons.h"
 #include "core/stremio.h"
 #include <zlib.h>
+#include <ctype.h>
 #include <strings.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -562,7 +563,9 @@ static void list_parse(SubJob *j);
 static void *job_main(void *a) {
   plat_thread_background(5);
   SubJob *j = a;
-  j->body = net_fetch_sync(j->url, &j->len, &j->status, 20000); /* one addon's limit: the others never wait for it */
+  /* Some add-ons time subtitles on the first request. Each has its own worker, so the others can still answer. */
+  int timeout = j->os ? 20000 : j->list ? 35000 : 45000;
+  j->body = net_fetch_sync(j->url, &j->len, &j->status, timeout);
   if (j->os) {
   } /* read on the main thread (on_list) */
   else if (j->list)
@@ -619,20 +622,60 @@ void subs_load(const char *url, void (*cb)(int status, Cue *cues, int n, void *u
   job_start(j);
 }
 
+void subs_filename_from_url(const char *url, char *filename, size_t cap) {
+  if (!cap || filename[0])
+    return;
+  const char *end = url + strcspn(url, "?#");
+  const char *path = strstr(url, "://");
+  path = path ? strchr(path + 3, '/') : NULL;
+  if (!path || path >= end)
+    return;
+  const char *base = end;
+  while (base > path && base[-1] != '/')
+    base--;
+  size_t n = 0;
+  for (const char *p = base; p < end; p++) {
+    unsigned char c = (unsigned char)*p;
+    if (c == '%' && p + 2 < end && isxdigit((unsigned char)p[1]) && isxdigit((unsigned char)p[2])) {
+      unsigned value;
+      sscanf(p + 1, "%2x", &value);
+      c = (unsigned char)value;
+      p += 2;
+    }
+    if (c < 32 || c == 127 || c == '/' || c == '\\' || n + 1 >= cap) {
+      filename[0] = 0;
+      return;
+    }
+    filename[n++] = (char)c;
+  }
+  filename[n] = 0;
+  const char *ext = strrchr(filename, '.');
+  static const char *const formats[] = { ".mkv", ".mp4", ".avi",  ".mov",  ".m4v", ".webm",
+                                         ".wmv", ".mpg", ".mpeg", ".m2ts", ".ts" };
+  for (size_t i = 0; ext && i < sizeof formats / sizeof formats[0]; i++)
+    if (!strcasecmp(ext, formats[i]))
+      return;
+  filename[0] = 0;
+}
+
 /* ---- the OpenSubtitles hash: the size plus the 64-bit little-endian words of the first and the last 64 KB ---- */
-int subs_os_hash(const char *url, double *size, char out[17]) {
-  out[0] = 0;
+void subs_os_hash(SubQuery *q) {
   NetRange *r = net_range_new();
   if (!r)
-    return 0;
+    return;
   unsigned char *a = NULL, *b = NULL;
   long ga = 0, gb = 0;
   long long tot = -1;
-  int st, ok = 0;
-  if (net_range_get(r, url, 0, 65536, &a, &ga, &tot, &st, 8000) == NR_OK && ga == 65536) {
-    if (tot <= 0 && *size > 0)
-      tot = (long long)*size;
-    if (tot >= 131072 && net_range_get(r, url, tot - 65536, 65536, &b, &gb, NULL, &st, 8000) == NR_OK && gb == 65536) {
+  if (net_range_get(r, q->url, 0, 65536, &a, &ga, &tot, NULL, 8000) == NR_OK) {
+    const char *resolved = net_range_url(r);
+    if (resolved)
+      subs_filename_from_url(resolved, q->filename, sizeof q->filename);
+    if (tot > 0)
+      q->size = (double)tot;
+    else if (q->size > 0)
+      tot = (long long)q->size;
+    if (ga == 65536 && tot >= 131072 &&
+        net_range_get(r, q->url, tot - 65536, 65536, &b, &gb, NULL, NULL, 8000) == NR_OK && gb == 65536) {
       unsigned long long h = (unsigned long long)tot;
       for (int k = 0; k < 65536; k += 8) {
         unsigned long long x = 0, y = 0;
@@ -642,15 +685,12 @@ int subs_os_hash(const char *url, double *size, char out[17]) {
         }
         h += x + y;
       }
-      snprintf(out, 17, "%016llx", h);
-      *size = (double)tot;
-      ok = 1;
+      snprintf(q->hash, sizeof q->hash, "%016llx", h);
     }
   }
   free(a);
   free(b);
   net_range_free(r);
-  return ok;
 }
 
 /* what an entry says of the file it was made for: its name, and whether the video's hash found it ("m": "h" on
@@ -785,16 +825,16 @@ void subs_list(const char *type, const char *vid, void (*cb)(SubEntry *, int, in
 #define SUBS_ADDONS_MAX 16
 typedef struct {
   char name[64], base[ADDON_URL_MAX];
-  int from, order;
+  int order, preferred;
 } FindSrc;
 struct FindQ {
   unsigned tok;
   SubQuery q;
   FindSrc src[SUBS_ADDONS_MAX];
-  int nsrc, pending, nok;
+  int nsrc, pending, nok, preferredPending;
   SubEntry *all;
   int n, cap;
-  void (*cb)(SubEntry *, int, int, int, void *);
+  void (*cb)(SubEntry *, int, int, int, int, void *);
   void *ud;
 };
 static void list_parse(SubJob *j) {
@@ -845,9 +885,10 @@ static void list_parse(SubJob *j) {
       snprintf(e->url, sizeof e->url, "%s", url);
       snprintf(e->label, sizeof e->label, "%s", js_str(s, "label", ""));
       snprintf(e->addon, sizeof e->addon, "%s", fs->name);
-      e->from = fs->from;
+      e->from = SUB_ADDON;
       e->order = fs->order;
       e->n = per[li];
+      e->preferred = fs->preferred ? e->n : 0;
       subs_entry_facts(e, s);
     }
   cJSON_Delete(js);
@@ -879,9 +920,10 @@ static int cmp_entry(const void *a, const void *b) {
   return x->n - y->n;
 }
 static void find_deliver(FindQ *f) {
-  SubEntry *out = malloc((f->n ? f->n : 1) * sizeof *out);
-  memcpy(out, f->all, f->n * sizeof *out);
-  f->cb(out, f->n, f->pending <= 0, f->nok, f->ud);
+  SubEntry *out = f->n ? malloc(f->n * sizeof *out) : NULL;
+  if (out)
+    memcpy(out, f->all, f->n * sizeof *out);
+  f->cb(out, out ? f->n : 0, f->pending <= 0, f->nok, f->preferredPending, f->ud);
   if (f->pending <= 0) {
     free(f->all);
     free(f);
@@ -889,30 +931,43 @@ static void find_deliver(FindQ *f) {
 }
 static void find_add(FindQ *f, const SubEntry *e, int n) {
   for (int i = 0; i < n; i++) {
-    int dup = 0;
-    for (int k = 0; k < f->n && !dup; k++)
-      dup = !strcmp(f->all[k].url, e[i].url);
-    if (dup)
+    int k = 0;
+    for (; k < f->n && strcmp(f->all[k].url, e[i].url); k++)
+      ;
+    if (k < f->n) {
+      /* Keep the existing visible row, including the selection if it is already playing. */
+      if (e[i].preferred && !f->all[k].preferred && subs_lang_match(f->all[k].lang, e[i].lang))
+        f->all[k].preferred = e[i].preferred;
       continue;
+    }
     if (f->n == f->cap) {
-      f->cap = f->cap ? f->cap * 2 : 64;
-      f->all = realloc(f->all, f->cap * sizeof *f->all);
+      int cap = f->cap ? f->cap * 2 : 64;
+      SubEntry *all = realloc(f->all, cap * sizeof *all);
+      if (!all)
+        break;
+      f->all = all;
+      f->cap = cap;
     }
     f->all[f->n] = e[i];
     entry_name(&f->all[f->n]);
     f->n++;
   }
-  qsort(f->all, f->n, sizeof *f->all, cmp_entry);
+  if (f->n > 1)
+    qsort(f->all, f->n, sizeof *f->all, cmp_entry);
 }
 static void find_answer(SubJob *j) {
   FindQ *f = j->fq;
   f->pending--;
+  if (f->src[j->src].preferred)
+    f->preferredPending = 0;
   if (j->status == 1000)
     f->nok++;
-  if (j->status != 1000)
-    fprintf(stderr, "[subs] %s: %s\n", f->src[j->src].name, j->status > 0 ? "HTTP error" : "no answer");
-  else
+  if (j->status == 1000)
     fprintf(stderr, "[subs] %s: %d subtitles\n", f->src[j->src].name, j->ngot);
+  else if (j->status > 0)
+    fprintf(stderr, "[subs] %s: HTTP %d\n", f->src[j->src].name, j->status);
+  else
+    fprintf(stderr, "[subs] %s: no answer\n", f->src[j->src].name);
   find_add(f, j->got, j->ngot);
   find_deliver(f);
 }
@@ -921,25 +976,23 @@ static void *find_main(void *a) {
   plat_thread_background(5);
   FindQ *f = a;
   SubQuery *q = &f->q;
-  if (!q->hash[0] && q->hashable) {
-    double sz = q->size;
-    char h[17];
-    if (subs_os_hash(q->url, &sz, h)) {
-      snprintf(q->hash, sizeof q->hash, "%s", h);
-      q->size = sz;
-    }
-  }
+  if (!q->hash[0] && q->hashable)
+    subs_os_hash(q);
   if (q->hash[0])
     hash_keep(q->url, q->hash, q->size);
-  char ex[600] = "", n[32];
+  char ex[sizeof q->filename * 3 + 100] = "", n[32];
   if (q->hash[0])
     addon_extra_add(ex, sizeof ex, "videoHash", q->hash);
   if (q->size > 0) {
     snprintf(n, sizeof n, "%.0f", q->size);
     addon_extra_add(ex, sizeof ex, "videoSize", n);
   }
-  if (q->filename[0])
-    addon_extra_add(ex, sizeof ex, "filename", q->filename);
+  if (q->filename[0]) {
+    char name[sizeof q->filename * 3 + 4];
+    addon_urlenc(q->filename, name, sizeof name);
+    size_t used = strlen(ex);
+    snprintf(ex + used, sizeof ex - used, "%sfilename=%s", used ? "&" : "", name);
+  }
   fprintf(stderr, "[subs] asking %d source(s) for %s %s (%s)\n", f->nsrc, q->type, q->vid,
           ex[0] ? ex : "no file facts");
   int ns = f->nsrc; /* f may be gone once the last request is out */
@@ -958,9 +1011,13 @@ static void *find_main(void *a) {
 int subs_addons_for(const char *type, const char *vid) {
   return addon_count_subs(type, vid);
 }
-void subs_find(const SubQuery *q, const SubEntry *own, int nown, void (*cb)(SubEntry *, int, int, int, void *),
-               void *ud) {
+void subs_find(const SubQuery *q, const SubEntry *own, int nown, const char *preferred,
+               void (*cb)(SubEntry *, int, int, int, int, void *), void *ud) {
   FindQ *f = calloc(1, sizeof *f);
+  if (!f) {
+    cb(NULL, 0, 1, 0, 0, ud);
+    return;
+  }
   f->q = *q;
   f->cb = cb;
   f->ud = ud;
@@ -972,15 +1029,21 @@ void subs_find(const SubQuery *q, const SubEntry *own, int nown, void (*cb)(SubE
       order++;
       if (!addon_serves_subs(ad, q->type, q->vid))
         continue;
-      if (f->nsrc >= SUBS_ADDONS_MAX) {
-        fprintf(stderr, "[subs] more than %d subtitle addons: the rest are not asked\n", SUBS_ADDONS_MAX);
-        break;
+      int selected = 0;
+      if (*preferred && !f->preferredPending) {
+        char key[SUBS_PROVIDER_KEY_SIZE];
+        sb_addon_key(ad, key, sizeof key);
+        selected = !strcmp(key, preferred);
       }
-      FindSrc *s = &f->src[f->nsrc++];
+      if (f->nsrc >= SUBS_ADDONS_MAX && !selected)
+        continue;
+      int index = f->nsrc < SUBS_ADDONS_MAX ? f->nsrc++ : SUBS_ADDONS_MAX - 1;
+      FindSrc *s = &f->src[index];
       snprintf(s->name, sizeof s->name, "%s", addon_name(ad));
       addon_base(ad, s->base, sizeof s->base);
-      s->from = SUB_ADDON;
       s->order = order;
+      s->preferred = selected;
+      f->preferredPending |= selected;
     }
   if (nown)
     find_add(f, own, nown);
@@ -989,11 +1052,8 @@ void subs_find(const SubQuery *q, const SubEntry *own, int nown, void (*cb)(SubE
     find_deliver(f);
     return;
   } /* only the stream's own: final at once */
-  if (nown) {
-    SubEntry *out = malloc(f->n * sizeof *out);
-    memcpy(out, f->all, f->n * sizeof *out);
-    cb(out, f->n, 0, 0, ud);
-  } /* the stream's own at once */
+  if (nown || f->preferredPending)
+    find_deliver(f); /* the stream's own and the preferred provider's pending state, before any requests start */
   pthread_t t;
   if (pthread_create(&t, NULL, find_main, f))
     find_main(f);

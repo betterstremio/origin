@@ -7,6 +7,8 @@
 #include "core/stremio.h"
 #include "ui/gl.h"
 
+const char *stream_cache_icon(const Stream *s); /* NULL when the addon gave no cache status */
+
 /* a glass panel: a dark base, a soft white sheen from the top, a 1px inner edge */
 void glass_rrect(float x, float y, float w, float h, float r, uint32_t base, float sheenTop, float sheenBottom,
                  float edge);
