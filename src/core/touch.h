@@ -26,6 +26,7 @@ void touch_begin_frame(void); /* with hit_begin: this frame's regions replace th
 void touch_region(float x, float y, float w, float h, Scroller *sx,
                   Scroller *sy); /* layout units, through the transform */
 
+extern unsigned touch_evt_ms; /* the SDL timestamp (ms) of the finger event being handled, for the dev log */
 void touch_down(float x, float y); /* layout units */
 void touch_move(float x, float y);
 void touch_up(float x, float y);

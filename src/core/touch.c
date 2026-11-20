@@ -172,6 +172,7 @@ static float rubber(float d, float extent) {
 }
 
 #include "screens/player.h"
+unsigned touch_evt_ms;
 void touch_down(float x, float y) {
   if (player_open()) {
     memset(&F, 0, sizeof F);

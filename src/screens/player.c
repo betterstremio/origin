@@ -14,6 +14,7 @@
 #include "ui/img.h"
 #include "ui/icon.h"
 #include "ui/widgets.h"
+#include "core/touch.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -497,6 +498,14 @@ static void tray_origin(void);
 static double now_(void) {
   return app_now();
 }
+/* SB_TOUCHLOG=1 (development): what a phone's fingers did to the film, and where a seek they asked for landed */
+static int tlog(void) {
+  static int v = -1;
+  if (v < 0)
+    v = getenv("SB_TOUCHLOG") != NULL;
+  return v;
+}
+static double tlogCheckAt, tlogTarget;
 /* where a looping motion (a spinner, the loading line) is in its turn: worked out in double precision, as a float clock
    steps visibly once the app has been running a while */
 static float clock_ph(double period) {
@@ -2744,8 +2753,11 @@ static void toggle(void) {
 /* ---- seeking: presses add up and commit 1.2 s after the last one ---- */
 static void seek_by(int dir) {
   double d = dur();
-  if (d <= 0)
+  if (d <= 0) {
+    if (tlog())
+      fprintf(stderr, "[touch] seek %+d NOT done: the length is unknown (dur %.1f)\n", dir, d);
     return;
+  }
   double n = now_();
   int step = atoi(store_get("seekStep", "10"));
   if (!step)
@@ -2783,6 +2795,11 @@ static void commit_seek(void) {
   double t = P.seekT;
   P.seekT = -1;
   video_seek(t);
+  if (tlog()) {
+    fprintf(stderr, "[touch] seek sent: %.1f -> %.1f\n", video_time(), t);
+    tlogTarget = t;
+    tlogCheckAt = now_() + 1.5;
+  }
   P.seekTxtUntil = now_() + 0.9;
 }
 static void cancel_seek(void) {
@@ -6405,6 +6422,11 @@ void player_tick(float dt) {
     }
     if (P.seekT >= 0 && now_() >= P.seekCommitAt)
       commit_seek();
+    if (tlogCheckAt && now_() >= tlogCheckAt) {
+      tlogCheckAt = 0;
+      fprintf(stderr, "[touch] seek landed: at %.1f (asked %.1f, settling %d)\n", video_time(), tlogTarget,
+              video_settling());
+    }
     if (P.seekTxtUntil && now_() >= P.seekTxtUntil) {
       P.seekTxtUntil = 0;
       P.skOn = 0;
@@ -8539,12 +8561,18 @@ void player_ptr(int type, float x, float y) {
 /* ---- a phone's fingers (core/form.h; the film is sideways, the canvas the TV's): a tap shows or hides the controls,
    the big buttons in the middle step back 10 s, play or pause and step on 10 s, a double tap on the left or right
    third steps back or on (each further tap adds a step), the bar is dragged to a place, Back is at the top left;
-   the trays, the buttons' row and the prompts take a tap as a click (player_ptr) ---- */
+   the trays, the buttons' row and the prompts take a tap as a click (player_ptr).
+   A double tap is timed as Android times one: the second finger lands within 300 ms of the first one lifting, on the
+   events' own clock (a slow frame, such as the one that brings the controls in, must not stretch the gap) ---- */
+#define DTAP_MS 300
 static struct {
-  int down, moved, onBar, lastSide, osdBefore;
+  int down, moved, onBar, lastSide, osdBefore, quick;
   float x0, y0, ylast, acc;
-  double lastTapAt;
+  unsigned lastUpMs; /* when the last tap on the film lifted (0: no tap to follow) */
 } TP;
+static int ph_side(float x) {
+  return x < SB_W / 3 ? -1 : x > SB_W * 2 / 3 ? 1 : 0;
+}
 static float tdp(void) {
   float s = gfx_scale();
   return s > 0 ? form_density() / s : 1;
@@ -8583,6 +8611,9 @@ void player_touch(int type, float x, float y) {
   if (!P.open || P.closing || !P.live)
     return;
   float d = tdp(), L25 = text_line_height(25), barTop = SB_H - 54 - 94 - 30 - L25;
+  if (tlog() && type != 1)
+    fprintf(stderr, "[touch] %s t=%u ms (frame %.3f) at %.0f,%.0f osd %d mode %d dur %.1f\n", type ? "up" : "down",
+            touch_evt_ms, now_(), x, y, P.osd, P.mode, dur());
   if (type == 0) {
     TP.down = 1;
     TP.moved = 0;
@@ -8590,10 +8621,15 @@ void player_touch(int type, float x, float y) {
     TP.y0 = y;
     TP.ylast = y;
     TP.acc = 0;
+    /* a second tap on the same side, landing in time: it belongs to a double tap, whatever the first tap brought up
+       (the controls it showed must not catch it: the bar's band runs the screen's width) */
+    TP.quick = TP.lastUpMs && ph_side(x) && ph_side(x) == TP.lastSide && touch_evt_ms - TP.lastUpMs <= DTAP_MS;
     if (P.mode == 2)
       player_ptr(0, x, y); /* (a tray: the row under the finger is pointed at, not picked: a drag moves through its
                               column, a lift picks it) */
-    TP.onBar = P.osd && P.mode != 2 && P.mode != 4 && y >= barTop - 22 * d && y <= barTop + L25 + 16 * d;
+    TP.onBar = !TP.quick && P.osd && P.mode != 2 && P.mode != 4 && y >= barTop - 22 * d && y <= barTop + L25 + 16 * d;
+    if (TP.onBar && tlog())
+      fprintf(stderr, "[touch] -> the bar takes it (band %.0f-%.0f)\n", barTop - 22 * d, barTop + L25 + 16 * d);
     if (TP.onBar) {
       P.row = 1;
       ptr_hv(1, x);
@@ -8643,6 +8679,7 @@ void player_touch(int type, float x, float y) {
     return;
   TP.down = 0;
   if (TP.onBar) {
+    TP.lastUpMs = 0;
     ptr_hv(1, x);
     double du = dur();
     if (du > 0) {
@@ -8654,15 +8691,22 @@ void player_touch(int type, float x, float y) {
     arm_hide();
     return;
   }
-  if (TP.moved)
+  if (TP.moved) {
+    TP.lastUpMs = 0;
+    if (tlog())
+      fprintf(stderr, "[touch] -> moved: no tap\n");
     return;
-  double n = now_();
-  int side = x < SB_W / 3 ? -1 : x > SB_W * 2 / 3 ? 1 : 0;
-  if (getenv("SB_TOUCHLOG"))
-    fprintf(stderr, "[touch] film tap %.0f,%.0f osd %d mode %d side %d\n", x, y, P.osd, P.mode, side);
-  if (side && TP.lastSide == side && n - TP.lastTapAt < 0.4) { /* a double tap on a side: a step back or on */
-    TP.lastTapAt = n;
+  }
+  int side = ph_side(TP.x0);
+  if (tlog())
+    fprintf(stderr, "[touch] film tap side %d, last side %d, landed %u ms after the last lift%s\n", side, TP.lastSide,
+            TP.lastUpMs ? touch_evt_ms - TP.lastUpMs : 0, TP.quick ? ": DOUBLE" : "");
+  if (TP.quick) { /* a double tap on a side (or one more tap of it): a step back or on, each tap the same step */
+    TP.lastUpMs = touch_evt_ms;
+    P.rep = 0;
     seek_by(side);
+    if (P.seekT >= 0)
+      P.seekCommitAt = now_() + 0.6; /* a finger's run of taps lands sooner than a remote's presses */
     if (TP.osdBefore)
       show_osd(1);
     else if (P.osd) {
@@ -8671,7 +8715,7 @@ void player_touch(int type, float x, float y) {
     }
     return;
   }
-  TP.lastTapAt = n;
+  TP.lastUpMs = touch_evt_ms ? touch_evt_ms : 1;
   TP.lastSide = side;
   TP.osdBefore = P.osd;
   if (P.mode == 2) {

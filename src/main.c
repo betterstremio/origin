@@ -413,24 +413,28 @@ static void run_script(const char *script, int frame) {
        long press is an fdown left for 30 frames or more before its fup */
     if (f == frame && !strncmp(c + 1, "fdown ", 6)) {
       float x, y;
+      touch_evt_ms = SDL_GetTicks();
       if (sscanf(c + 7, "%f %f", &x, &y) == 2)
         touch_down(x, y);
       continue;
     }
     if (f == frame && !strncmp(c + 1, "fmove ", 6)) {
       float x, y;
+      touch_evt_ms = SDL_GetTicks();
       if (sscanf(c + 7, "%f %f", &x, &y) == 2)
         touch_move(x, y);
       continue;
     }
     if (f == frame && !strncmp(c + 1, "fup ", 4)) {
       float x, y;
+      touch_evt_ms = SDL_GetTicks();
       if (sscanf(c + 5, "%f %f", &x, &y) == 2)
         touch_up(x, y);
       continue;
     }
     if (f == frame && !strncmp(c + 1, "tap ", 4)) {
       float x, y;
+      touch_evt_ms = SDL_GetTicks();
       if (sscanf(c + 5, "%f %f", &x, &y) == 2) {
         touch_down(x, y);
         touch_up(x, y);
@@ -915,6 +919,7 @@ int main(int argc, char **argv) {
         SDL_GetWindowSize(win, &ww, &wh);
         float x, y;
         to_layout(win, (int)(e.tfinger.x * ww), (int)(e.tfinger.y * wh), &x, &y);
+        touch_evt_ms = e.tfinger.timestamp;
         if (e.type == SDL_FINGERDOWN) {
           if (fingerOn)
             continue;
@@ -934,6 +939,7 @@ int main(int argc, char **argv) {
                  (e.type == SDL_MOUSEMOTION ? e.motion.which : e.button.which) !=
                      SDL_TOUCH_MOUSEID) { /* the preview's mouse as a finger */
         float x, y;
+        touch_evt_ms = e.type == SDL_MOUSEMOTION ? e.motion.timestamp : e.button.timestamp;
         if (e.type == SDL_MOUSEMOTION)
           to_layout(win, e.motion.x, e.motion.y, &x, &y);
         else
