@@ -960,3 +960,11 @@ void video_pump(void) {
     gfx_target_free(&tgt); /* (no video: the texture's memory goes back) */
   keep_awake(st == VID_PLAYING && R.w >= SB_W * 0.9f);
 }
+/* playback speed: only phones offer it (the Mac's player keeps 1) */
+int video_set_rate(float rate) {
+  (void)rate;
+  return 0;
+}
+int video_rate_supported(void) {
+  return 0;
+}
