@@ -505,6 +505,7 @@ static struct {
   int swKind; /* this finger: 0 not decided, 1 brightness, 2 volume, -1 neither */
   int swOn, swFixed, swPct, swDirty, swSide, brSet;
   float swY0, swLv0;
+  float menuOff, menuMax; /* the menu's list scrolled (dp units of the canvas) and how far it can go */
   double hudUntil;
   int pinch, pinchDone; /* two fingers down; the step made, nothing more until they lift */
   float pinchSpan0;
@@ -3023,6 +3024,7 @@ static void check_prompt(void) {
 static char closeVid[80];
 static void play_stream(const Stream *s, const char *vid, double startAt);
 static void prepare(const char *vid, double startAt, int keepSubs);
+static void ph_rate_sync(void);
 static int can_play(const Stream *s) {
   return !(s->p2p || !strncmp(s->url, "p2p://", 6)) || p2p_available();
 } /* P2P streams need the engine library beside the app */
@@ -5298,8 +5300,11 @@ static void prepare(const char *vid, double startAt, int keepSubs) {
   unsigned subReq = P.subReq, adxReq = P.adxReq;
   char v[80];
   snprintf(v, sizeof v, "%s", vid && *vid ? vid : id);
+  int keepRate = form_touch() && again && !strcmp(v, P.vid) ? P.rateI : 0; /* the same title keeps its speed */
   sync_stop(0);
   memset(&P, 0, sizeof P);
+  P.rateI = keepRate;
+  ph_rate_sync(); /* (the player's side agrees: load() reapplies what it holds) */
   sub_reset();
   P.subReq = subReq;
   P.adxReq = adxReq;
@@ -5477,10 +5482,10 @@ static void on_best_done(const Stream *s, const BestRate *r, void *ud) {
    the player shows that very picture, already loaded, so it always flies in and is never drawn again */
 static char pageLogo[512], pageLogoId[64];
 static void open_title(const char *type, const char *id) {
-  if (P.open && P.rateI) {
+  if (P.open && P.rateI && strcmp(P.id, id)) {
     P.rateI = 0;
     video_set_rate(1);
-  } /* a new film plays at normal speed */
+  } /* another title plays at normal speed (the same one, a source change or a retry, keeps it: prepare() decides) */
   if (bestTok) {
     best_choose_cancel(bestTok);
     bestTok = 0;
@@ -5833,10 +5838,8 @@ static void close_player(int goNext, int goSim) {
     player_touch_cancel();
     ph_gest_restore();
   }
-  if (P.rateI) {
-    P.rateI = 0;
-    video_set_rate(1);
-  }
+  P.rateI = 0;
+  video_set_rate(1); /* (always, on both sides) */
   closeArt = !P.live && P.artA.v > 0.999f;
   closeT0 = now_();
   sx_begin_quick(0); /* the player's logo moves back to the page */
@@ -8663,8 +8666,8 @@ void player_ptr(int type, float x, float y) {
    events' own clock (a slow frame, such as the one that brings the controls in, must not stretch the gap) ---- */
 #define DTAP_MS 300
 static struct {
-  int down, moved, onBar, barLater, lastSide, osdBefore, quick;
-  float x0, y0, ylast, acc;
+  int down, moved, onBar, barLater, lastSide, osdBefore, quick, menuDrag;
+  float x0, y0, ylast, acc, menuOff0;
   unsigned lastUpMs, downMs, gapMs; /* when the last tap on the film lifted (0: no tap to follow); this finger's landing
                                        and how long after that lift */
 } TP;
@@ -8706,6 +8709,9 @@ static struct PhGeo {
 static const float PH_RATES[6] = {
   1, 1.25f, 1.5f, 2, 0.5f, 0.75f
 }; /* a tap on Speed steps through them in this order */
+static void ph_rate_sync(void) {
+  video_set_rate(PH_RATES[P.rateI]);
+}
 static int ph_px(float sp) {
   return (int)(sp * tdp() + 0.5f);
 }
@@ -8924,10 +8930,14 @@ static void ph_geo(void) {
     }
     mw = fmaxf(200 * d, mw + 32 * d + 36 * d + 8 * d);
     float px = PHG.more.x + PHG.more.w - mw, py = PHG.more.y + PHG.more.h + 4 * d;
-    PHG.panel = (PhR){ px, py, mw, PHG.nrow * 48 * d + 8 * d };
+    float full = PHG.nrow * 48 * d + 8 * d, room = H - 12 * d - py, ph = full > room ? fmaxf(room, 56 * d) : full;
+    GS.menuMax = full - ph; /* (short screens: the list scrolls inside the panel) */
+    GS.menuOff = fminf(fmaxf(GS.menuOff, 0), GS.menuMax);
+    PHG.panel = (PhR){ px, py, mw, ph };
     for (int i = 0; i < PHG.nrow; i++)
-      PHG.row[i].r = (PhR){ px, py + 4 * d + i * 48 * d, mw, 48 * d };
-  }
+      PHG.row[i].r = (PhR){ px, py + 4 * d + i * 48 * d - GS.menuOff, mw, 48 * d };
+  } else
+    GS.menuOff = GS.menuMax = 0;
   /* the lock chip, bottom centre */
   if (P.locked) {
     const char *l1 = T("Screen locked"), *l2 = T("Tap to unlock");
@@ -9081,14 +9091,18 @@ static void ph_osd_draw(void) {
     gfx_opacity_push(P.phM.v);
     gfx_rrect(PHG.panel.x, PHG.panel.y, PHG.panel.w, PHG.panel.h, 12 * d, RGBA(24, 24, 28, 240));
     gfx_ring(PHG.panel.x, PHG.panel.y, PHG.panel.w, PHG.panel.h, 12 * d, 1, WHITE_A(30));
+    gfx_clip_push(PHG.panel.x, PHG.panel.y + 2 * d, PHG.panel.w, PHG.panel.h - 4 * d);
     for (int i = 0; i < PHG.nrow; i++) {
       const PhR *r = &PHG.row[i].r;
+      if (r->y + r->h < PHG.panel.y || r->y > PHG.panel.y + PHG.panel.h)
+        continue;
       int pr = ph_px(15);
       text_draw(PHG.row[i].lb, r->x + 16 * d, r->y + (r->h - text_line_height(pr)) / 2, pr, 500, WHITE_A(240), 0, 0,
                 ALIGN_LEFT); /* (the panel is as wide as its longest row: no ellipsis) */
       if (PHG.row[i].on)
         icon_draw("check", r->x + r->w - 16 * d - 20 * d, r->y + 14 * d, 20 * d, ACC);
     }
+    gfx_clip_pop();
     gfx_opacity_pop();
   }
   /* the lock chip */
@@ -9128,9 +9142,19 @@ static void ph_do(const char *id) {
   else
     act(id);
 }
+/* where along the phone's bar a finger is (ptr_hv is the TV's bar, with the TV's margins) */
+static void ph_hv(int on, float x) {
+  on = on && dur() > 0;
+  if (on) {
+    ph_geo();
+    float p = PHG.barW > 0 ? (x - PHG.barX) / PHG.barW : 0;
+    P.hvP = p < 0 ? 0 : p > 1 ? 1 : p;
+  }
+  P.hvOn = on;
+}
 static void ph_bar_down(float x) { /* a finger takes the bar: the knob to it, the seek on its lift */
   P.row = 1;
-  ptr_hv(1, x);
+  ph_hv(1, x);
   P.barDown = 1;
   show_osd(1);
   double du = dur();
@@ -9158,6 +9182,13 @@ static void ph_tap_ctl(int side, int show) {
   if (tlog())
     fprintf(stderr, "[touch] single tap on a side: waits %d ms for a second\n", DTAP_MS);
 }
+/* a tap that reached the film: the controls change (after the window on a side), and it may begin a double tap */
+static void ph_film_tap(int side, int show) {
+  TP.lastUpMs = touch_evt_ms ? touch_evt_ms : 1;
+  TP.lastSide = side;
+  TP.osdBefore = P.osd;
+  ph_tap_ctl(side, show);
+}
 static void ph_tap_fire(void) {
   if (!GS.tapAt)
     return;
@@ -9183,9 +9214,36 @@ static int ph_on_control(float x, float y) {
       return 1;
   return 0;
 }
+/* is this place on one of the skip / next-up prompt's own buttons (the test player_ptr() makes)? */
+static int ph_on_prompt(float x, float y) {
+  if (!(P.prompt.k && PG.prompt))
+    return 0;
+  if (PG.card)
+    return in_box(x, y, PG.prX[0], PG.prY[0], PG.prW[0], PG.prH[0]);
+  for (int i = 0; i < PG.npr && i < P.prompt.nbtn; i++)
+    if (in_box(x, y, PG.prX[i], PG.prY[i], PG.prW[i], PG.prH[i]))
+      return 1;
+  return 0;
+}
 /* a finger that lands on the film itself (no tray, prompt, menu or control under it): it may hold or swipe */
 static int ph_film_ok(float x, float y) {
-  return !P.menu && P.mode != 2 && P.mode != 4 && !(P.prompt.k && PG.prompt) && !ph_on_control(x, y);
+  return !P.menu && P.mode != 2 && P.mode != 4 && !ph_on_prompt(x, y) && !ph_on_control(x, y);
+}
+/* is anything interactive under this place, the bar's band apart (it keeps its own rule)? Only a place with nothing
+   under it can be the film's: a tap on it may seed or carry on a double tap */
+static int ph_interactive(float x, float y) {
+  if (P.menu || P.mode == 2 || P.mode == 4 || ph_on_prompt(x, y))
+    return 1;
+  if (!P.osd)
+    return 0;
+  ph_geo();
+  if (ph_hit(&PHG.pp, x, y) || ph_hit(&PHG.rw, x, y) || ph_hit(&PHG.ff, x, y) || ph_hit(&PHG.back, x, y) ||
+      ph_hit(&PHG.more, x, y))
+    return 1;
+  for (int i = 0; i < PHG.nact; i++)
+    if (ph_hit(&PHG.act[i].r, x, y))
+      return 1;
+  return 0;
 }
 static void ph_hold_end(void) {
   GS.holdOn = 0;
@@ -9256,6 +9314,24 @@ static void ph_swipe_move(float y) {
     GS.swDirty = 1; /* (written once a frame, in the tick) */
   }
 }
+/* the level the finger has reached goes to its own target (brightness or volume), never with no kind */
+static void ph_swipe_write(void) {
+  if (!GS.swDirty)
+    return;
+  GS.swDirty = 0;
+  if (GS.swKind != 1 && GS.swKind != 2)
+    return;
+  int r = GS.swKind == 1 ? plat_brightness_set(GS.swPct) : plat_sysvol_set(GS.swPct);
+  if (GS.swKind == 1 && r > 0)
+    GS.brSet = 1;
+  if (r <= 0 && GS.swKind == 2 && r == -2)
+    GS.swFixed = 1;
+  else if (r <= 0) { /* it will not take: no HUD, nothing */
+    GS.swOn = 0;
+    GS.swKind = -1;
+    GS.hudUntil = 0;
+  }
+}
 static void ph_swipe_end(void) {
   GS.swOn = 0;
   GS.hudUntil = now_() + 0.6;
@@ -9295,19 +9371,7 @@ static void ph_gest_tick(float dt) {
         fprintf(stderr, "[touch] hold: rate 2\n");
     }
   }
-  if (GS.swDirty) {
-    GS.swDirty = 0;
-    int r = GS.swKind == 1 ? plat_brightness_set(GS.swPct) : plat_sysvol_set(GS.swPct);
-    if (GS.swKind == 1 && r > 0)
-      GS.brSet = 1;
-    if (r <= 0 && GS.swKind == 2 && r == -2)
-      GS.swFixed = 1;
-    else if (r <= 0) { /* it will not take: no HUD, nothing */
-      GS.swOn = 0;
-      GS.swKind = -1;
-      GS.hudUntil = 0;
-    }
-  }
+  ph_swipe_write();
   if (!(mo_live(&GS.rpA) || mo_live(&GS.hudA) || mo_live(&GS.chipA) || mo_live(&GS.toA)))
     return;
   double n = now_();
@@ -9460,7 +9524,7 @@ void player_touch(int type, float x, float y) {
        (the controls it showed must not catch it: the bar's band runs the screen's width) */
     TP.downMs = touch_evt_ms;
     TP.gapMs = TP.lastUpMs ? touch_evt_ms - TP.lastUpMs : 0;
-    TP.quick = TP.lastUpMs && ph_side(x) && ph_side(x) == TP.lastSide && TP.gapMs <= DTAP_MS;
+    TP.quick = TP.lastUpMs && ph_side(x) && ph_side(x) == TP.lastSide && TP.gapMs <= DTAP_MS && !ph_interactive(x, y);
     if (TP.quick)
       GS.tapAt = 0; /* (the first tap of a double tap: it never changes the controls) */
     else
@@ -9472,9 +9536,15 @@ void player_touch(int type, float x, float y) {
       player_ptr(0, x, y); /* (a tray: the row under the finger is pointed at, not picked: a drag moves through its
                               column, a lift picks it) */
     int band = 0;
-    if (P.osd && P.mode != 2 && P.mode != 4 && !P.menu) {
+    if (P.osd && P.mode != 2 && P.mode != 4 && !P.menu && !ph_on_prompt(x, y)) {
       ph_geo();
       band = ph_hit(&PHG.band, x, y);
+    }
+    TP.menuDrag = 0;
+    if (P.menu) {
+      ph_geo();
+      TP.menuDrag = GS.menuMax > 0 && ph_hit(&PHG.panel, x, y); /* (a drag from inside the panel scrolls its list) */
+      TP.menuOff0 = GS.menuOff;
     }
     /* on the bar's band, a finger that may be a double tap's second tap only takes the bar if it moves */
     TP.onBar = band && !TP.quick;
@@ -9507,8 +9577,12 @@ void player_touch(int type, float x, float y) {
     }
     if (GS.swOn && !GS.holdOn)
       ph_swipe_move(y);
+    if (TP.menuDrag) {
+      GS.menuOff = fminf(fmaxf(TP.menuOff0 + (TP.y0 - y), 0), GS.menuMax);
+      return;
+    }
     if (TP.onBar) {
-      ptr_hv(1, x);
+      ph_hv(1, x);
       double du = dur();
       if (du > 0) {
         P.seekT = P.hvP * du;
@@ -9537,7 +9611,9 @@ void player_touch(int type, float x, float y) {
   if (!TP.down)
     return;
   TP.down = 0;
+  TP.menuDrag = 0;
   GS.arm = 0;
+  ph_swipe_write(); /* (a motion and the lift before the tick: the last level is written now, to its own target) */
   if (GS.swOn)
     ph_swipe_end();
   GS.swKind = 0;
@@ -9549,14 +9625,14 @@ void player_touch(int type, float x, float y) {
   if (TP.onBar) {
     P.scrub = 0;
     TP.lastUpMs = 0;
-    ptr_hv(1, x);
+    ph_hv(1, x);
     double du = dur();
     if (du > 0) {
       P.seekT = P.hvP * du;
       commit_seek();
     }
     P.barDown = 0;
-    ptr_hv(0, x);
+    ph_hv(0, x);
     arm_hide();
     return;
   }
@@ -9588,15 +9664,13 @@ void player_touch(int type, float x, float y) {
     }
     return;
   }
-  TP.lastUpMs = touch_evt_ms ? touch_evt_ms : 1;
-  TP.lastSide = side;
-  TP.osdBefore = P.osd;
+  TP.lastUpMs = 0; /* (only a tap that reaches the film seeds a double tap: set where it does) */
   if (P.mode == 2) {
     player_ptr(1, x, y);
     player_ptr(2, x, y);
     return;
   } /* a tray: the row picked, or beside it, the tray closed */
-  if (P.mode == 4 || (P.prompt.k && PG.prompt)) {
+  if (P.mode == 4 || ph_on_prompt(x, y)) {
     player_ptr(1, x, y);
     player_ptr(2, x, y);
     return;
@@ -9605,7 +9679,7 @@ void player_touch(int type, float x, float y) {
     ph_geo();
     if (P.menu) { /* the menu takes the tap: a row does its thing, anywhere outside the panel closes it */
       for (int i = 0; i < PHG.nrow; i++)
-        if (ph_hit(&PHG.row[i].r, x, y)) {
+        if (ph_hit(&PHG.row[i].r, x, y) && ph_hit(&PHG.panel, x, y)) {
           const char *id = PHG.row[i].id;
           P.menu = 0;
           ph_do(id);
@@ -9641,16 +9715,17 @@ void player_touch(int type, float x, float y) {
         ph_do(PHG.act[i].id);
         return;
       }
-    ph_tap_ctl(side, 0);
+    ph_film_tap(side, 0);
     return;
   }
-  ph_tap_ctl(side, 1);
+  ph_film_tap(side, 1);
 }
 void player_touch_cancel(void) {
   if (tlog())
     fprintf(stderr, "[touch] cancelled: down %d, on the bar %d, hold %d, swipe %d, tap waiting %d\n", TP.down, TP.onBar,
             GS.holdOn, GS.swOn, GS.tapAt != 0);
   TP.down = 0;
+  TP.menuDrag = 0;
   TP.lastUpMs = 0;
   P.scrub = 0;
   if (TP.onBar) {
@@ -9662,6 +9737,7 @@ void player_touch_cancel(void) {
      it was set). A run of double-tap steps already asked for lands on its own */
   GS.tapAt = 0;
   GS.arm = 0;
+  GS.swDirty = 0; /* (a cancelled swipe: its pending level is dropped) */
   GS.swKind = 0;
   GS.pinch = 0;
   if (GS.holdOn)

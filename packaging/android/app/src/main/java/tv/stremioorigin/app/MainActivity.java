@@ -121,11 +121,11 @@ public class MainActivity extends SDLActivity {
         return c.getSafeInsetTop() + "," + c.getSafeInsetBottom() + "," + c.getSafeInsetLeft() + "," + c.getSafeInsetRight();
     }
     /* brightness: this window's, -1 following the system. One pending value and one posted runnable: a drag never floods the UI thread */
-    static volatile int brightWant = -2, volWant = -2;
+    static final java.util.concurrent.atomic.AtomicInteger brightWant = new java.util.concurrent.atomic.AtomicInteger(-2), volWant = new java.util.concurrent.atomic.AtomicInteger(-2);
     static final java.util.concurrent.atomic.AtomicBoolean brightPosted = new java.util.concurrent.atomic.AtomicBoolean(), volPosted = new java.util.concurrent.atomic.AtomicBoolean();
     public static int uiBrightnessGet() {
         final MainActivity a = self; if (a == null) return -1;
-        int w = brightWant; if (w >= 0) return w;
+        int w = brightWant.get(); if (w >= 0) return w;
         float b = a.getWindow().getAttributes().screenBrightness;
         if (b >= 0) return Math.round(b * 100);
         try { return Math.round(android.provider.Settings.System.getInt(a.getContentResolver(), android.provider.Settings.System.SCREEN_BRIGHTNESS) * 100f / 255f); }
@@ -133,21 +133,28 @@ public class MainActivity extends SDLActivity {
     }
     public static void uiBrightnessSet(final int pct) {
         final MainActivity a = self; if (a == null) return;
-        brightWant = pct < 0 ? -1 : Math.min(100, pct);
+        brightWant.set(pct < 0 ? -1 : Math.min(100, pct));
+        postBrightness(a);
+    }
+    /* one runnable at a time; a value that arrives while it applies one is posted again after it, never lost */
+    static void postBrightness(final MainActivity a) {
         if (!brightPosted.compareAndSet(false, true)) return;
         a.runOnUiThread(() -> {
+            int v = brightWant.get();
+            if (v != -2) {
+                WindowManager.LayoutParams lp = a.getWindow().getAttributes();
+                lp.screenBrightness = v < 0 ? WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE : Math.max(0.01f, Math.min(1f, v / 100f));
+                a.getWindow().setAttributes(lp);
+                brightWant.compareAndSet(v, -2);   // applied (unless a newer one came meanwhile): read the window again from now on
+            }
             brightPosted.set(false);
-            int v = brightWant; if (v == -2) return;
-            WindowManager.LayoutParams lp = a.getWindow().getAttributes();
-            lp.screenBrightness = v < 0 ? WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE : Math.max(0.01f, Math.min(1f, v / 100f));
-            a.getWindow().setAttributes(lp);
-            if (brightWant == v) brightWant = -2;   // applied: read the window again from now on
+            if (brightWant.get() != -2) postBrightness(a);
         });
     }
     static android.media.AudioManager audio(MainActivity a) { return (android.media.AudioManager) a.getSystemService(Context.AUDIO_SERVICE); }
     public static int uiVolumeGet() {
         final MainActivity a = self; if (a == null) return -1;
-        int w = volWant; if (w >= 0) return w;
+        int w = volWant.get(); if (w >= 0) return w;
         android.media.AudioManager am = audio(a); if (am == null) return -1;
         int max = am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC);
         return max > 0 ? Math.round(am.getStreamVolume(android.media.AudioManager.STREAM_MUSIC) * 100f / max) : -1;
@@ -157,16 +164,22 @@ public class MainActivity extends SDLActivity {
         final MainActivity a = self; if (a == null) return 0;
         final android.media.AudioManager am = audio(a); if (am == null) return 0;
         if (am.isVolumeFixed()) return -2;
-        volWant = Math.max(0, Math.min(100, pct));
-        if (!volPosted.compareAndSet(false, true)) return 1;
-        a.runOnUiThread(() -> {
-            volPosted.set(false);
-            int v = volWant; if (v < 0) return;
-            int max = am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC);
-            try { am.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, Math.round(v * max / 100f), 0); } catch (SecurityException e) { Log.w(TAG, "volume", e); }
-            if (volWant == v) volWant = -2;   // applied: the system's own level from now on (its volume keys move it too)
-        });
+        volWant.set(Math.max(0, Math.min(100, pct)));
+        postVolume(a, am);
         return 1;
+    }
+    static void postVolume(final MainActivity a, final android.media.AudioManager am) {
+        if (!volPosted.compareAndSet(false, true)) return;
+        a.runOnUiThread(() -> {
+            int v = volWant.get();
+            if (v >= 0) {
+                int max = am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC);
+                try { am.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, Math.round(v * max / 100f), 0); } catch (SecurityException e) { Log.w(TAG, "volume", e); }
+                volWant.compareAndSet(v, -2);   // applied (unless a newer one came meanwhile): the system's own level from now on
+            }
+            volPosted.set(false);
+            if (volWant.get() != -2) postVolume(a, am);
+        });
     }
     /* the system's gesture edges in window pixels: "left,top,right,bottom" */
     public static String uiGestureInsets() {

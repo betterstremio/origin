@@ -409,6 +409,6 @@ int plat_sysvol_set(int pct) {
 void plat_gesture_insets(int *left, int *top, int *right, int *bottom) {
   *left = *top = *right = *bottom = 0;
 }
-int plat_touch_cancelled(void) {
+unsigned plat_touch_cancel_event(void) {
   return 0;
 }

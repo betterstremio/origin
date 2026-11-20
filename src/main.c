@@ -657,7 +657,7 @@ static int fingerOn, mouseFinger;
 /* while a film plays, a second finger is followed too (a pinch): its id, both fingers' layout positions, and the wait
    for every finger to lift once the pinch is over or the system took a finger away, so the one left down is no tap */
 static SDL_FingerID fingerId2;
-static int finger2On, fingerSwallow;
+static int finger2On, fingerSwallow, cancelNext; /* cancelNext: the system took the fingers; their lifts follow */
 static float fingerX[2], fingerY[2];
 int main(int argc, char **argv) {
   scrollin_launch_params(argc, argv);
@@ -899,6 +899,7 @@ int main(int argc, char **argv) {
   if (stress_on())
     pace_init();
 #endif
+  unsigned cancelEv = plat_touch_cancel_event();
   while (!app_quitting()) {
     SDL_Event e;
     Uint32 tEv0 = SDL_GetTicks();
@@ -929,7 +930,10 @@ int main(int argc, char **argv) {
           app_key(k, e.type == SDL_KEYDOWN, e.key.repeat);
       } else if (e.type == SDL_TEXTINPUT)
         app_text(e.text.text);
-      else if (form_touch() && (e.type == SDL_APP_WILLENTERBACKGROUND || e.type == SDL_APP_DIDENTERBACKGROUND)) {
+      else if (form_touch() && cancelEv && e.type == cancelEv) { /* (queued ahead of the lifts SDL makes of it) */
+        if (fingerOn || finger2On || fingerSwallow)
+          cancelNext = 1;
+      } else if (form_touch() && (e.type == SDL_APP_WILLENTERBACKGROUND || e.type == SDL_APP_DIDENTERBACKGROUND)) {
         phone_peek_shut_now(); /* a phone sent away: the card and its preview are gone when it comes back */
         if (player_open())
           player_touch_cancel(); /* (and what a finger on the film started: a hold, a swipe, a tap waiting) */
@@ -943,8 +947,6 @@ int main(int argc, char **argv) {
         to_layout(win, (int)(e.tfinger.x * ww), (int)(e.tfinger.y * wh), &x, &y);
         touch_evt_ms = e.tfinger.timestamp;
         if (e.type == SDL_FINGERDOWN) {
-          if (!fingerOn && !finger2On)
-            plat_touch_cancelled(); /* (a cancel left over from a touch nobody followed) */
           if (fingerOn && !finger2On && !fingerSwallow && player_open()) { /* a second finger on the film */
             finger2On = 1;
             fingerId2 = e.tfinger.fingerId;
@@ -980,14 +982,14 @@ int main(int argc, char **argv) {
           continue;
         }
         /* a lift */
-        int cancelled = plat_touch_cancelled();
+        int cancelled = cancelNext;
         fingerX[which] = x;
         fingerY[which] = y;
         if (cancelled) { /* the system took the fingers away: SDL reports them as lifts, which act on nothing */
           if (finger2On)
             player_touch2(2, fingerX[0], fingerY[0], fingerX[1], fingerY[1]);
           touch_cancel();
-          fingerOn = finger2On = fingerSwallow = 0;
+          fingerOn = finger2On = fingerSwallow = cancelNext = 0;
         } else if (finger2On) { /* the pinch ends; the finger left down is no tap */
           player_touch2(2, fingerX[0], fingerY[0], fingerX[1], fingerY[1]);
           if (which == 0) {
