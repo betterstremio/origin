@@ -278,9 +278,13 @@ const char *plat_device_name(void) {
 int plat_text_input(void) {
   return getenv("SB_NO_TEXTINPUT") ? 0 : 1;
 } /* a keyboard types; SB_NO_TEXTINPUT=1 shows the TV's own */
+/* Background QoS is not a lower priority but a different machine: efficiency cores only, with its disk and network
+   throttled. At nice 10 it held the picture workers (what is on screen) and posters filled 3-12x slower than at
+   Utility. Only the truly deferrable (nice 15: the encoder, store writes) go there; the rest is Utility, as Windows
+   only lowers the priority */
 void plat_thread_background(int nice) {
   if (nice > 0)
-    pthread_set_qos_class_self_np(nice >= 10 ? QOS_CLASS_BACKGROUND : QOS_CLASS_UTILITY, 0);
+    pthread_set_qos_class_self_np(nice >= 15 ? QOS_CLASS_BACKGROUND : QOS_CLASS_UTILITY, 0);
 }
 int plat_mem_total_mb(void) {
   if (getenv("SB_MEMMB"))
