@@ -26,6 +26,10 @@ static const char *tv_name(void) {
   return plat_device_name();
 }
 static void on_play(const CastPlay *p) {
+  if (app_away()) {
+    fprintf(stderr, "[life] cast play ignored while away\n");
+    return;
+  }
   snprintf(castTitle, sizeof castTitle, "%s", p->title);
   Stream s;
   memset(&s, 0, sizeof s);
@@ -48,6 +52,8 @@ static void on_play(const CastPlay *p) {
   player_play_at(&s, type, id, vid, p->pos); /* pos 0: where it was left, as a play on the TV */
 }
 static void on_cmd(int cmd, double pos) {
+  if (app_away())
+    return;
   player_cast(cmd, pos);
 }
 static int on_state(double *pos, double *dur, char *title, int cap) {
@@ -57,6 +63,8 @@ static int on_state(double *pos, double *dur, char *title, int cap) {
   return s;
 } /* (no title known here: the phone's own) */
 static void on_key(int k) {
+  if (app_away())
+    return;
   if (k == CAST_K_HOME) {
     if (player_open())
       player_cast(4, 0);

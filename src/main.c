@@ -910,6 +910,8 @@ int main(int argc, char **argv) {
                   e.type == SDL_KEYDOWN || e.type == SDL_KEYUP ? e.key.keysym.scancode : 0,
                   e.type == SDL_KEYDOWN || e.type == SDL_KEYUP ? e.key.keysym.sym : 0,
                   e.type == SDL_WINDOWEVENT ? e.window.event : 0);
+      if (app_away() && e.type != SDL_QUIT)
+        continue; /* lifecycle return was already reflected by the event watch; do not let queued input start playback */
       if (e.type == SDL_QUIT) {
         fprintf(stderr, "[exit] SDL_QUIT\n");
         app_quit();
@@ -1105,6 +1107,45 @@ int main(int argc, char **argv) {
         desktop_rate(win);
 #endif
     }
+    /* Development lifecycle proof: minimise at a drawn frame and restore after a wall-clock interval. */
+#if SB_WINDOWED
+    {
+      static int minAt = -2;
+      static Uint32 restoreAt;
+      if (minAt == -2)
+        minAt = getenv("SB_MINIMIZE_AT") ? atoi(getenv("SB_MINIMIZE_AT")) : -1;
+      if (minAt >= 0 && frame == minAt) {
+        SDL_MinimizeWindow(win);
+        minAt = -1;
+        Uint32 ms = getenv("SB_RESTORE_AFTER_MS") ? (Uint32)atoi(getenv("SB_RESTORE_AFTER_MS")) : 0;
+        restoreAt = ms ? SDL_GetTicks() + ms : 0;
+        fprintf(stderr, "[dev] minimised at frame %d%s\n", frame, ms ? ", restore scheduled" : "");
+      }
+      if (restoreAt && SDL_GetTicks() >= restoreAt) {
+        SDL_RestoreWindow(win);
+        restoreAt = 0;
+        fprintf(stderr, "[dev] restore requested\n");
+      }
+    }
+#endif
+    app_away_tick();
+    if (app_away()) {
+      /* No app/UI tick or GL work while away. These are the callbacks that must still make progress. */
+      net_pump();
+      store_pump();
+      p2p_pump();
+      plat_luna_pump();
+      castlink_tick(0);
+      if (player_open())
+        video_pump();
+      static Uint32 awayLog; /* once a minute: a TV left in the back for hours must not fill the kept log */
+      if (!awayLog || SDL_GetTicks() - awayLog >= 60000) {
+        awayLog = SDL_GetTicks() | 1;
+        fprintf(stderr, "[life] away idle: no frames drawn; waiting for events\n");
+      }
+      SDL_WaitEventTimeout(NULL, 75);
+      continue;
+    }
 #if SB_WINDOWED
     if (plat_text_input() && !SDL_IsTextInputActive())
       SDL_StartTextInput(); /* (the sign-in page stops it when a field closes) */
@@ -1246,12 +1287,6 @@ int main(int argc, char **argv) {
     text_frame_begin();
     app_tick(dt);
     splash_tick(dt);
-#if SB_WINDOWED
-    if (SDL_GetWindowFlags(win) & SDL_WINDOW_MINIMIZED) {
-      SDL_WaitEventTimeout(NULL, 50);
-      continue;
-    } /* minimised: nothing drawn; the loop wakes for events, or every 50 ms for the network and timers */
-#endif
     Uint32 tA = SDL_GetTicks();
     gfx_begin(player_live() ? RGBA(0, 0, 0, 0) : PAGE); /* the video plane shows through the transparent window */
     {

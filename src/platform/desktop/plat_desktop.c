@@ -95,18 +95,23 @@ void plat_thread_background(int nice) {
 int plat_mem_total_mb(void) {
   return getenv("SB_MEMMB") ? atoi(getenv("SB_MEMMB")) : 0;
 } /* SB_MEMMB=641: act like a small TV */
-/* the window minimised and brought back stands in for the TV sending the app away and back (focus changes
-   on the Mac are only clicks around the desktop) */
+/* The window being minimised or hidden stands in for the app leaving the front. Focus changes alone do not:
+   a desktop film may be on a second monitor or merely covered by another window. */
 int plat_lifecycle(const SDL_Event *e) {
-  if (e->type == SDL_APP_DIDENTERFOREGROUND)
-    return 1;
-  if (e->type == SDL_APP_DIDENTERBACKGROUND)
-    return -1;
+  static int away;
+  int out = e->type == SDL_APP_WILLENTERBACKGROUND || e->type == SDL_APP_DIDENTERBACKGROUND;
+  int in = e->type == SDL_APP_WILLENTERFOREGROUND || e->type == SDL_APP_DIDENTERFOREGROUND;
   if (e->type == SDL_WINDOWEVENT) {
-    if (e->window.event == SDL_WINDOWEVENT_RESTORED)
-      return 1;
-    if (e->window.event == SDL_WINDOWEVENT_MINIMIZED)
-      return -1;
+    out |= e->window.event == SDL_WINDOWEVENT_MINIMIZED || e->window.event == SDL_WINDOWEVENT_HIDDEN;
+    in |= e->window.event == SDL_WINDOWEVENT_RESTORED || e->window.event == SDL_WINDOWEVENT_SHOWN;
+  }
+  if (out) {
+    away = 1;
+    return -1;
+  }
+  if (in && away) {
+    away = 0;
+    return 1;
   }
   return 0;
 }

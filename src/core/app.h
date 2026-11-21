@@ -64,6 +64,10 @@ void app_overlay_keep(Screen *s);
                                                                                                                   first
                                                                                                                 */
 void app_init(void);
+int app_away(void); /* the process is behind another app, hidden, minimised or screen-off */
+void app_away_set(int away); /* platform lifecycle input; the transition is handled on the app thread */
+int app_away_take_leave(void); /* 1 once for each transition to away */
+void app_away_tick(void); /* stop private playback once, before the away loop waits */
 void app_register(Scr s, Screen *sc);
 void app_go(Scr s, const void *params, int noStack);
 void app_back(void);

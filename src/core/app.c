@@ -37,6 +37,7 @@
 #include "core/form.h"
 #include "core/touch.h"
 #include "screens/phone.h"
+#include "core/video.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -2408,6 +2409,44 @@ void app_init(void) {
   castlink_start();
 }
 static void amb_bake(void);
+static SDL_atomic_t awayState, awayLeave;
+static int awayHandled;
+
+int app_away(void) {
+  return SDL_AtomicGet(&awayState) != 0;
+}
+
+void app_away_set(int away) {
+  int old = SDL_AtomicSet(&awayState, away != 0);
+  if (away && !old)
+    SDL_AtomicSet(&awayLeave, 1);
+}
+
+int app_away_take_leave(void) {
+  return SDL_AtomicCAS(&awayLeave, 1, 0);
+}
+
+void app_away_tick(void) {
+  if (app_away_take_leave() || (app_away() && !awayHandled)) {
+    int stream = player_away();
+    btr_release();
+    phone_peek_shut_now();
+    saver_stop();
+    img_background();
+    sound_quiet(1);
+    awayHandled = 1;
+    fprintf(stderr, "[life] away: trailer stopped/unloaded, stream %s, drawing disabled\n",
+            stream ? "paused" : "not playing");
+  }
+  if (app_away())
+    return;
+  if (awayHandled) {
+    awayHandled = 0;
+    sound_quiet(player_open());
+    fprintf(stderr, "[life] back: one redraw on return; playback stays paused until Play\n");
+  }
+}
+
 void app_tick(float dt) {
   DT = dt;
   NOW = SDL_GetTicks() / 1000.0;
