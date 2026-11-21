@@ -54,7 +54,7 @@ static void tick(float dt) {
 }
 static void draw(void) {
   float bottom = phone_bottom();
-  float top = phone_top_inset();
+  float top = phone_content_top();
   gfx_rect(0, 0, SB_W, SB_H, PAGE);
   text_draw(T("Library"), PH_M, top + PH_TOPBAR / 2 - text_line_height(22) / 2.0f, 22, 800, PH_TXT, -0.4f, SB_W / 2,
             ALIGN_LEFT);
