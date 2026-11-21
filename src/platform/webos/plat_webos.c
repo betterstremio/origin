@@ -293,8 +293,7 @@ int plat_lifecycle(const SDL_Event *e) {
     switch (e->window.event) {
     case SDL_WINDOWEVENT_FOCUS_LOST:
       focusLost = 1;
-      if (fgUs == 0 || !foregroundSub)
-        out = 1; /* SAM already said another app is in front (it can answer before the focus goes), or no SAM */
+      out = 1; /* anything over Origin (another app, the Home launcher, the quick settings) pauses it (user's call) */
       break;
     case SDL_WINDOWEVENT_HIDDEN:
     case SDL_WINDOWEVENT_MINIMIZED:
