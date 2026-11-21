@@ -16,6 +16,7 @@
 #define PH_M 16.0f /* the page's side margin */
 #define PH_TOPBAR 56.0f /* the top bar */
 #define PH_TABBAR 60.0f /* the tab bar at the bottom */
+#define PH_CHIPS 48.0f /* the chips under the top bar on Home and the tab pages */
 #define PH_R 8.0f /* a card's corners */
 /* text sizes */
 #define PH_TX_H1 26
@@ -30,9 +31,11 @@
 void phone_register(void); /* main.c: the phone's screens in place of the TV's (a phone or a tablet only) */
 int phone_owns(int scr); /* that screen is the phone's own (else a TV page shown as it is, for now) */
 void phone_bars_draw(void); /* the tab bar, over the page (app.c) */
-float phone_bottom(void); /* where the page ends: the tab bar's top */
+float phone_top_inset(void); /* status bar/cutout room, in dp; shared by every phone page */
+float phone_bottom(void); /* where the page ends: the tab bar's top and navigation-bar safe area */
 int phone_back(void); /* Back on a phone (app.c): 1 when handled */
 void phone_go_tab(int scr); /* a tab: the page stack starts again from it */
+void phone_tab_gone(int dtype); /* Settings hid that tab (settings.c): if it is open or Back's page, Home is shown */
 
 /* pieces every phone page draws */
 int phone_art(const char *url, float x, float y, float w, float h,

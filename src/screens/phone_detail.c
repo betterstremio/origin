@@ -450,10 +450,10 @@ static float episodes_draw(float y, float bottom) {
   return y;
 }
 static void draw(void) {
-  float bottom = SB_H;
+  float top = phone_top_inset(), bottom = phone_bottom();
   gfx_rect(0, 0, SB_W, SB_H, PAGE);
-  touch_region(0, 0, SB_W, bottom, NULL, &D.page);
-  float y0 = -D.page.off, y = y0, W = SB_W;
+  touch_region(0, top, SB_W, bottom - top, NULL, &D.page);
+  float y0 = top - D.page.off, y = y0, W = SB_W;
   /* the picture, its lower half fading into the page; it moves at half speed as the page scrolls */
   float ph = W * 9 / 16;
   if (ph > SB_H * 0.45f)
@@ -463,7 +463,7 @@ static void draw(void) {
   const char *bu = sb_bg_large(&D.it, bb, sizeof bb);
   if (!*bu)
     bu = sb_poster_of(&D.it, bb, sizeof bb);
-  gfx_clip_push(0, 0, W, y0 + ph > 0 ? y0 + ph : 0);
+  gfx_clip_push(0, top, W, y0 + ph > top ? y0 + ph - top : 0);
   phone_art(bu, 0, -par, W, ph, 0);
   gfx_clip_pop();
   gfx_rrect_v(0, y0 + ph * 0.45f, W, ph * 0.55f + 1, 0, PAGE & 0x00ffffffu, PAGE);
@@ -553,15 +553,15 @@ static void draw(void) {
     if (k > 1)
       k = 1;
     if (k > 0) {
-      gfx_rect(0, 0, W, PH_TOPBAR, RGBA(18, 18, 20, (int)(255 * k)));
-      text_draw(D.it.name, 60, PH_TOPBAR / 2 - text_line_height(PH_TX_ROW) / 2.0f, PH_TX_ROW, 700,
+      gfx_rect(0, top, W, PH_TOPBAR, RGBA(18, 18, 20, (int)(255 * k)));
+      text_draw(D.it.name, 60, top + PH_TOPBAR / 2 - text_line_height(PH_TX_ROW) / 2.0f, PH_TX_ROW, 700,
                 RGBA(0xf2, 0xf1, 0xf6, (int)(255 * k)), 0, W - 76, ALIGN_LEFT);
-      hit_shield(0, 0, W, PH_TOPBAR);
+      hit_shield(0, top, W, PH_TOPBAR);
     }
     int pr = touch_pressed(NULL, back_act, 0, 0);
-    gfx_circle(PH_M + 18, PH_TOPBAR / 2, 18, pr ? WHITE_A(70) : BLACK_A(110));
-    icon_draw("ph_back", PH_M + 6, PH_TOPBAR / 2 - 12, 24, PH_TXT);
-    hit_act(0, 0, 64, PH_TOPBAR, back_act, 0, 0);
+    gfx_circle(PH_M + 18, top + PH_TOPBAR / 2, 18, pr ? WHITE_A(70) : BLACK_A(110));
+    icon_draw("ph_back", PH_M + 6, top + PH_TOPBAR / 2 - 12, 24, PH_TXT);
+    hit_act(0, top, 64, PH_TOPBAR, back_act, 0, 0);
   }
 }
 static int key(int k) {

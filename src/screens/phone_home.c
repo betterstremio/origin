@@ -28,12 +28,39 @@ typedef struct {
   int r0, r1, entered;
   float lastX, lastY;
   Item hero;
-  int hasHero;
+  int hasHero, noHero;
   Tween heroA;
 } Ph;
-static Ph P[3] = { { .kind = 0 }, { .kind = 1 }, { .kind = 2 } }; /* Home, Discover, a collection tile's page */
+/* one page each, every one keeping its own scroll and row positions: Home, a collection tile's page, Shows, Movies,
+   the Catalogue, Anime (the board's kind: 0 Home, 2 a collection, 1 the tabs, which board.c picks by the type) */
+enum { PG_HOME, PG_COL, PG_SHOWS, PG_MOVIES, PG_CAT, PG_ANIME, NPG };
+static Ph P[NPG] = { { .kind = 0 },
+                     { .kind = 2 },
+                     { .kind = 1 },
+                     { .kind = 1 },
+                     { .kind = 1, .noHero = 1 },
+                     { .kind = 1 } };
+static Scroller chipsS;
+static int tabGone; /* a tab was hidden in Settings while its page was open or the one Back returns to */
 static Ph *cur(void) {
-  return SCR == SCR_DISC ? &P[1] : SCR == SCR_COL ? &P[2] : &P[0];
+  if (SCR == SCR_COL)
+    return &P[PG_COL];
+  if (SCR != SCR_DISC)
+    return &P[PG_HOME];
+  switch (board_disc_type()) {
+  case 2:
+    return &P[PG_MOVIES];
+  case 3:
+    return &P[PG_CAT];
+  case 4:
+    return &P[PG_ANIME];
+  default:
+    return &P[PG_SHOWS];
+  }
+}
+/* where the page's own content begins: under the top bar and, on Home and the tab pages, the chips */
+static float top_h(const Ph *p) {
+  return phone_top_inset() + PH_TOPBAR + (p->kind == 2 ? 0 : PH_CHIPS);
 }
 
 /* the sizes, from the canvas: about three and a third posters across a phone, more on a tablet */
@@ -138,14 +165,16 @@ static void pick_hero(Ph *p) {
   const Item *f[8];
   int n = board_ph_feat(p->kind, f, 8);
   const Item *h = n ? f[0] : NULL;
-  if (!h)
+  if (!h && !p->noHero)
     for (int i = 0, nr = board_ph_nrows(p->kind); i < nr && !h; i++) {
       BoardRow r;
       if (board_ph_row(p->kind, i, &r) && !r.hidden && !r.wide && !r.ntiles && r.n)
         h = &r.items[0];
     }
-  if (!h)
+  if (!h) {
+    p->hasHero = 0; /* (the Catalogue: rows alone) */
     return;
+  }
   if (!p->hasHero || strcmp(p->hero.id, h->id)) {
     p->hero = *h;
     p->hasHero = 1;
@@ -154,14 +183,20 @@ static void pick_hero(Ph *p) {
   }
 }
 
-static void enter_k(int kind) {
-  Ph *p = &P[kind];
-  board_ph_enter(kind);
-  if (p->gen != board_ph_gen(kind)) {
-    p->gen = board_ph_gen(kind);
-    for (int i = 0; i < MAXR; i++)
-      scroller_set(&p->rows[i], 0);
-  }
+/* the board made its rows again: this page's hero and row positions go, its offsets stay inside the new content */
+static void ph_rebuilt(Ph *p) {
+  p->gen = board_ph_gen(p->kind);
+  for (int i = 0; i < MAXR; i++)
+    scroller_set(&p->rows[i], 0);
+  p->hasHero = 0;
+  p->r0 = p->r1 = 0;
+  if (p->page.off < 0)
+    scroller_set(&p->page, 0);
+}
+static void enter_k(Ph *p) {
+  board_ph_enter(p->kind);
+  if (p->gen != board_ph_gen(p->kind))
+    ph_rebuilt(p);
   if (!p->entered) {
     p->entered = 1;
     scroller_set(&p->page, 0);
@@ -169,11 +204,11 @@ static void enter_k(int kind) {
 }
 static void enter_home(const void *a) {
   (void)a;
-  enter_k(0);
+  enter_k(&P[PG_HOME]);
 }
 static void enter_disc(const void *a) {
   (void)a;
-  enter_k(1);
+  enter_k(cur());
 }
 static char colTitle[96];
 static void enter_col(const void *a) {
@@ -182,10 +217,10 @@ static void enter_col(const void *a) {
     snprintf(colTitle, sizeof colTitle, "%s", f ? f->title : "");
   }
   colScreen.enter(a);
-  P[2].entered = 0;
-  P[2].gen = 0;
-  enter_k(2);
-  P[2].hasHero = 0;
+  P[PG_COL].entered = 0;
+  P[PG_COL].gen = 0;
+  enter_k(&P[PG_COL]);
+  P[PG_COL].hasHero = 0;
 }
 static void back_act(int a, int b) {
   (void)a;
@@ -194,23 +229,51 @@ static void back_act(int a, int b) {
 }
 void phone_home_top(int scr) {
   if (scr == SCR_HOME || scr == SCR_DISC)
-    scroller_to(&P[scr == SCR_DISC].page, 0);
+    scroller_to(&(scr == SCR_DISC ? cur() : &P[PG_HOME])->page, 0);
+}
+/* Settings hid a tab that is open (or that Back would return to): the next time that page is shown, Home is */
+void phone_tab_gone(int dtype) {
+  if (board_disc_type() == dtype)
+    tabGone = 1;
+}
+/* the chips: a tap on one opens its page; from Home it is a new page (Back then lands on Home), from another tab it
+   replaces the page */
+static void chip_act(int t, int b) {
+  (void)b;
+  tabGone = 0;
+  if (SCR == SCR_DISC && board_disc_type() == t)
+    return;
+  board_disc_type_set(t);
+  if (SCR == SCR_HOME)
+    phone_go_tab(SCR_DISC);
+  else
+    app_go(SCR_DISC, NULL, 1);
+}
+static void chips_close(int a, int b) {
+  (void)a;
+  (void)b;
+  phone_go_tab(SCR_HOME);
 }
 
 static void tick(float dt) {
+  if (SCR == SCR_DISC && tabGone) {
+    tabGone = 0;
+    phone_go_tab(SCR_HOME);
+    return;
+  }
   Ph *p = cur();
   int kind = p->kind;
-  if (p->gen != board_ph_gen(kind)) {
-    p->gen = board_ph_gen(kind);
-    for (int i = 0; i < MAXR; i++)
-      scroller_set(&p->rows[i], 0);
-  }
+  if (p->gen != board_ph_gen(kind))
+    ph_rebuilt(p);
   board_ph_tick(kind, p->r0, p->r1, dt);
+  if (p->gen != board_ph_gen(kind)) /* (the tick can make the rows again) */
+    ph_rebuilt(p);
   scroller_tick(&p->page, dt);
   for (int i = 0; i < MAXR; i++)
     scroller_tick(&p->rows[i], dt);
   if (p->kind != 2)
     pick_hero(p);
+  scroller_tick(&chipsS, dt);
   tween_tick(&p->heroA, dt); /* (a tile's page: its rows alone) */
 }
 
@@ -221,7 +284,7 @@ static float hero_draw(Ph *p, float y) {
   const Item *it = &p->hero;
   int land = SB_W >= 600 || SB_W > SB_H * 0.8f; /* a tablet or a phone turned: the wide picture */
   float x = 24, w = SB_W - 48, h = land ? w * 0.5f : w * 1.42f;
-  float cap = (phone_bottom() - PH_TOPBAR) * (land ? 0.5f : 0.72f);
+  float cap = (phone_bottom() - top_h(p)) * (land ? 0.5f : 0.72f);
   if (h > cap) {
     h = cap;
     if (!land) {
@@ -229,7 +292,7 @@ static float hero_draw(Ph *p, float y) {
       x = (SB_W - w) / 2;
     }
   }
-  float top = y + PH_TOPBAR + 8, a = p->heroA.v;
+  float top = y + top_h(p) + 8, a = p->heroA.v;
   /* its colours wash down the page behind it */
   uint32_t tint[4];
   char pb[512], lb[512];
@@ -332,10 +395,59 @@ static void row_draw(Ph *p, int ri, const BoardRow *r, float y) {
     else
       hit_add(px, cy, cw, ch, NULL, card_tap, ri, i);
   }
+  if (n && i1 >= 0)
+    board_ph_seen(p->kind, ri, i1);
   if (r->n && i1 >= r->n - 6)
     board_ph_near_end(p->kind, ri, i1);
   if (a < 1)
     gfx_opacity_pop();
+}
+/* the chips under the top bar: Shows, Movies, Anime, Catalogue (a tab page starts with a round X, back to Home) */
+static void chips_draw(Ph *p, int onTab, float k) {
+  float ti = phone_top_inset(), y = ti + PH_TOPBAR + (PH_CHIPS - 36) / 2, x0 = PH_M;
+  static const struct {
+    int t;
+    const char *w;
+  } C[] = { { 1, "Shows" }, { 2, "Movies" }, { 4, "Anime" }, { 3, "Catalogue" } };
+  (void)p;
+  (void)k;
+  hit_shield(0, ti + PH_TOPBAR, SB_W, PH_CHIPS);
+  float cx = x0 - chipsS.off, c0 = cx;
+  touch_region(0, y, SB_W, 36, &chipsS, NULL);
+  gfx_clip_push(0, y - 2, SB_W, 40);
+  if (onTab) {
+    int pr = touch_pressed(NULL, chips_close, 0, 0);
+    gfx_circle(cx + 18, y + 18, 18, pr ? WHITE_A(70) : WHITE_A(46));
+    icon_draw("ph_close", cx + 10, y + 10, 16, PH_TXT);
+    hit_act(cx, y, 36, 36, chips_close, 0, 0);
+    cx += 36 + 8;
+  }
+  for (size_t i = 0; i < sizeof C / sizeof *C; i++) {
+    if ((C[i].t == 4 && !app_anime_on()) || (C[i].t == 3 && !app_catalogue_on()))
+      continue;
+    const char *w = T(C[i].w);
+    float cw = text_width(w, PH_TX_BODY, 600, 0) + 28;
+    int on = onTab && board_disc_type() == C[i].t, pr = touch_pressed(NULL, chip_act, C[i].t, 0);
+    gfx_rrect(cx, y, cw, 36, 18, on ? RGB(0xd9, 0xd9, 0xd9) : pr ? WHITE_A(70) : WHITE_A(46));
+    text_draw(w, cx + cw / 2, y + 18 - text_line_height(PH_TX_BODY) / 2.0f, PH_TX_BODY, 600,
+              on ? RGB(0x14, 0x14, 0x14) : PH_TXT, 0, 0, ALIGN_CENTER);
+    hit_act(cx, y, cw, 36, chip_act, C[i].t, 0);
+    cx += cw + 8;
+  }
+  gfx_clip_pop();
+  scroller_limits(&chipsS, 0, cx - c0 - 8 + 2 * PH_M - SB_W);
+}
+static const char *tab_name(void) {
+  switch (board_disc_type()) {
+  case 2:
+    return "Movies";
+  case 3:
+    return "Catalogue";
+  case 4:
+    return "Anime";
+  default:
+    return "Shows";
+  }
 }
 static void topbar_draw(Ph *p) {
   float k = p->page.off / 120;
@@ -343,46 +455,50 @@ static void topbar_draw(Ph *p) {
     k = 0;
   if (k > 1)
     k = 1;
-  gfx_rect(0, 0, SB_W, PH_TOPBAR, RGBA(18, 18, 20, (int)(255 * k)));
+  float ti = phone_top_inset();
+  float th = top_h(p);
+  gfx_rect(0, 0, SB_W, th, RGBA(18, 18, 20, (int)(255 * k)));
   if (k >= 1)
-    gfx_rect(0, PH_TOPBAR - 1, SB_W, 1, WHITE_A(14));
+    gfx_rect(0, th - 1, SB_W, 1, WHITE_A(14));
   if (k < 1)
-    gfx_rrect_v(0, 0, SB_W, PH_TOPBAR + 24, 0, BLACK_A((int)(120 * (1 - k))), BLACK_A(0));
+    gfx_rrect_v(0, 0, SB_W, th + 24, 0, BLACK_A((int)(120 * (1 - k))), BLACK_A(0));
   if (p->kind == 2) {
     int pr = touch_pressed(NULL, back_act, 0, 0);
-    hit_shield(0, 0, SB_W, PH_TOPBAR);
-    gfx_circle(PH_M + 18, PH_TOPBAR / 2, 18, pr ? WHITE_A(60) : BLACK_A(90));
-    icon_draw("ph_back", PH_M + 6, PH_TOPBAR / 2 - 12, 24, PH_TXT);
-    hit_act(0, 0, 64, PH_TOPBAR, back_act, 0, 0);
-    text_draw(colTitle, 60, PH_TOPBAR / 2 - text_line_height(20) / 2.0f, 20, 800, PH_TXT, -0.3f, SB_W - 76, ALIGN_LEFT);
+    hit_shield(0, ti, SB_W, PH_TOPBAR);
+    gfx_circle(PH_M + 18, ti + PH_TOPBAR / 2, 18, pr ? WHITE_A(60) : BLACK_A(90));
+    icon_draw("ph_back", PH_M + 6, ti + PH_TOPBAR / 2 - 12, 24, PH_TXT);
+    hit_act(0, ti, 64, PH_TOPBAR, back_act, 0, 0);
+    text_draw(colTitle, 60, ti + PH_TOPBAR / 2 - text_line_height(20) / 2.0f, 20, 800, PH_TXT, -0.3f, SB_W - 76, ALIGN_LEFT);
     return;
   }
-  float tw = text_draw(T(p->kind ? "Discover" : "Home"), PH_M, PH_TOPBAR / 2 - text_line_height(22) / 2.0f, 22, 800,
+  float tw = text_draw(T(p->kind == 1 ? tab_name() : "Home"), PH_M, ti + PH_TOPBAR / 2 - text_line_height(22) / 2.0f, 22, 800,
                        PH_TXT, -0.4f, SB_W / 2, ALIGN_LEFT);
   { /* the phone app is a beta: said where it is seen first */
-    float bw = text_width("BETA", 10, 800, 0.8f) + 12, bx = PH_M + tw + 8, by = PH_TOPBAR / 2 - 9;
+    float bw = text_width("BETA", 10, 800, 0.8f) + 12, bx = PH_M + tw + 8, by = ti + PH_TOPBAR / 2 - 9;
     gfx_rrect(bx, by, bw, 18, 9, col_alpha(ACC | 0xff000000u, 0.85f));
     text_draw("BETA", bx + bw / 2, by + 9 - text_line_height(10) / 2.0f, 10, 800, ACC_FG | 0xff000000u, 0.8f, 0,
               ALIGN_CENTER);
   }
   float bx = SB_W - PH_M - 36;
   int pr = touch_pressed(NULL, open_settings, 0, 0);
-  gfx_circle(bx + 18, PH_TOPBAR / 2, 17, pr ? WHITE_A(60) : WHITE_A(26));
-  icon_draw("nav_set", bx + 7, PH_TOPBAR / 2 - 11, 22, PH_TXT);
-  hit_shield(0, 0, SB_W, PH_TOPBAR); /* (first: the button goes on top of it) */
-  hit_act(bx - 6, 0, 48, PH_TOPBAR, open_settings, 0, 0);
+  gfx_circle(bx + 18, ti + PH_TOPBAR / 2, 17, pr ? WHITE_A(60) : WHITE_A(26));
+  icon_draw("nav_set", bx + 7, ti + PH_TOPBAR / 2 - 11, 22, PH_TXT);
+  hit_shield(0, ti, SB_W, PH_TOPBAR); /* (first: the button goes on top of it) */
+  hit_act(bx - 6, ti, 48, PH_TOPBAR, open_settings, 0, 0);
+  chips_draw(p, p->kind == 1, k);
 }
 static void draw(void) {
   Ph *p = cur();
   int kind = p->kind;
   float bottom = phone_bottom();
   gfx_rect(0, 0, SB_W, SB_H, PAGE);
-  touch_region(0, 0, SB_W, bottom, NULL, &p->page);
+  float th = top_h(p);
+  touch_region(0, th, SB_W, bottom - th, NULL, &p->page); /* (the chips have their own region above it) */
   gfx_clip_push(0, 0, SB_W, bottom);
   float y0 = -p->page.off, y = y0;
   y += hero_draw(p, y);
   if (!p->hasHero)
-    y += PH_TOPBAR + 8;
+    y += top_h(p) + 8;
   int nr = board_ph_nrows(kind), r0 = -1, r1 = -1;
   for (int i = 0; i < nr; i++) {
     BoardRow r;
@@ -399,7 +515,14 @@ static void draw(void) {
     }
     y += h;
   }
-  if (!nr) {
+  if (kind == 1 && board_disc_type() == 3 && board_ph_empty(kind)) {
+    float ey = y0 + th + 120;
+    text_draw(T("No catalogues yet"), SB_W / 2, ey, PH_TX_ROW + 5, 700, PH_TXT, 0, SB_W - 2 * PH_M, ALIGN_CENTER);
+    text_draw_wrapped(T("Addons you install in Stremio or Nuvio show their catalogues here. Collections imported from "
+                        "your phone show here too."),
+                      PH_M + 8, ey + 36, SB_W - 2 * PH_M - 16, 4, PH_TX_BODY, 400, PH_TXT2, 0, ALIGN_CENTER, 0);
+    y = ey + 160;
+  } else if (!nr) {
     for (int i = 0; i < 3; i++) {
       ph_text(PH_M, y + 4, 140, 1, PH_TX_ROW, 0, ALIGN_LEFT);
       for (int c = 0; c < 4; c++)

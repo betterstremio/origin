@@ -54,20 +54,21 @@ static void tick(float dt) {
 }
 static void draw(void) {
   float bottom = phone_bottom();
+  float top = phone_top_inset();
   gfx_rect(0, 0, SB_W, SB_H, PAGE);
-  text_draw(T("Library"), PH_M, PH_TOPBAR / 2 - text_line_height(22) / 2.0f, 22, 800, PH_TXT, -0.4f, SB_W / 2,
+  text_draw(T("Library"), PH_M, top + PH_TOPBAR / 2 - text_line_height(22) / 2.0f, 22, 800, PH_TXT, -0.4f, SB_W / 2,
             ALIGN_LEFT);
   {
     const char *sl = lib_ph_sort_label();
     float w = text_width(sl, PH_TX_SMALL + 1, 600, 0) + 40, x = SB_W - PH_M - w;
     int pr = touch_pressed(NULL, sort_act, 0, 0);
-    gfx_rrect(x, PH_TOPBAR / 2 - 16, w, 32, 16, pr ? WHITE_A(60) : WHITE_A(20));
-    icon_draw("lib_sort", x + 8, PH_TOPBAR / 2 - 9, 18, PH_TXT2);
-    text_draw(sl, x + 30, PH_TOPBAR / 2 - text_line_height(PH_TX_SMALL + 1) / 2.0f, PH_TX_SMALL + 1, 600, PH_TXT, 0,
+    gfx_rrect(x, top + PH_TOPBAR / 2 - 16, w, 32, 16, pr ? WHITE_A(60) : WHITE_A(20));
+    icon_draw("lib_sort", x + 8, top + PH_TOPBAR / 2 - 9, 18, PH_TXT2);
+    text_draw(sl, x + 30, top + PH_TOPBAR / 2 - text_line_height(PH_TX_SMALL + 1) / 2.0f, PH_TX_SMALL + 1, 600, PH_TXT, 0,
               w - 34, ALIGN_LEFT);
-    hit_act(x, PH_TOPBAR / 2 - 22, w, 44, sort_act, 0, 0);
+    hit_act(x, top + PH_TOPBAR / 2 - 22, w, 44, sort_act, 0, 0);
   }
-  float y = PH_TOPBAR + 2;
+  float y = top + PH_TOPBAR + 2;
   /* the categories */
   {
     const char *lb[8];
@@ -91,19 +92,19 @@ static void draw(void) {
     y += 46;
   }
   /* the titles */
-  float top = y;
-  touch_region(0, top, SB_W, bottom - top, NULL, &B.page);
-  gfx_clip_push(0, top, SB_W, bottom - top);
+  float grid_top = y;
+  touch_region(0, grid_top, SB_W, bottom - grid_top, NULL, &B.page);
+  gfx_clip_push(0, grid_top, SB_W, bottom - grid_top);
   int cols = (int)((SB_W - 2 * PH_M + 8) / 126);
   if (cols < 3)
     cols = 3;
   float gap = 8, cw = (SB_W - 2 * PH_M - (cols - 1) * gap) / cols, ch = cw * 1.5f, rowH = ch + 34;
   int n = lib_ph_count();
-  float gy = top + 2 - B.page.off;
+  float gy = grid_top + 2 - B.page.off;
   for (int i = 0; i < n; i++) {
     int r = i / cols, c = i % cols;
     float x = PH_M + c * (cw + gap), yy = gy + r * rowH;
-    if (yy + rowH < top || yy > bottom)
+    if (yy + rowH < grid_top || yy > bottom)
       continue;
     const Item *it = lib_ph_item(i);
     if (!it)
@@ -122,9 +123,9 @@ static void draw(void) {
   }
   float end = gy + ((n + cols - 1) / cols) * rowH;
   if (!n)
-    text_draw(T("Nothing here yet"), SB_W / 2, top + 40, PH_TX_BODY, 600, PH_TXT2, 0, SB_W - 32, ALIGN_CENTER);
+    text_draw(T("Nothing here yet"), SB_W / 2, grid_top + 40, PH_TX_BODY, 600, PH_TXT2, 0, SB_W - 32, ALIGN_CENTER);
   gfx_clip_pop();
-  scroller_limits(&B.page, 0, end + B.page.off - top + 24 - (bottom - top));
+  scroller_limits(&B.page, 0, end + B.page.off - grid_top + 24 - (bottom - grid_top));
 }
 static int key(int k) {
   (void)k;

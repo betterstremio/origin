@@ -65,9 +65,7 @@ public class MainActivity extends SDLActivity {
         super.onCreate(saved);
         if (mBrokenLibraries || mLayout == null) return;
         if (touch) {
-            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
-            getWindow().setStatusBarColor(PAGE); getWindow().setNavigationBarColor(PAGE);
-            getWindow().getDecorView().setBackgroundColor(PAGE);
+            applyBrowse();
             setRequestedOrientation(browseOrientation());
         } else {
             getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
@@ -141,7 +139,22 @@ public class MainActivity extends SDLActivity {
     /* SDL turns the screen as its window asks once it is made; on a phone or tablet the app decides instead */
     @Override public void setOrientationBis(int w, int h, boolean resizable, String hint) { if (!touch) super.setOrientationBis(w, h, resizable, hint); }
     @SuppressWarnings("deprecation")
+    void applyBrowse() {
+        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        getWindow().setStatusBarColor(PAGE);
+        getWindow().setNavigationBarColor(PAGE);
+        getWindow().getDecorView().setBackgroundColor(PAGE);
+        WindowManager.LayoutParams lp = getWindow().getAttributes();
+        if (Build.VERSION.SDK_INT >= 28)
+            lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+        getWindow().setAttributes(lp);
+        if (Build.VERSION.SDK_INT >= 30)
+            getWindow().setDecorFitsSystemWindows(false);
+        getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE |
+            View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
+    }
     void applyFilm(boolean on) {
+        if (!on) { applyBrowse(); return; }
         View d = getWindow().getDecorView();
         WindowManager.LayoutParams lp = getWindow().getAttributes();
         if (on) {
@@ -149,10 +162,6 @@ public class MainActivity extends SDLActivity {
             if (Build.VERSION.SDK_INT >= 28) lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
             d.setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
                 | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
-        } else {
-            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
-            if (Build.VERSION.SDK_INT >= 28) lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT;
-            d.setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
         }
         getWindow().setAttributes(lp);
     }
@@ -168,12 +177,28 @@ public class MainActivity extends SDLActivity {
         final MainActivity a = self; if (a == null || box == null) return;
         a.runOnUiThread(() -> box.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS));
     }
-    /* the room a camera cutout takes over a film (the bars are outside the surface while browsing): "top,bottom,left,right" in pixels */
+    /* the room occupied by visible system bars and a camera cutout: "top,bottom,left,right" in window pixels. The C
+       side converts these physical pixels to its dp layout units. */
     public static String uiSafeArea() {
-        Box b = box; if (b == null || Build.VERSION.SDK_INT < 28) return "0,0,0,0";
-        android.view.WindowInsets wi = b.getRootWindowInsets(); DisplayCutout c = wi != null ? wi.getDisplayCutout() : null;
-        if (c == null) return "0,0,0,0";
-        return c.getSafeInsetTop() + "," + c.getSafeInsetBottom() + "," + c.getSafeInsetLeft() + "," + c.getSafeInsetRight();
+        Box b = box; if (b == null || Build.VERSION.SDK_INT < 23) return "0,0,0,0";
+        android.view.WindowInsets wi = b.getRootWindowInsets(); if (wi == null) return "0,0,0,0";
+        int top = 0, bottom = 0, left = 0, right = 0;
+        if (Build.VERSION.SDK_INT >= 30) {
+            android.graphics.Insets i = wi.getInsets(android.view.WindowInsets.Type.systemBars() |
+                android.view.WindowInsets.Type.displayCutout());
+            left = i.left; top = i.top; right = i.right; bottom = i.bottom;
+        } else {
+            top = wi.getSystemWindowInsetTop(); bottom = wi.getSystemWindowInsetBottom();
+            left = wi.getSystemWindowInsetLeft(); right = wi.getSystemWindowInsetRight();
+            if (Build.VERSION.SDK_INT >= 28) {
+                DisplayCutout c = wi.getDisplayCutout();
+                if (c != null) {
+                    top = Math.max(top, c.getSafeInsetTop()); bottom = Math.max(bottom, c.getSafeInsetBottom());
+                    left = Math.max(left, c.getSafeInsetLeft()); right = Math.max(right, c.getSafeInsetRight());
+                }
+            }
+        }
+        return top + "," + bottom + "," + left + "," + right;
     }
     /* brightness: this window's, -1 following the system. One pending value and one posted runnable: a drag never floods the UI thread */
     static final java.util.concurrent.atomic.AtomicInteger brightWant = new java.util.concurrent.atomic.AtomicInteger(-2), volWant = new java.util.concurrent.atomic.AtomicInteger(-2);

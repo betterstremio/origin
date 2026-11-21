@@ -155,8 +155,8 @@ static void draw(void) {
   int dl = K.it.description[0] ? text_wrap_count(K.it.description, W - 2 * pad, 4, PH_TX_BODY, 400, 0) : 0;
   float H = mh + pad + 30 + (K.it.metaLine[0] ? 22 : 0) + (dl ? dl * 20 + 8 : 0) + 14 + 44 + pad;
   float X = (SB_W - W) / 2, Y = (SB_H - H) / 2;
-  if (Y < 24)
-    Y = 24;
+  if (Y < phone_top_inset() + 16)
+    Y = phone_top_inset() + 16;
   /* it grows out of the held card: the frame moves from there, the contents fade in once it is nearly there */
   float x = lerp(K.fx, X, k), y = lerp(K.fy, Y, k), w = lerp(K.fw, W, k), h = lerp(K.fh, H, k);
   gfx_shadow(x, y + 12, w, h, 16, 40, BLACK_A((int)(170 * k)));

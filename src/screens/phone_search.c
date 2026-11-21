@@ -116,7 +116,7 @@ static void draw(void) {
   const char *q = search_query();
   const ItemList *l = search_results();
   /* the field */
-  float fy = 10, fh = 46, fx = PH_M, fw = SB_W - 2 * PH_M;
+  float fy = phone_top_inset() + 10, fh = 46, fx = PH_M, fw = SB_W - 2 * PH_M;
   gfx_rrect(fx, fy, fw, fh, 12, Q.typing ? WHITE_A(34) : WHITE_A(22));
   if (Q.typing)
     gfx_ring(fx, fy, fw, fh, 12, 1.5f, WHITE_A(90));

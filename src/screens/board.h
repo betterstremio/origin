@@ -44,6 +44,8 @@ int board_ph_nrows(int kind);
 int board_ph_row(int kind, int i, BoardRow *out);
 int board_ph_feat(int kind, const Item **out,
                   int max); /* the hero's picks (Home: the billboard's; Discover: the spotlight's) */
+int board_ph_empty(int kind); /* the Catalogue has no rows to show (after a short wait) */
+void board_ph_seen(int kind, int row, int col); /* the furthest card of a row drawn so far */
 void board_ph_near_end(int kind, int row, int col);
 void board_ph_open(int kind, int row, int col);
 #endif

@@ -1010,6 +1010,7 @@ static void load_catalog_rows(Board *b, int disc, int keep) {
       col_disc_rows(b, keep, oldCols); /* (the collections live on the Catalogue now; phones' Discover keeps them) */
   }
   int kb = disc && (b->dtype == 1 || b->dtype == 2), an = disc && b->dtype == 4;
+  int phCat = disc && b->dtype == 3 && form_touch(); /* (a phone's Catalogue asks its rows as they come near) */
   int fy = kb && fy_ok(b), pg = b->dtype == 1 ? RECS_PG_SHOWS : RECS_PG_MOVIES;
   b->fy = fy;
   if (kb)
@@ -1045,7 +1046,7 @@ static void load_catalog_rows(Board *b, int disc, int keep) {
       r->col = oldCols[ri];
     r->def = defs[d];
     r->hasDef = 1;
-    if (!kb)
+    if (!kb && !phCat)
       sb_catalog(&defs[d], on_catalog, tok(b, ri));
     else if (ri < 6)
       kind_ask(b, ri);
@@ -3696,7 +3697,7 @@ void tabs_warm_tick(void) {
   /* Shows (the phones' mixed Discover on a phone), Home, the Library, then Movies and the Catalogue where memory is
      plentiful (a computer, or more than 1200 MB) */
   static const char *const nm[5] = { "Discover", "Home", "Library", "Movies", "Catalogue" };
-  if (step == 0 && !form_touch() && boards[1].dtype != 1) {
+  if (step == 0 && boards[1].dtype != 1) {
     boards[1].dtype = 1;
     boards[1].built = 0;
   }
@@ -3888,10 +3889,16 @@ int board_sample(Item *out, int max, char *rowTitle, int cap) {
 /* ---- phones (screens/phone_home.c): the same rows and picks, read as data; the TV's focus, hero and card opening
    are not run there (a phone has no focus: the screen scrolls, a finger picks) ---- */
 static Board *phb(int kind) {
-  return &boards[kind == 1 ? 1 : kind == 2 ? 2 : 0];
+  return &boards[kind == 1 ? discBoard : kind == 2 ? 2 : 0];
 }
 void board_ph_enter(int kind) {
   Board *b = phb(kind);
+  if (b == &boards[1] && b->dtype != 1) { /* (the phones' Shows: set before its first use, not by the warm-up alone) */
+    b->dtype = 1;
+    b->built = 0;
+  }
+  if (b == &boards[B_ANIME] && b->built)
+    anime_page_open();
   int fresh =
       !b->built || (b->kind == 0 && (b->libVer != lib_version() || b->recsVer != recs_version())) || kind_stale(b);
   if (fresh) {
@@ -3918,6 +3925,29 @@ void board_ph_tick(int kind, int r0, int r1, float dt) {
   if (b->kind == 0 && b->libVer != lib_version()) {
     b->libVer = lib_version();
     load_catalog_rows(b, 0, b->n > 0);
+  }
+  if (b->kind == 1 && (kindb(b) || b->dtype == 3 || b->dtype == 4)) {
+    /* rows asked as they come near: the visible ones and a few after; Anime uses ani_ask through kind_ask */
+    int last = r1 + 1 + 8 > b->n ? b->n : r1 + 1 + 8, budget = 3;
+    for (int i = r0 > 0 ? r0 : 0; i < last && i < b->n; i++) {
+      Row *r = &b->rows[i];
+      if (i > r1) {
+        if (!r->hidden)
+          budget--; /* (a row showing counts; one asked and still hidden is stepped past, bounded by the 8) */
+        else if (!r->asked) {
+          kind_ask(b, i);
+          if (r->asked)
+            budget--;
+        }
+        if (budget < 0)
+          break;
+      } else
+        kind_ask(b, i);
+    }
+  }
+  if (b->kind == 1 && b->dtype == 4) { /* the Anime page's data half, its focus being the first row on screen */
+    b->rowIdx = r0 >= 0 && r0 < b->n ? r0 : 0;
+    ani_tick(b);
   }
   for (int i = 0; i < b->n; i++) {
     Row *r = &b->rows[i];
@@ -3977,6 +4007,21 @@ int board_ph_feat(int kind, const Item **out, int max) {
   for (int i = 0; i < b->nfeat && n < max; i++)
     out[n++] = &b->feat[i];
   return n;
+}
+int board_ph_empty(int kind) {
+  Board *b = phb(kind);
+  if (b->kind != 1 || b->dtype != 3)
+    return 0;
+  for (int i = 0; i < b->n; i++)
+    if (!b->rows[i].hidden)
+      return 0;
+  return !b->n || app_now() - catAt > 6;
+}
+/* a row drawn up to this card: the Anime page asks its details a few cards ahead of the furthest one seen */
+void board_ph_seen(int kind, int row, int col) {
+  Board *b = phb(kind);
+  if (b->dtype == 4 && row >= 0 && row < b->n && col > b->rows[row].col)
+    b->rows[row].col = col < b->rows[row].items.n ? col : b->rows[row].items.n - 1;
 }
 /* a finger near a row's end: its next page */
 void board_ph_near_end(int kind, int row, int col) {

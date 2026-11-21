@@ -37,6 +37,17 @@
 #include "screens/welcome.h"
 #include "ui/qr.h"
 #include "ui/support.h"
+#define SET_FOCUS RGB(0xd9, 0xd9, 0xd9)
+#define SET_FOCUS_TEXT RGB(0x14, 0x14, 0x14)
+#define SET_GROUP WHITE_A(128)
+#define SET_CATEGORY WHITE_A(217)
+#define SET_CURRENT WHITE_A(255)
+#define SET_ICON WHITE_A(179)
+#define SET_LABEL WHITE_A(230)
+#define SET_DESC WHITE_A(153)
+#define SET_VALUE WHITE_A(153)
+#define SET_LOGOUT RGB(0xef, 0x8f, 0x8a)
+#define SET_LOGOUT_FOCUS RGB(0x72, 0x2a, 0x25)
 #define SUP_H 420.0f
 #define LOOK_H 156.0f
 #define LOOK_PICK_H (LOOK_H + 12.0f)
@@ -839,8 +850,11 @@ static void on_speed(int ok, double mbps, void *ud) {
 /* the bar's words change; the tab's page, were it the one to go back to, becomes Shows */
 static void catalogue_tab_changed(void) {
   topnav_relayout();
-  if (!app_catalogue_on() && board_disc_type() == 3)
+  if (!app_catalogue_on() && board_disc_type() == 3) {
+    if (form_touch())
+      phone_tab_gone(3);
     board_disc_type_set(1);
+  }
 }
 /* the Anime tab: its word on the bar, the Kitsu addon kept on this device (not in the account), the recommendations
    leaving anime out of Shows and Movies */
@@ -851,8 +865,11 @@ static void anime_tab_changed(void) {
   recs_set_no_anime(on);
   board_anime_changed();
   if (!on) {
-    if (board_disc_type() == 4)
+    if (board_disc_type() == 4) {
+      if (form_touch())
+        phone_tab_gone(4);
       board_disc_type_set(1);
+    }
     board_anime_off();
   }
 }
@@ -958,7 +975,6 @@ static void set_val(Setting *o, const char *v, int dir) {
   }
   if (strcmp(store_get(o->k, o->d ? o->d : ""), v)) {
     sound_play(SND_TOGGLE);
-    orbs_pulse(ORB_DONE, is_switch(o) ? 0.45f : 0.3f);
   } /* a switch or a choice: its own tone, and the glows feel it */
   if (!strcmp(o->k, "autoBest") && !strcmp(v, "true") && !best_on()) {
     if (!best_speed_busy()) {
@@ -1034,8 +1050,8 @@ static float right_w(const Setting *o,
   return 24 + text_width(vt, 26, 600, 0) + text_width(" \xe2\x80\xba", 26, 600, 0) +
          (focused ? text_width("\xe2\x80\xb9 ", 26, 600, 0) : 0);
 }
-#define DS_PX 26 /* a setting's description: 26 px on 34 px lines, at most 3 lines */
-#define DS_LH 34.0f
+#define DS_PX 24 /* a setting's description: 24 px on 32 px lines, at most 3 lines */
+#define DS_LH 32.0f
 /* the words under a row: only About's rows and the best stream's (its connection measured) keep them */
 static int keep_ds(const Setting *o) {
   return (o >= supS && o < supS + sizeof supS / sizeof *supS) || !strcmp(o->k, "autoBest") ||
@@ -1489,7 +1505,6 @@ static int key(int k) {
         if (welcome_github_url()[0]) {
           supWant = !supWant;
           tween_to(&supK, (float)supWant, 0.5f, EASE_IN_OUT);
-          orbs_pulse(supWant ? ORB_RIGHT : ORB_LEFT, 0.6f);
         }
       } /* the other code, turned over */ else if (!strcmp(op->k, "__upd"))
         update_install();
@@ -1569,9 +1584,7 @@ static void tick(float dt) {
   /* the categories scroll only as far as the focus needs; the panel keeps the focused row clear of its bottom edge */
   float cb = S.catY[S.cat] + 64, cy = cb > COLH - 60 ? cb - COLH + 60 : 0;
   tween_to(&S.catsY, -cy, 0.22f, EASE_CSS_EASE);
-  hl_to(&S.hc, S.catY[S.cat], 64, 1,
-        S.zone == 0 ? (cats[S.cat].out ? RGB(0xc7, 0x5a, 0x5a) : ACC)
-                    : WHITE_A(24)); /* the section you are in: a light glass mark, not a dark one */
+  hl_to(&S.hc, S.catY[S.cat], 64, 1, S.zone == 0 ? SET_FOCUS : WHITE_A(46));
   tween_to(&S.loA, S.zone == 0 && cats[S.cat].out ? 0.25f : 1, 0.22f, EASE_CSS_EASE);
   int oz = S.zone != 0 && S.cat == S.shown && S.idx < S.optN;
   float oy = 0;
@@ -1591,9 +1604,7 @@ static void tick(float dt) {
     wnBtn = 0;
   hlIn = oz && S.idx < cats[S.cat].n && cats[S.cat].opts[S.idx].sub ? SUBIN : 0;
   hl_to(&S.ho, oz ? S.optY[S.idx] : 0, oz ? S.optH[S.idx] : 68, oz && !wnBtn,
-        oz && S.idx < cats[S.cat].n && cats[S.cat].opts[S.idx].off
-            ? WHITE_A(34)
-            : ACC); /* a greyed row: a quiet glass highlight, not the accent */
+        oz && S.idx < cats[S.cat].n && cats[S.cat].opts[S.idx].off ? WHITE_A(46) : SET_FOCUS);
   if (S.zone == 2) {
     const Setting *o = &cats[S.cat].opts[S.idx];
     float height = PKH - (o == &lookS[0] ? LOOK_PICK_H : 0);
@@ -1607,7 +1618,7 @@ static void tick(float dt) {
         py = mx;
     }
     tween_to(&S.pickY, -py, 0.22f, EASE_SNAP);
-    hl_to(&S.hp, S.pick * 72.0f, 68, 1, ACC);
+    hl_to(&S.hp, S.pick * 72.0f, 68, 1, SET_FOCUS);
   }
 }
 /* ---- drawing ---- */
@@ -1665,22 +1676,13 @@ static void prev_frame(float x, float y, float w, float h,
   if (dim > 0)
     gfx_rrect(x, y, w, h, 18, col_alpha(PAGE, dim));
 }
-/* Subtitles: a film from Home, slowly moving, with two soft glows drifting over it; the line drawn as the player draws
-   it, in the chosen size, colour, edge and background. A change: the glows lean, the line settles into its new look */
-static Orbs subOrbs;
+/* Subtitles: the demo still, with the line drawn as the player draws it, in the chosen size, colour, edge and
+   background. A change settles the line into its new look. */
 static unsigned subSig;
 static double subAt;
 static GfxLayer subLayer;
 static void preview_subs(float x, float y, float w, float h) {
-  float t = (float)app_now(), kb = 0.5f - 0.5f * cosf(t * 6.2832f / 24), u0, v0, u1, v1;
-  GLuint bt = prev_backdrop(w, h, &u0, &v0, &u1, &v1);
-  if (bt) {
-    float z = 0.06f + 0.05f * kb, du = (u1 - u0) * z, dv = (v1 - v0) * z,
-          px = (u1 - u0) * 0.04f * sinf(t * 0.13f); /* a slow drift across the still */
-    gfx_image(bt, x, y, w, h, 18, WHITE_A(255), u0 + du + px, v0 + dv, u1 - du + px, v1 - dv);
-  } else
-    gfx_rrect(x, y, w, h, 18, RGB(0x1c, 0x1a, 0x24));
-  gfx_rrect(x, y, w, h, 18, col_alpha(PAGE, 0.25f));
+  prev_frame(x, y, w, h, 0.25f);
   int sz = atoi(store_get("subtitleSize", "2"));
   static const int SZ[] = { 72, 80, 100, 120, 140, 160, 180 };
   if (sz < 0 || sz > 6)
@@ -1692,14 +1694,10 @@ static void preview_subs(float x, float y, float w, float h) {
   float op = opc >= 50 && opc < 100 ? opc / 100.0f : 1;
   unsigned sig = (unsigned)px * 2654435761u ^ col ^ (ol << 1) ^ (unsigned)(bo * 1000) ^ (unsigned)opc << 20;
   if (sig != subSig) {
-    if (subSig) {
+    if (subSig)
       subAt = app_now();
-      orbs_push(&subOrbs, ORB_DONE, 0.5f);
-    }
     subSig = sig;
   }
-  orbs_step(&subOrbs, app_dt(), 1, 1, 2.6f);
-  orbs_draw_in(&subOrbs, 0.5f, x, y, w, h, 18); /* the app's glows, over the picture, inside its corners */
   gfx_rrect_v(x, y, w, h, 18, BLACK_A(0), BLACK_A(170)); /* the player's shade at the foot */
   const char *line = T("I came back to tell you something.");
   float maxW = w - 80, lh = text_line_height(px) * 1.1f;
@@ -2116,11 +2114,12 @@ static void draw_row(const Setting *o, int i, float x, float y, float h, int f, 
     return;
   int busy = rc->busy, sw = is_switch(o) && !busy;
   float rw = rc->rw[f ? 1 : 0], tw = CLW - 48 - rw;
-  uint32_t lc = f ? ACC_FG : o->action ? ACC3 : WHITE_A(255), dc = f ? col_alpha(ACC_FG, 0.85f) : WHITE_A(199);
-  if (o->off) {
-    lc = f ? WHITE_A(235) : WHITE_A(110);
-    dc = f ? WHITE_A(200) : WHITE_A(96);
-  } /* greyed: dim, but plain to read when focused (on a neutral highlight) */
+  int logout = !strcmp(o->k, "__logout");
+  int light = f && !o->off;
+  if (o->off)
+    gfx_opacity_push(0.4f);
+  uint32_t lc = logout ? (f ? SET_LOGOUT_FOCUS : SET_LOGOUT) : light ? SET_FOCUS_TEXT : SET_LABEL;
+  uint32_t dc = light ? col_alpha(SET_FOCUS_TEXT, 0.7f) : SET_DESC;
   /* the words: changed ones fade in where they stand */
   float tk = since(r->txAt) < 0.3f ? ease_apply(EASE_SNAP, since(r->txAt) / 0.3f) : 1;
   if (tk < 1) {
@@ -2129,7 +2128,7 @@ static void draw_row(const Setting *o, int i, float x, float y, float h, int f, 
   }
   if (o->sub) { /* joined to the row above: a thin line down from it that turns in towards the words */
     float d = rtl ? -1 : 1, gx = L + d * 12, ey = y + 16 + 17, rr = 12, top = y - 2, ex = L + d * (SUBIN - 10);
-    uint32_t jc = f ? col_alpha(ACC, 0.95f) : WHITE_A(92);
+    uint32_t jc = light ? col_alpha(SET_FOCUS_TEXT, 0.7f) : SET_DESC;
     gfx_rrect(gx - 1, top, 2, ey - rr - top, 1, jc);
     for (int k = 0; k <= 14; k++) {
       float t = k * 1.5708f / 14;
@@ -2139,7 +2138,7 @@ static void draw_row(const Setting *o, int i, float x, float y, float h, int f, 
     L += rtl ? -SUBIN : SUBIN;
     tw -= SUBIN;
   }
-  line(o->raw ? o->lb : T(o->lb), L, y + 16, 34, o->sub ? 26 : 28, 600, lc, -0.2f, tw, al);
+  line(o->raw ? o->lb : T(o->lb), L, y + 16, 34, o->sub ? 26 : 30, o->sub ? 500 : 500, lc, -0.2f, tw, al);
   if (o->ds[0] && keep_ds(o)) {
     text_draw_wrapped(o->raw ? o->ds : T(o->ds), L, y + 16 + 34 + 4 + (DS_LH - text_line_height(DS_PX)) / 2, tw, 3,
                       DS_PX, 400, dc, 0, al, DS_LH);
@@ -2188,17 +2187,19 @@ static void draw_row(const Setting *o, int i, float x, float y, float h, int f, 
     float nx2 = rtl ? ux + uw + 8 : ux - uw - 8;
     text_draw(nb, nx2, cy - text_line_height(44) / 2 - 2, 44, 800, f ? ACC_FG : WHITE_A(255), -0.5f, 0,
               rtl ? ALIGN_LEFT : ALIGN_RIGHT);
-  } else if (sw) { /* a glass switch: on a focused (accent) row the track turns white glass and the knob takes the
-                      accent */
+  } else if (sw) {
     float sx = rtl ? R : R - 64, sy = y + h / 2 - 18, kk = r->swK.v,
-          kc = r->swC.v; /* the knob goes right when on, in either direction (as the page) */
-    lglass_switch(sx, sy, 64, 36, kk, kc, f);
-  } /* glass, as the bar and the player */
-  else if (!o->action && !o->info) { /* the value; one changed with Left / Right slides in from that side */
+          kc = r->swC.v;
+    uint32_t trackOff = light ? BLACK_A(46) : WHITE_A(46), trackOn = light ? SET_FOCUS_TEXT : SET_CURRENT;
+    uint32_t knobOff = light ? SET_CURRENT : SET_ICON, knobOn = light ? SET_CURRENT : SET_FOCUS_TEXT;
+    uint32_t track = col_mix(trackOff, trackOn, kc), knob = col_mix(knobOff, knobOn, kc);
+    gfx_rrect(sx, sy, 64, 36, 18, track);
+    gfx_circle(sx + 18 + 28 * kk, sy + 18, 14, knob);
+  } else if (!o->action && !o->info) { /* the value; one changed with Left / Right slides in from that side */
     const char *vt = rc->vt;
     float vy = y + h / 2 - 17, ve = since(r->vAt);
     float aw = rc->aw, bw = f ? rc->bw : 0, vw = rc->vw;
-    uint32_t vc = o->off ? (f ? WHITE_A(200) : WHITE_A(87)) : f ? ACC_FG : ACC3, cc = f ? ACC_FG : WHITE_A(115);
+    uint32_t vc = light ? col_alpha(SET_FOCUS_TEXT, 0.7f) : SET_VALUE, cc = light ? col_alpha(SET_FOCUS_TEXT, 0.7f) : SET_VALUE;
     if (!o->off)
       line(" \xe2\x80\xba", R, vy, 34, 26, 600, cc, 0, 0, ar);
     float vx = rtl ? R + aw : R - aw;
@@ -2214,10 +2215,12 @@ static void draw_row(const Setting *o, int i, float x, float y, float h, int f, 
     line(vt, vx + vd, vy, 34, 26, 600, vc, 0, 0, ar);
     if (va < 1)
       gfx_opacity_pop();
-    if (f)
+    if (light)
       line("\xe2\x80\xb9 ", rtl ? vx + vw : vx - vw, vy, 34, 26, 600, cc, 0, 0, ar);
     (void)bw;
   }
+  if (o->off)
+    gfx_opacity_pop();
 }
 
 /* ---- a phone (core/form.h): the categories as a list, a tap opens one, its settings as rows (a switch flips where it
@@ -2266,23 +2269,24 @@ static void ph_back(int a, int b) {
   app_back();
 }
 static void ph_head(const char *t, int back) {
-  gfx_rect(0, 0, SB_W, PH_TOPBAR, PAGE);
-  gfx_rect(0, PH_TOPBAR - 1, SB_W, 1, WHITE_A(14));
-  hit_shield(0, 0, SB_W, PH_TOPBAR);
+  float top = phone_top_inset();
+  gfx_rect(0, 0, SB_W, top + PH_TOPBAR, PAGE);
+  gfx_rect(0, top + PH_TOPBAR - 1, SB_W, 1, WHITE_A(14));
+  hit_shield(0, top, SB_W, PH_TOPBAR);
   float x = PH_M;
   if (back) {
     int pr = touch_pressed(NULL, ph_back, 0, 0);
-    gfx_circle(PH_M + 18, PH_TOPBAR / 2, 18, pr ? WHITE_A(60) : WHITE_A(0));
-    icon_draw("ph_back", PH_M + 6, PH_TOPBAR / 2 - 12, 24, PH_TXT);
-    hit_act(0, 0, 64, PH_TOPBAR, ph_back, 0, 0);
+    gfx_circle(PH_M + 18, top + PH_TOPBAR / 2, 18, pr ? WHITE_A(60) : WHITE_A(0));
+    icon_draw("ph_back", PH_M + 6, top + PH_TOPBAR / 2 - 12, 24, PH_TXT);
+    hit_act(0, top, 64, PH_TOPBAR, ph_back, 0, 0);
     x = 60;
   }
-  text_draw(t, x, PH_TOPBAR / 2 - text_line_height(back ? 19 : 22) / 2.0f, back ? 19 : 22, 800, PH_TXT, -0.3f,
+  text_draw(t, x, top + PH_TOPBAR / 2 - text_line_height(back ? 19 : 22) / 2.0f, back ? 19 : 22, 800, PH_TXT, -0.3f,
             SB_W - x - PH_M, ALIGN_LEFT);
 }
 static void ph_switch(float x, float cy, int on) {
-  gfx_rrect(x, cy - 14, 48, 28, 14, on ? ACC | 0xff000000u : WHITE_A(50));
-  gfx_circle(on ? x + 34 : x + 14, cy, 11, WHITE_A(255));
+  gfx_rrect(x, cy - 14, 48, 28, 14, on ? SET_CURRENT : WHITE_A(46));
+  gfx_circle(on ? x + 34 : x + 14, cy, 11, on ? SET_FOCUS_TEXT : SET_ICON);
 }
 static void draw_phone(void) {
   gfx_rect(0, 0, SB_W, SB_H, PAGE);
@@ -2290,7 +2294,7 @@ static void draw_phone(void) {
   if (lv != phLevel) {
     phLevel = lv;
   }
-  float top = PH_TOPBAR, bottom = phone_bottom(), W = SB_W - 2 * PH_M;
+  float top = phone_top_inset() + PH_TOPBAR, bottom = phone_bottom(), W = SB_W - 2 * PH_M;
   Scroller *sc = &phS[lv];
   touch_region(0, top, SB_W, bottom - top, NULL, sc);
   gfx_clip_push(0, top, SB_W, bottom - top);
@@ -2340,7 +2344,7 @@ static void draw_phone(void) {
         if (pr)
           gfx_rrect(PH_M - 8, y, W + 16, h, 10, WHITE_A(18));
         if (o->off)
-          gfx_opacity_push(0.45f);
+          gfx_opacity_push(0.4f);
         text_draw(lb, PH_M, y + 11, PH_TX_BODY + 1, 600, PH_TXT, 0, W - rw - 8, ALIGN_LEFT);
         if (dl)
           text_draw_wrapped(ds, PH_M, y + 34, W - rw - 8, 3, PH_TX_SMALL, 400, PH_TXT2, 0, ALIGN_LEFT, 17);
@@ -2348,7 +2352,7 @@ static void draw_phone(void) {
           ph_switch(PH_M + W - 48, y + h / 2, !strcmp(cur_val(o), "true"));
         else if (v)
           text_draw(v, PH_M + W, y + h / 2 - text_line_height(PH_TX_SMALL + 1) / 2.0f, PH_TX_SMALL + 1, 600,
-                    col_mix(ACC, 0xffffffffu, 0.4f), 0, W * 0.4f, ALIGN_RIGHT);
+                    SET_VALUE, 0, W * 0.4f, ALIGN_RIGHT);
         if (o->off)
           gfx_opacity_pop();
         gfx_rect(PH_M, y + h - 1, W, 1, WHITE_A(10));
@@ -2368,7 +2372,7 @@ static void draw_phone(void) {
       text_draw(lb, PH_M, y + h / 2 - text_line_height(PH_TX_BODY + 1) / 2.0f, PH_TX_BODY + 1, on ? 700 : 500,
                 on ? PH_TXT : PH_TXT2, 0, W - 40, ALIGN_LEFT);
       if (on)
-        icon_draw("check", PH_M + W - 22, y + h / 2 - 11, 22, col_mix(ACC, 0xffffffffu, 0.4f));
+        icon_draw("check", PH_M + W - 22, y + h / 2 - 11, 22, SET_CURRENT);
       hit_act(PH_M - 8, y, W + 16, h, ph_pick, j, 0);
       y += h;
     }
@@ -2409,7 +2413,7 @@ static void draw(void) {
         if (S.gap[i])
           gfx_rect(cx + 20, S.grpY[i] + 10 * (1 - e), CATW - 40, 1, WHITE_A(26));
         else
-          line(T(c->g), rtl ? cx + CATW - 20 : cx + 20, S.grpY[i] + 10 * (1 - e), 28, 22, 600, WHITE_A(158), 0,
+          line(T(c->g), rtl ? cx + CATW - 20 : cx + 20, S.grpY[i] + 10 * (1 - e), 28, 22, 600, SET_GROUP, 0,
                CATW - 40, al);
         gfx_opacity_pop();
       }
@@ -2425,26 +2429,22 @@ static void draw(void) {
     if (S.zone != 2 && i != S.cat && app_ptr_hovers(cat_focus, i))
       gfx_rrect(cx, S.catY[i], CATW, 64, 18, WHITE_A(16)); /* under the pointer: a faint glass, the click opens it */
 #endif
-    uint32_t tc = c->out ? (f ? WHITE_A(255) : RGB(0xef, 0x8f, 0x8a)) : f ? ACC_FG : cur ? WHITE_A(255) : WHITE_A(204);
-    uint32_t ic = c->out ? tc : f ? ACC_FG : cur ? ACC3 : WHITE_A(140);
+    uint32_t tc = c->out ? (f ? SET_LOGOUT_FOCUS : SET_LOGOUT) : f ? SET_FOCUS_TEXT : cur ? SET_CURRENT : SET_CATEGORY;
+    uint32_t ic = c->out ? tc : f ? SET_FOCUS_TEXT : cur ? SET_CURRENT : SET_ICON;
     gfx_opacity_push(e);
     icon_draw(c->ic, (rtl ? cx + CATW - 20 - 30 : cx + 20) + nx, y + 17 + ny, 30, ic);
-    line(T(c->lb), (rtl ? cx + CATW - 70 : cx + 70) + nx, y + ny, 64, 27, 600, tc, -0.2f,
+    line(T(c->lb), (rtl ? cx + CATW - 70 : cx + 70) + nx, y + ny, 64, 30, 500, tc, -0.2f,
          CATW - 90 - (c->opts == supS && update_avail() ? 30 : 0), al);
     if (c->opts == supS && update_avail())
-      gfx_circle((rtl ? cx + 22 + 5 : cx + CATW - 22 - 5) + nx, y + 32 + ny, 5,
-                 f ? ACC_FG : ACC2); /* an update is waiting */
+      gfx_circle((rtl ? cx + 22 + 5 : cx + CATW - 22 - 5) + nx, y + 32 + ny, 5, SET_CURRENT); /* an update is waiting */
     gfx_opacity_pop();
   }
   gfx_offset_pop();
   gfx_opacity_pop();
   gfx_clip_pop();
   gfx_offset_pop();
-  /* ---- the panel: see-through, the drifting light shows faintly ---- */
+  /* ---- the panel: the rows sit directly on the page ---- */
   float px = MX(PNX, PNW), clx = MX(CLX, CLW);
-  gfx_rrect(px, WY, PNW, COLH, 24, RGBA(21, 19, 28, 150));
-  gfx_rrect_v(px, WY, PNW, COLH, 24, WHITE_A(10), WHITE_A(0));
-  gfx_ring(px, WY, PNW, COLH, 24, 1, WHITE_A(22)); /* glassy: the glows show a little through it */
   float oa = fa * S.loA.v * (1 - S.pkA.v), ox = -56 * S.pkX.v * (rtl ? -1 : 1);
   if (oa > 0.001f) {
     const Cat *c = &cats[S.shown];
@@ -2463,7 +2463,7 @@ static void draw(void) {
       gfx_opacity_push(oe);
       gfx_offset_push(0, 14 * S.optsDir * (1 - oe));
     }
-    line(T(c->lb), rtl ? clx + CLW - 24 : clx + 24, 0, HEADH, 38, 700, WHITE_A(255), -0.5f, CLW - 48, al);
+    line(T(c->lb), rtl ? clx + CLW - 24 : clx + 24, 0, HEADH, 40, 700, SET_CURRENT, -0.5f, CLW - 48, al);
     float y = HEADH + 18;
     if (c->prev) {
       if (!strcmp(c->prev, "about"))
@@ -2507,8 +2507,7 @@ static void draw(void) {
     }
     gfx_opacity_push(a * fa);
     gfx_offset_push(dx, 0);
-    gfx_rrect(px, WY, PNW, COLH, 24, RGBA(21, 19, 28, 196));
-    line(o->raw ? o->lb : T(o->lb), rtl ? clx + CLW - 24 : clx + 24, CLY, HEADH, 38, 700, WHITE_A(255), -0.5f, CLW - 48,
+    line(o->raw ? o->lb : T(o->lb), rtl ? clx + CLW - 24 : clx + 24, CLY, HEADH, 40, 700, SET_CURRENT, -0.5f, CLW - 48,
          al);
     const char *cur = cur_val(o);
     if (previewH)
@@ -2530,14 +2529,14 @@ static void draw(void) {
         hit_add(clx, y, CLW, 68, pick_focus, NULL, j, 0);
       gfx_opacity_push(e);
       const char *lb = !strcmp(o->k, "uiLang") ? o->opts[j].lb : T(o->opts[j].lb);
-      line(lb, (rtl ? clx + CLW - 24 : clx + 24) + nx + ex, y + ny, 68, 28, on ? 600 : 400,
-           f    ? ACC_FG
-           : on ? WHITE_A(255)
-                : WHITE_A(209),
+      line(lb, (rtl ? clx + CLW - 24 : clx + 24) + nx + ex, y + ny, 68, 30, on ? 600 : 500,
+           f    ? col_alpha(SET_FOCUS_TEXT, 0.7f)
+           : on ? SET_CURRENT
+                : SET_VALUE,
            0, CLW - 48 - 40, al);
       if (on)
         icon_draw("check", (rtl ? clx + 24 + 2 : clx + CLW - 24 - 2 - 28) + nx + ex, y + 20 + ny, 28,
-                  f ? ACC_FG : ACC3);
+                  SET_CURRENT);
       gfx_opacity_pop();
     }
     gfx_offset_pop();
@@ -2585,7 +2584,7 @@ static void draw(void) {
     float kt = since(S.keysAt), ka = kt < 0.2f ? ease_apply(EASE_CSS_EASE, kt / 0.2f) : 1;
     gfx_opacity_push(fa * ka);
     gfx_offset_push(0, fy);
-    float x = rtl ? SB_W - WX - 20 : WX + 20, cy = SB_H - 44 - 20;
+    float x = rtl ? SB_W - WX - 20 : WX + 20, cy = (form_touch() ? phone_bottom() : SB_H) - 44 - 20;
     for (int i = 0; i < n; i++) {
       if (ks[i].k2)
         x += (rtl ? -1 : 1) * (key_hint(x, cy, ks[i].k, NULL, WHITE_A(220), rtl) + 8);

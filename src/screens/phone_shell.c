@@ -10,8 +10,29 @@
 #include "ui/icon.h"
 #include "ui/img.h"
 #include "ui/widgets.h"
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+
+/* The Android window is edge-to-edge while browsing. Keep the system's room in one place so every phone page,
+   including overlays and Settings, starts below the same status-bar/cutout edge. form_safe() already throttles the
+   platform query; this extra frame cache avoids asking it repeatedly when a page draws several shared pieces. */
+static unsigned inset_frame = (unsigned)-1;
+static float inset_top, inset_bottom;
+static void phone_insets(void) {
+  unsigned fr = gfx_frame();
+  if (inset_frame == fr)
+    return;
+  inset_frame = fr;
+  float left, right;
+  form_safe(&inset_top, &inset_bottom, &left, &right);
+  const char *dev = getenv("SB_TOP_INSET");
+  if (dev && *dev) {
+    float v = (float)atof(dev);
+    if (v >= 0)
+      inset_top = v;
+  }
+}
 
 void phone_register(void) {
   app_register(SCR_HOME, &phoneHome);
@@ -31,16 +52,20 @@ static const struct {
   int scr;
   const char *icon, *label;
 } TABS[] = { { SCR_HOME, "ph_home", "Home" },
-             { SCR_DISC, "ph_disc", "Discover" },
              { SCR_SEARCH, "ph_search", "Search" },
-             { SCR_LIB, "ph_lib", "Library" } };
-#define NTABS 4
+             { SCR_LIB, "ph_lib", "My List" } };
+#define NTABS 3
 static int tab_shown(void) {
   return !player_open() &&
          (SCR == SCR_HOME || SCR == SCR_DISC || SCR == SCR_SEARCH || SCR == SCR_LIB || SCR == SCR_SET);
 }
 float phone_bottom(void) {
-  return SB_H - (tab_shown() ? PH_TABBAR : 0);
+  phone_insets();
+  return SB_H - inset_bottom - (tab_shown() ? PH_TABBAR : 0);
+}
+float phone_top_inset(void) {
+  phone_insets();
+  return inset_top;
 }
 void phone_home_top(int scr);
 static void tab_act(int scr, int b) {
@@ -49,6 +74,10 @@ static void tab_act(int scr, int b) {
     phone_home_top(scr);
     return;
   } /* the page's own tab again: back to its top */
+  if (scr == SCR_HOME && SCR == SCR_DISC) {
+    phone_go_tab(SCR_HOME);
+    return;
+  } /* Home is lit on its tab pages: tapped, it goes Home */
   phone_go_tab(scr);
 }
 void phone_go_tab(int scr) {
@@ -58,13 +87,14 @@ void phone_go_tab(int scr) {
 void phone_bars_draw(void) {
   if (!tab_shown())
     return;
-  float y = SB_H - PH_TABBAR, w = SB_W / NTABS;
+  float y = phone_bottom(), w = SB_W / NTABS;
+  y -= PH_TABBAR;
   gfx_rect(0, y, SB_W, PH_TABBAR, RGBA(18, 18, 20, 246));
   gfx_rect(0, y, SB_W, 1, WHITE_A(18));
   hit_shield(0, y, SB_W, PH_TABBAR);
   for (int i = 0; i < NTABS; i++) {
     float x = i * w;
-    int on = TABS[i].scr == (int)SCR || (TABS[i].scr == SCR_HOME && SCR == SCR_SET && 0);
+    int on = TABS[i].scr == (int)SCR || (TABS[i].scr == SCR_HOME && SCR == SCR_DISC);
     uint32_t c = on ? PH_TXT : RGBA(0xf2, 0xf1, 0xf6, 130);
     int pr = touch_pressed(NULL, tab_act, TABS[i].scr, 0);
     if (pr)

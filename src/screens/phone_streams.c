@@ -242,6 +242,9 @@ static void draw(void) {
   float k = S.k.v;
   gfx_rect(0, 0, SB_W, SB_H, BLACK_A((int)(150 * k)));
   float H = SB_H * 0.86f, top = SB_H - H * k, W = SB_W, x0 = 0;
+  float safeTop = phone_top_inset(), bottom = phone_bottom();
+  if (top < safeTop)
+    top = safeTop;
   if (W > 640) {
     x0 = (SB_W - 640) / 2;
     W = 640;
@@ -288,13 +291,13 @@ static void draw(void) {
     y += 44;
   }
   /* the list */
-  float ly = y, lh = SB_H - y, rw = W - 2 * PH_M - 24;
+  float ly = y, lh = bottom - y, rw = W - 2 * PH_M - 24;
   touch_region(x0, ly, W, lh, NULL, &S.list);
   gfx_clip_push(x0, ly, W, lh);
   float yy = ly - S.list.off + 4;
   for (int i = 0; i < S.n; i++) {
     float h = row_h(i, rw);
-    if (yy + h > ly && yy < SB_H) {
+    if (yy + h > ly && yy < bottom) {
       const Stream *s = S.items[i];
       const char *nm, *ds;
       row_text(i, &nm, &ds);
