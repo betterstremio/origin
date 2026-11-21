@@ -289,17 +289,27 @@ int plat_mem_total_mb(void) {
   size_t n = sizeof m;
   return sysctlbyname("hw.memsize", &m, &n, NULL, 0) == 0 ? (int)(m >> 20) : 0;
 }
-/* minimised and back stands in for the TV sending the app away and back; focus moving to another window is not that */
+/* Minimise/hide, app background, and screen-lock background events leave the front; focus moving to another window is
+   not that, because a film may be on a second monitor or merely covered. */
 int plat_lifecycle(const SDL_Event *e) {
   if (e->type == SDL_WINDOWEVENT &&
       (e->window.event == SDL_WINDOWEVENT_MOVED || e->window.event == SDL_WINDOWEVENT_SIZE_CHANGED ||
        e->window.event == SDL_WINDOWEVENT_MAXIMIZED || e->window.event == SDL_WINDOWEVENT_RESTORED))
     save_geom();
+  static int away;
+  int out = e->type == SDL_APP_WILLENTERBACKGROUND || e->type == SDL_APP_DIDENTERBACKGROUND;
+  int in = e->type == SDL_APP_WILLENTERFOREGROUND || e->type == SDL_APP_DIDENTERFOREGROUND;
   if (e->type == SDL_WINDOWEVENT) {
-    if (e->window.event == SDL_WINDOWEVENT_RESTORED)
-      return 1;
-    if (e->window.event == SDL_WINDOWEVENT_MINIMIZED)
-      return -1;
+    out |= e->window.event == SDL_WINDOWEVENT_MINIMIZED || e->window.event == SDL_WINDOWEVENT_HIDDEN;
+    in |= e->window.event == SDL_WINDOWEVENT_RESTORED || e->window.event == SDL_WINDOWEVENT_SHOWN;
+  }
+  if (out) {
+    away = 1;
+    return -1;
+  }
+  if (in && away) {
+    away = 0;
+    return 1;
   }
   return 0;
 }

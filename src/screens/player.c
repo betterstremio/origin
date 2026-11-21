@@ -518,6 +518,7 @@ static struct {
 static MkvSession *mkv; /* the subtitle reader of the stream playing (outside P: P starts over per source) */
 static unsigned p2pTok;
 static void close_player(int goNext, int goSim);
+static void save_progress(int push);
 static void show_osd(int keepFocus);
 static void ph_chip_show(void);
 static void hide_osd(void);
@@ -541,6 +542,17 @@ static float clock_ph(double period) {
 }
 int player_open(void) {
   return P.open;
+}
+int player_away(void) {
+  if (!P.open || P.closing)
+    return 0;
+  VidState s = video_state();
+  if (s == VID_PLAYING || s == VID_BUFFERING || s == VID_LOADING) {
+    video_pause();
+    save_progress(1);
+    return 1;
+  }
+  return 0;
 }
 int player_art_full(void) {
   return P.open && P.artA.v > 0.98f;

@@ -18,6 +18,7 @@ int player_waiting(void);
 /* "Play the best stream automatically": the title art and the wait line at once, Back cancels, the pick plays */
 void player_choose_best(const char *type, const char *id, const char *vid);
 int player_open(void);
+int player_away(void); /* pause a stream for lifecycle away; never resumes it */
 int player_nerd_lines(char (*out)[120], int max); /* Stats for nerds: what plays and how */
 int player_art_full(void);
 int player_live(void); /* the picture is up: the window must be transparent */

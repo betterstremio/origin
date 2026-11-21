@@ -16,6 +16,25 @@
 #include <dlfcn.h>
 
 static char assetDir[1024], dataDir[1024], devName[160];
+static int focusLost;
+static int foregroundSub;
+static int foreground_is_us(const cJSON *j) {
+  const cJSON *id = cJSON_GetObjectItemCaseSensitive(j, "appId");
+  if (!cJSON_IsString(id) || !id->valuestring)
+    id = cJSON_GetObjectItemCaseSensitive(j, "id");
+  return cJSON_IsString(id) && id->valuestring && !strcmp(id->valuestring, getenv("APPID") ? getenv("APPID") : "");
+}
+static void on_foreground(const char *payload, void *ud) {
+  (void)ud;
+  cJSON *j = payload ? cJSON_Parse(payload) : NULL;
+  if (focusLost && j) {
+    SDL_Event e;
+    SDL_zero(e);
+    e.type = foreground_is_us(j) ? SDL_APP_DIDENTERFOREGROUND : SDL_APP_DIDENTERBACKGROUND;
+    SDL_PushEvent(&e);
+  }
+  cJSON_Delete(j);
+}
 /* the folder takes a new file (a mount can be read-only, a folder another user's) */
 static int writable_dir(const char *d) {
   char p[1100];
@@ -124,6 +143,9 @@ void plat_pre_init(const char *appId) {
 }
 void plat_post_window(SDL_Window *w) {
   (void)w;
+  foregroundSub = plat_luna_subscribe("luna://com.webos.applicationManager/getForegroundAppInfo",
+                                      "{\"subscribe\":true}", on_foreground, NULL) != 0;
+  fprintf(stderr, "[life] SAM foreground subscription: %s\n", foregroundSub ? "on" : "unavailable");
 }
 void plat_cursor_visible(int on) {
   static SDL_bool (*fn)(SDL_bool);
@@ -267,11 +289,16 @@ int plat_lifecycle(const SDL_Event *e) {
   else if (e->type == SDL_WINDOWEVENT)
     switch (e->window.event) {
     case SDL_WINDOWEVENT_FOCUS_LOST:
+      focusLost = 1;
+      break;
     case SDL_WINDOWEVENT_HIDDEN:
     case SDL_WINDOWEVENT_MINIMIZED:
       out = 1;
       break;
     case SDL_WINDOWEVENT_FOCUS_GAINED:
+      focusLost = 0;
+      in = 1;
+      break;
     case SDL_WINDOWEVENT_SHOWN:
     case SDL_WINDOWEVENT_RESTORED:
       in = 1;

@@ -133,6 +133,7 @@ public class MainActivity extends SDLActivity {
     /* a phone sent to the back (Home, another app, the screen off): whatever plays stops at once, the film or a card's
        preview (the app's own loop sleeps while it is away, so it is done here) */
     @Override protected void onPause() { super.onPause(); if (touch) SbPlayer.pause(); }
+    @Override protected void onStop() { super.onStop(); if (touch) SbPlayer.pause(); }
     @Override protected void onResume() { super.onResume(); SbUpdater.onResume(this); if (touch && film == 1) applyFilm(true); }
 
     // ---- phones and tablets (src/platform/android/bridge_android.c calls these from the app's thread) ----
