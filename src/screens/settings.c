@@ -2269,7 +2269,7 @@ static void ph_back(int a, int b) {
   app_back();
 }
 static void ph_head(const char *t, int back) {
-  float top = phone_top_inset();
+  float top = phone_content_top();
   gfx_rect(0, 0, SB_W, top + PH_TOPBAR, PAGE);
   gfx_rect(0, top + PH_TOPBAR - 1, SB_W, 1, WHITE_A(14));
   hit_shield(0, top, SB_W, PH_TOPBAR);
@@ -2294,7 +2294,7 @@ static void draw_phone(void) {
   if (lv != phLevel) {
     phLevel = lv;
   }
-  float top = phone_top_inset() + PH_TOPBAR, bottom = phone_bottom(), W = SB_W - 2 * PH_M;
+  float top = phone_content_top() + PH_TOPBAR, bottom = phone_bottom(), W = SB_W - 2 * PH_M;
   Scroller *sc = &phS[lv];
   touch_region(0, top, SB_W, bottom - top, NULL, sc);
   gfx_clip_push(0, top, SB_W, bottom - top);

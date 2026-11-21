@@ -1,5 +1,6 @@
-/* The phone's frame around its pages: the tab bar at the bottom, the pieces the pages share. See phone.h. */
+/* The phone's frame around its pages: the tab bar or tablet dock, the pieces the pages share. See phone.h. */
 #include "screens/phone.h"
+#include "screens/board.h"
 #include "screens/player.h"
 #include "core/form.h"
 #include "core/i18n.h"
@@ -47,6 +48,11 @@ int phone_owns(int scr) {
          scr == SCR_SET || scr == SCR_LOGIN || scr == SCR_COL;
 }
 
+int phone_is_tablet(void) {
+  float shortSide = SB_W < SB_H ? SB_W : SB_H;
+  return form_touch() && shortSide >= 600;
+}
+
 /* ---- the tab bar ---- */
 static const struct {
   int scr;
@@ -59,9 +65,12 @@ static int tab_shown(void) {
   return !player_open() &&
          (SCR == SCR_HOME || SCR == SCR_DISC || SCR == SCR_SEARCH || SCR == SCR_LIB || SCR == SCR_SET);
 }
+float phone_content_top(void) {
+  return phone_top_inset() + (phone_is_tablet() ? 80 : 0); /* 12 + 56 dock + 12 breathing room */
+}
 float phone_bottom(void) {
   phone_insets();
-  return SB_H - inset_bottom - (tab_shown() ? PH_TABBAR : 0);
+  return SB_H - inset_bottom - (tab_shown() && !phone_is_tablet() ? PH_TABBAR : 0);
 }
 float phone_top_inset(void) {
   phone_insets();
@@ -84,9 +93,110 @@ void phone_go_tab(int scr) {
   extern void app_go_tab(Scr s);
   app_go_tab((Scr)scr);
 }
+
+enum { DOCK_SEARCH, DOCK_HOME, DOCK_SHOWS, DOCK_MOVIES, DOCK_ANIME, DOCK_CATALOGUE, DOCK_LIB, DOCK_PROFILE };
+typedef struct {
+  int id, type;
+  const char *label, *icon;
+} DockItem;
+
+static int dock_shown(void) {
+  return tab_shown() && !app_overlay && !phone_peek_on();
+}
+static int dock_current(int id) {
+  if (id == DOCK_SEARCH)
+    return SCR == SCR_SEARCH;
+  if (id == DOCK_HOME)
+    return SCR == SCR_HOME;
+  if (id == DOCK_LIB)
+    return SCR == SCR_LIB;
+  if (id == DOCK_PROFILE)
+    return SCR == SCR_SET;
+  if (SCR != SCR_DISC)
+    return 0;
+  return (id == DOCK_SHOWS && board_disc_type() == 1) || (id == DOCK_MOVIES && board_disc_type() == 2) ||
+         (id == DOCK_ANIME && board_disc_type() == 4) ||
+         (id == DOCK_CATALOGUE && board_disc_type() == 3);
+}
+static void dock_act(int id, int b) {
+  (void)b;
+  if (id == DOCK_PROFILE) {
+    app_open_settings();
+    return;
+  }
+  if (id == DOCK_SEARCH) {
+    phone_go_tab(SCR_SEARCH);
+    return;
+  }
+  if (id == DOCK_HOME) {
+    phone_go_tab(SCR_HOME);
+    return;
+  }
+  if (id == DOCK_LIB) {
+    phone_go_tab(SCR_LIB);
+    return;
+  }
+  int type = id == DOCK_MOVIES ? 2 : id == DOCK_ANIME ? 4 : id == DOCK_CATALOGUE ? 3 : 1;
+  if (SCR == SCR_DISC && board_disc_type() == type)
+    return;
+  board_disc_type_set(type);
+  if (SCR == SCR_DISC)
+    app_go(SCR_DISC, NULL, 1);
+  else
+    phone_go_tab(SCR_DISC);
+}
+static float dock_item_width(const DockItem *it) {
+  if (it->id == DOCK_PROFILE)
+    return 44;
+  if (it->icon)
+    return 56;
+  return text_width(T(it->label), 15, 600, 0) + 32;
+}
+static void dock_draw(void) {
+  static const DockItem all[] = {
+      { DOCK_SEARCH, 0, "Search", "ph_search" }, { DOCK_HOME, 0, "Home", NULL },
+      { DOCK_SHOWS, 1, "Shows", NULL },          { DOCK_MOVIES, 2, "Movies", NULL },
+      { DOCK_ANIME, 4, "Anime", NULL },          { DOCK_CATALOGUE, 3, "Catalogue", NULL },
+      { DOCK_LIB, 0, "My List", NULL },          { DOCK_PROFILE, 0, NULL, NULL } };
+  DockItem items[sizeof all / sizeof *all];
+  int n = 0, rtl = app_rtl();
+  for (size_t i = 0; i < sizeof all / sizeof *all; i++) {
+    if ((all[i].id == DOCK_ANIME && !app_anime_on()) || (all[i].id == DOCK_CATALOGUE && !app_catalogue_on()))
+      continue;
+    items[n++] = all[i];
+  }
+  float total = 8, y = phone_top_inset() + 12, h = 56;
+  for (int i = 0; i < n; i++)
+    total += dock_item_width(&items[i]);
+  float x = SB_W / 2 - total / 2;
+  gfx_rrect(x, y, total, h, 28, RGBA(40, 40, 44, 215));
+  gfx_ring(x, y, total, h, 28, 1, WHITE_A(22));
+  hit_shield(x, y, total, h);
+  for (int i = 0; i < n; i++) {
+    const DockItem *it = &items[rtl ? n - i - 1 : i];
+    float w = dock_item_width(it), ix = x + 4;
+    int pr = touch_pressed(NULL, dock_act, it->id, 0);
+    gfx_rrect(ix, y + 6, w, 44, 22, pr ? WHITE_A(30) : dock_current(it->id) ? WHITE_A(46) : RGBA(0, 0, 0, 0));
+    if (it->id == DOCK_PROFILE) {
+      app_profile_pic(ix + 4, y + 10, 36, 18);
+    } else if (it->icon) {
+      icon_draw(it->icon, ix + w / 2 - 12, y + 16, 24, pr ? WHITE_A(30) : dock_current(it->id) ? WHITE_A(255) : WHITE_A(204));
+    } else {
+      uint32_t c = pr ? WHITE_A(30) : dock_current(it->id) ? WHITE_A(255) : WHITE_A(204);
+      text_draw(T(it->label), ix + w / 2, y + 28 - text_line_height(15) / 2.0f, 15, 600, c, 0, w - 8, ALIGN_CENTER);
+    }
+    hit_act(ix, y + 6, w, 44, dock_act, it->id, 0);
+    x += w;
+  }
+}
 void phone_bars_draw(void) {
   if (!tab_shown())
     return;
+  if (phone_is_tablet()) {
+    if (dock_shown())
+      dock_draw();
+    return;
+  }
   float y = phone_bottom(), w = SB_W / NTABS;
   y -= PH_TABBAR;
   gfx_rect(0, y, SB_W, PH_TABBAR, RGBA(18, 18, 20, 246));
