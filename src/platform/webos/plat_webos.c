@@ -18,6 +18,7 @@
 static char assetDir[1024], dataDir[1024], devName[160];
 static int focusLost;
 static int foregroundSub;
+static int fgUs = -1; /* the last SAM answer: 1 Origin in front, 0 another app, -1 none yet (either order of events) */
 static int foreground_is_us(const cJSON *j) {
   const cJSON *id = cJSON_GetObjectItemCaseSensitive(j, "appId");
   if (!cJSON_IsString(id) || !id->valuestring)
@@ -27,6 +28,8 @@ static int foreground_is_us(const cJSON *j) {
 static void on_foreground(const char *payload, void *ud) {
   (void)ud;
   cJSON *j = payload ? cJSON_Parse(payload) : NULL;
+  if (j)
+    fgUs = foreground_is_us(j);
   if (focusLost && j) {
     SDL_Event e;
     SDL_zero(e);
@@ -290,6 +293,8 @@ int plat_lifecycle(const SDL_Event *e) {
     switch (e->window.event) {
     case SDL_WINDOWEVENT_FOCUS_LOST:
       focusLost = 1;
+      if (fgUs == 0 || !foregroundSub)
+        out = 1; /* SAM already said another app is in front (it can answer before the focus goes), or no SAM */
       break;
     case SDL_WINDOWEVENT_HIDDEN:
     case SDL_WINDOWEVENT_MINIMIZED:
