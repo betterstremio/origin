@@ -282,7 +282,7 @@ public class MainActivity extends SDLActivity {
     }
     public static boolean uiDownloadNetwork(boolean wifiOnly) {
         MainActivity a = self;
-        if (a == null || !touch || tablet) return false;
+        if (a == null || !touch) return false;
         android.net.ConnectivityManager cm = a.getSystemService(android.net.ConnectivityManager.class);
         android.net.Network network = cm == null ? null : cm.getActiveNetwork();
         android.net.NetworkCapabilities caps = network == null ? null : cm.getNetworkCapabilities(network);
@@ -291,7 +291,7 @@ public class MainActivity extends SDLActivity {
     }
     public static boolean uiDownloadStatus(int progress, boolean visible) {
         MainActivity a = self;
-        return a != null && SbDownloads.update(a, progress, visible);
+        return a != null && touch && SbDownloads.update(a, progress, visible);
     }
     /* SDL's onDestroy waits for the C main() to return (its store is saved by then) but leaves the process alive, and
        the next launch would run main() again over the last run's C globals ("quitting" still set: the app closed on its

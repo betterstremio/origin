@@ -128,8 +128,8 @@ void plat_pre_init(const char *appId) {
               strcmp(getenv("SB_FORM"),
                      "tv"); /* a phone or a tablet: MainActivity turns the screen, fingers are read as fingers */
   SDL_SetHint(SDL_HINT_ORIENTATIONS, touch ? "Portrait LandscapeLeft LandscapeRight" : "LandscapeLeft LandscapeRight");
-  const char *form = getenv("SB_FORM");
-  SDL_SetHint(SDL_HINT_ANDROID_BLOCK_ON_PAUSE, form && !strcmp(form, "phone") ? "0" : "1");
+  SDL_SetHint(SDL_HINT_ANDROID_BLOCK_ON_PAUSE,
+              touch ? "0" : "1"); /* keep pumping downloads while a touch device is away */
   SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, touch ? "0" : "1"); /* a TV's touch screen (rare): taps act as the pointer */
   SDL_SetHint(SDL_HINT_ACCELEROMETER_AS_JOYSTICK, "0");
   applog_start(dataDir);

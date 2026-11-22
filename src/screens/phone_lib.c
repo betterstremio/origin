@@ -70,15 +70,21 @@ static void draw(void) {
   float bottom = phone_bottom();
   float top = phone_content_top();
   gfx_rect(0, 0, SB_W, SB_H, PAGE);
-  text_draw(T(B.downloads ? "Downloads" : "Library"), PH_M, top + PH_TOPBAR / 2 - text_line_height(22) / 2.0f, 22, 800,
-            PH_TXT, -0.4f, SB_W / 2, ALIGN_LEFT);
+  float heading = top + PH_TOPBAR / 2 - text_line_height(22) / 2.0f;
   if (B.downloads) {
+    float width = SB_W - 2 * PH_M;
+    if (width > 720)
+      width = 720;
+    float x = (SB_W - width) / 2;
+    text_draw(T("Downloads"), x, heading, 22, 800, PH_TXT, -0.4f, width / 2, ALIGN_LEFT);
     const char *label = T("My List");
     float w = text_width(label, PH_TX_BODY, 700, 0) + 32;
-    phone_button(label, NULL, SB_W - PH_M - w, top + 6, w, 44, 0, downloads_act, 0, 0);
-    phone_downloads_draw(top + PH_TOPBAR, bottom);
+    phone_button(label, NULL, x + width - w, top + 6, w, 44, 0, downloads_act, 0, 0);
+    phone_downloads_draw(x, width, top + PH_TOPBAR, bottom);
     return;
   }
+  text_draw(T("Library"), PH_M, heading, 22, 800, PH_TXT, -0.4f, SB_W / 2, ALIGN_LEFT);
+  int downloadToolbar = downloads_enabled() && phone_is_tablet();
   {
     const char *sl = lib_ph_sort_label();
     float w = text_width(sl, PH_TX_SMALL + 1, 600, 0) + 40, x = SB_W - PH_M - w;
@@ -88,9 +94,14 @@ static void draw(void) {
     text_draw(sl, x + 30, top + PH_TOPBAR / 2 - text_line_height(PH_TX_SMALL + 1) / 2.0f, PH_TX_SMALL + 1, 600, PH_TXT, 0,
               w - 34, ALIGN_LEFT);
     hit_act(x, top + PH_TOPBAR / 2 - 22, w, 44, sort_act, 0, 0);
+    if (downloadToolbar) {
+      const char *label = T("Downloads");
+      float dw = text_width(label, PH_TX_BODY, 700, 0) + 32;
+      phone_button(label, NULL, x - dw - 8, top + 6, dw, 44, 0, downloads_act, 0, 0);
+    }
   }
   float y = top + PH_TOPBAR + 2;
-  if (downloads_enabled()) {
+  if (downloads_enabled() && !downloadToolbar) {
     phone_button(T("Downloads"), NULL, PH_M, y, SB_W - 2 * PH_M, 44, 0, downloads_act, 0, 0);
     y += 53;
   }

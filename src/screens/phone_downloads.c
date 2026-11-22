@@ -114,7 +114,10 @@ static int delete_key(int k) {
 }
 
 static void draw_delete(void) {
-  float x = PH_M, w = SB_W - 2 * PH_M, h = 160, y = (SB_H - h) / 2;
+  float w = SB_W - 2 * PH_M;
+  if (w > 420)
+    w = 420;
+  float x = (SB_W - w) / 2, h = 160, y = (SB_H - h) / 2;
   float tx = x + 16, tw = w - 32, bw = (tw - 8) / 2;
   gfx_rect(0, 0, SB_W, SB_H, BLACK_A(152));
   hit_act(0, 0, SB_W, SB_H, finish_delete, 0, 0);
@@ -123,7 +126,7 @@ static void draw_delete(void) {
   text_draw_wrapped(T(deleteSeason ? "Delete season downloads?" : "Delete download?"), tx, y + 16, tw, 2, PH_TX_ROW,
                     800, PH_TXT, 0, ALIGN_LEFT, 21);
   text_draw_wrapped(T(deleteSeason ? "This clears the files and queue for this season."
-                                   : "This removes the saved file from your phone."),
+                                   : "This removes the saved file from your device."),
                     tx, y + 58, tw, 2, PH_TX_BODY, 500, PH_TXT2, 0, ALIGN_LEFT, 18);
   phone_button(T("Cancel"), NULL, tx, y + 101, bw, 44, 0, finish_delete, 0, 0);
   phone_button(T("Delete"), NULL, tx + bw + 8, y + 101, bw, 44, 1, finish_delete, 1, 0);
@@ -179,46 +182,45 @@ static void status_label(char *out, size_t cap, const Download *d) {
   }
 }
 
-static void item_draw(const Download *d, float y, float w, int group) {
-  gfx_rrect(PH_M, y, w, 104, 10, WHITE_A(12));
+static void item_draw(const Download *d, float x, float y, float w, int group) {
+  gfx_rrect(x, y, w, 104, 10, WHITE_A(12));
   const char *title = group && d->label[0] ? d->label : d->title;
-  text_draw(title, PH_M + 12, y + 10, PH_TX_BODY, 700, PH_TXT, 0, w - 24, ALIGN_LEFT);
+  text_draw(title, x + 12, y + 10, PH_TX_BODY, 700, PH_TXT, 0, w - 24, ALIGN_LEFT);
   char status[96];
   status_label(status, sizeof status, d);
-  text_draw(status, PH_M + 12, y + 31, PH_TX_SMALL, 500, PH_TXT2, 0, w - 24, ALIGN_LEFT);
+  text_draw(status, x + 12, y + 31, PH_TX_SMALL, 500, PH_TXT2, 0, w - 24, ALIGN_LEFT);
   const char *action = d->state == DL_READY    ? d->position > 0 ? "Resume" : "Play"
                        : in_progress(d->state) ? "Pause"
                        : d->state == DL_PAUSED ? "Resume"
                                                : "Retry";
   float bw = (w - 32) / 2;
-  phone_button(T(action), NULL, PH_M + 12, y + 53, bw, 44, d->state == DL_READY, item_act, d->key, 0);
-  phone_button(T("Delete"), NULL, PH_M + 20 + bw, y + 53, bw, 44, 0, remove_act, d->key, 0);
+  phone_button(T(action), NULL, x + 12, y + 53, bw, 44, d->state == DL_READY, item_act, d->key, 0);
+  phone_button(T("Delete"), NULL, x + 20 + bw, y + 53, bw, 44, 0, remove_act, d->key, 0);
 }
 
-static void group_draw(const Download *d, float y, float w, int n, int ready, int busy) {
+static void group_draw(const Download *d, float x, float y, float w, int n, int ready, int busy) {
   char title[350], progress[100];
   if (d->season)
     snprintf(title, sizeof title, "%s · %s %d", d->title, T("Season"), d->season);
   else
     snprintf(title, sizeof title, "%s · %s", d->title, T("Specials"));
-  text_draw(title, PH_M, y + 4, PH_TX_ROW, 800, PH_TXT, 0, w, ALIGN_LEFT);
+  text_draw(title, x, y + 4, PH_TX_ROW, 800, PH_TXT, 0, w, ALIGN_LEFT);
   char done[24], total[24];
   snprintf(done, sizeof done, "%d", ready);
   snprintf(total, sizeof total, "%d", n);
   snprintf(progress, sizeof progress, "%s", T2("{done} of {total} downloaded", "done", done, "total", total));
-  text_draw(progress, PH_M, y + 30, PH_TX_SMALL, 500, PH_TXT2, 0, w, ALIGN_LEFT);
+  text_draw(progress, x, y + 30, PH_TX_SMALL, 500, PH_TXT2, 0, w, ALIGN_LEFT);
   float bw = (w - 8) / 2;
   if (ready < n)
-    phone_button(T(busy ? "Pause season" : "Retry missing"), NULL, PH_M, y + 50, bw, 44, 0, season_action, d->key,
-                 busy);
-  phone_button(T("Delete season"), NULL, PH_M + (ready < n ? bw + 8 : 0), y + 50, bw, 44, 0, remove_act, d->key, 1);
+    phone_button(T(busy ? "Pause season" : "Retry missing"), NULL, x, y + 50, bw, 44, 0, season_action, d->key, busy);
+  phone_button(T("Delete season"), NULL, x + (ready < n ? bw + 8 : 0), y + 50, bw, 44, 0, remove_act, d->key, 1);
 }
 
-void phone_downloads_draw(float top, float bottom) {
-  float w = SB_W - 2 * PH_M;
+void phone_downloads_draw(float x, float w, float top, float bottom) {
   float y0 = top + 80, y = y0 - page.off;
-  phone_button(T(downloads_wifi_only() ? "Wi-Fi only" : "Wi-Fi and mobile data"), NULL, PH_M, top, w, 44, 0, wifi_act,
-               0, 0);
+  const char *network = T(downloads_wifi_only() ? "Wi-Fi only" : "Wi-Fi and mobile data");
+  float networkWidth = phone_is_tablet() ? text_width(network, PH_TX_BODY, 700, 0) + 32 : w;
+  phone_button(network, NULL, x, top, networkWidth, 44, 0, wifi_act, 0, 0);
   int n = downloads_count();
   const Download **items = n ? malloc((size_t)n * sizeof *items) : NULL;
   if (!items)
@@ -232,9 +234,9 @@ void phone_downloads_draw(float top, float bottom) {
     qsort(items, (size_t)n, sizeof *items, compare);
   char bytes[32];
   size_label(bytes, sizeof bytes, used);
-  text_draw(T1("{size} used by downloads", "size", bytes), PH_M, top + 53, PH_TX_SMALL, 600, PH_TXT2, 0, w, ALIGN_LEFT);
-  touch_region(0, y0, SB_W, bottom - y0, NULL, &page);
-  gfx_clip_push(0, y0, SB_W, bottom - y0);
+  text_draw(T1("{size} used by downloads", "size", bytes), x, top + 53, PH_TX_SMALL, 600, PH_TXT2, 0, w, ALIGN_LEFT);
+  touch_region(x, y0, w, bottom - y0, NULL, &page);
+  gfx_clip_push(x, y0, w, bottom - y0);
   for (int i = 0; i < n;) {
     const Download *d = items[i];
     int end = i + 1;
@@ -248,17 +250,17 @@ void phone_downloads_draw(float top, float bottom) {
       }
       float h = 102;
       if (y + h > y0 && y < bottom)
-        group_draw(d, y, w, end - i, ready, busy);
+        group_draw(d, x, y, w, end - i, ready, busy);
       y += h;
     }
     for (; i < end; i++) {
       if (y + 104 > y0 && y < bottom)
-        item_draw(items[i], y, w, d->season >= 0);
+        item_draw(items[i], x, y, w, d->season >= 0);
       y += 112;
     }
   }
   if (!n)
-    text_draw(T("No downloads yet"), SB_W / 2, y + 36, PH_TX_BODY, 600, PH_TXT2, 0, w, ALIGN_CENTER);
+    text_draw(T("No downloads yet"), x + w / 2, y + 36, PH_TX_BODY, 600, PH_TXT2, 0, w, ALIGN_CENTER);
   gfx_clip_pop();
   free(items);
   scroller_limits(&page, 0, y + page.off + 12 - bottom);

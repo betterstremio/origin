@@ -49,7 +49,7 @@ static Transfer transfer;
 static char directory[448];
 
 int downloads_enabled(void) {
-  return form_touch() && !form_tablet();
+  return form_touch();
 }
 
 int downloads_eligible(const Stream *s) {

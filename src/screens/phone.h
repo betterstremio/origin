@@ -65,7 +65,7 @@ void phone_streams_close(void);
 int phone_streams_on(void);
 void phone_downloads_enter(void);
 void phone_downloads_tick(float dt);
-void phone_downloads_draw(float top, float bottom);
+void phone_downloads_draw(float x, float width, float top, float bottom);
 
 extern Screen phoneHome, phoneDisc, phoneCol, phoneDetail, phoneSearch, phoneLib;
 #endif

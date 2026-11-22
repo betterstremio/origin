@@ -448,18 +448,23 @@ static float episodes_draw(float y, float bottom) {
   Season *s = &D.s[D.si];
   if (downloads_enabled() && s->neps) {
     float w = SB_W - 2 * PH_M;
-    phone_button(T(D.seasonDownload ? "Cancel season download" : "Download season"), NULL, PH_M, y, w, 44, 0,
+    float actionWidth = phone_is_tablet() && w > 320 ? 320 : w;
+    phone_button(T(D.seasonDownload ? "Cancel season download" : "Download season"), NULL, PH_M, y, actionWidth, 44, 0,
                  download_season_act, 0, 0);
     y += 52;
     if (D.seasonDownload) {
       static const char *qualityNames[] = { "Quality: Auto", "Quality: Up to 1080p", "Quality: Up to 720p" };
-      phone_button(T(D.unwatchedOnly ? "Unwatched only" : "All aired episodes"), NULL, PH_M, y, w, 44, 0,
-                   season_scope_act, 0, 0);
-      y += 50;
-      phone_button(T(qualityNames[D.downloadQuality]), NULL, PH_M, y, w, 44, 0, season_quality_act, 0, 0);
-      y += 50;
-      phone_button(T("Start download"), NULL, PH_M, y, w, 44, 1, queue_season_act, 0, 0);
-      y += 54;
+      const char *labels[] = { D.unwatchedOnly ? "Unwatched only" : "All aired episodes",
+                               qualityNames[D.downloadQuality], "Start download" };
+      const HitFn actions[] = { season_scope_act, season_quality_act, queue_season_act };
+      if (w > 720)
+        w = 720;
+      int columns = w >= 600 ? 3 : 1;
+      float cell = (w - 8 * (columns - 1)) / columns;
+      for (int i = 0; i < 3; i++)
+        phone_button(T(labels[i]), NULL, PH_M + (i % columns) * (cell + 8), y + (i / columns) * 50, cell, 44, i == 2,
+                     actions[i], 0, 0);
+      y += (2 / columns) * 50 + 54;
     }
   }
   float tw = SB_W >= 600 ? 200 : 136, th = tw * 9 / 16, rowH = th + 16 + 44;
