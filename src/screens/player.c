@@ -8626,6 +8626,17 @@ static void vol_draw(void) {
   gfx_opacity_pop();
 #endif
 }
+/* the focused button is a pill, its name beside the icon, and all of the pill takes the pointer (#34: the icon alone
+   did, so a click on the name fell through to the picture: play / pause). The pill's width is the gap opened between
+   this button and the next as they slide, so it follows the slide and stops short of the next icon even when the focus
+   moves mid-slide. The last button of the left group keeps its icon: nothing after it shows where its pill ends */
+static float btn_ptr_w(int i) {
+  float w = P.btns[i].w;
+  if (i != P.bIdx || i == P.nL - 1)
+    return w;
+  float next_dx = i + 1 < P.nbtn ? P.btns[i + 1].dx.v : 0;
+  return w + fmaxf(0, next_dx - P.btns[i].dx.v);
+}
 void player_ptr(int type, float x, float y) {
   if (!P.open || P.closing || !P.live)
     return; /* the art is up (resolving): nothing to point at */
@@ -8740,7 +8751,7 @@ void player_ptr(int type, float x, float y) {
     arm_hide(); /* moving brings the controls */
   if (onBtns)
     for (int i = 0; i < P.nbtn; i++)
-      if (x >= P.btns[i].x && x <= P.btns[i].x + P.btns[i].w) {
+      if (x >= P.btns[i].x && x <= P.btns[i].x + btn_ptr_w(i)) {
         if (P.row != 0 || P.bIdx != i) {
           P.row = 0;
           P.bIdx = i;
