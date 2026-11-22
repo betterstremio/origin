@@ -16,27 +16,31 @@
 #include <dlfcn.h>
 
 static char assetDir[1024], dataDir[1024], devName[160];
-static int focusLost;
+/* Which app is in front: SAM (getForegroundAppInfo, subscribed) decides when it answers. Measured on the C1
+   (3.0.10): the Home launcher sends Origin no focus event at all, and another app sends only MINIMIZED while SDL
+   still flags the window as focused, so SDL's focus cannot bring Origin back; SAM can. */
 static int foregroundSub;
-static int fgUs = -1; /* the last SAM answer: 1 Origin in front, 0 another app, -1 none yet (either order of events) */
-static int foreground_is_us(const cJSON *j) {
+static int fgUs = -1; /* SAM's last answer: 1 Origin in front, 0 another app (the Home launcher too), -1 none yet */
+static int fg_state(const cJSON *j) { /* 1 us, 0 another app, -1 no app named (a transition) */
   const cJSON *id = cJSON_GetObjectItemCaseSensitive(j, "appId");
-  if (!cJSON_IsString(id) || !id->valuestring)
+  if (!cJSON_IsString(id) || !id->valuestring || !*id->valuestring)
     id = cJSON_GetObjectItemCaseSensitive(j, "id");
-  return cJSON_IsString(id) && id->valuestring && !strcmp(id->valuestring, getenv("APPID") ? getenv("APPID") : "");
+  if (!cJSON_IsString(id) || !id->valuestring || !*id->valuestring)
+    return -1;
+  return !strcmp(id->valuestring, getenv("APPID") ? getenv("APPID") : "");
 }
 static void on_foreground(const char *payload, void *ud) {
   (void)ud;
   cJSON *j = payload ? cJSON_Parse(payload) : NULL;
-  if (j)
-    fgUs = foreground_is_us(j);
-  if (focusLost && j) {
-    SDL_Event e;
-    SDL_zero(e);
-    e.type = foreground_is_us(j) ? SDL_APP_DIDENTERFOREGROUND : SDL_APP_DIDENTERBACKGROUND;
-    SDL_PushEvent(&e);
-  }
+  int st = j ? fg_state(j) : -1;
   cJSON_Delete(j);
+  if (st < 0 || st == fgUs)
+    return;
+  fgUs = st;
+  SDL_Event e;
+  SDL_zero(e);
+  e.type = st ? SDL_APP_DIDENTERFOREGROUND : SDL_APP_DIDENTERBACKGROUND;
+  SDL_PushEvent(&e); /* (plat_lifecycle reads it on the main thread) */
 }
 /* the folder takes a new file (a mount can be read-only, a folder another user's) */
 static int writable_dir(const char *d) {
@@ -284,43 +288,33 @@ int plat_mem_total_mb(void) {
    start is not a resume */
 int plat_lifecycle(const SDL_Event *e) {
   static int away;
+  static Uint32 awayAt, pollAt;
   int in = 0, out = 0;
-  if (!e) {
-    static Uint32 focusPollAt;
+  if (!e) { /* the away loop's backstop, twice a second: SAM says Origin is in front and the window is not hidden */
     Uint32 now = SDL_GetTicks();
-    if (now - focusPollAt < 500)
-      return 0; /* webOS can leave the app with no matching focus-gained event */
-    focusPollAt = now;
-    if (!focusLost)
+    if (!away || now - pollAt < 500 || now - awayAt < 1500)
       return 0;
+    pollAt = now;
     SDL_Window *w = SDL_GetKeyboardFocus();
-    int hasFocus = w && (SDL_GetWindowFlags(w) & SDL_WINDOW_INPUT_FOCUS);
-    if (fgUs == 1 || hasFocus) {
-      focusLost = 0;
-      in = 1; /* SAM may have reported Origin before focus loss; SDL focus is the final backstop */
-    }
-  }
-  else if (e->type == SDL_APP_WILLENTERBACKGROUND || e->type == SDL_APP_DIDENTERBACKGROUND)
+    Uint32 fl = w ? SDL_GetWindowFlags(w) : 0;
+    int shown = w && !(fl & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_HIDDEN));
+    if (foregroundSub ? fgUs == 1 && shown : shown && (fl & SDL_WINDOW_INPUT_FOCUS))
+      in = 1;
+  } else if (e->type == SDL_APP_WILLENTERBACKGROUND || e->type == SDL_APP_DIDENTERBACKGROUND)
     out = 1;
   else if (e->type == SDL_APP_WILLENTERFOREGROUND || e->type == SDL_APP_DIDENTERFOREGROUND)
-    in = 1;
+    in = !foregroundSub || fgUs != 0;
   else if (e->type == SDL_WINDOWEVENT)
     switch (e->window.event) {
-    case SDL_WINDOWEVENT_FOCUS_LOST:
-      focusLost = 1;
-      out = 1; /* anything over Origin (another app, the Home launcher, the quick settings) pauses it (user's call) */
-      break;
+    case SDL_WINDOWEVENT_FOCUS_LOST: /* anything taking the focus pauses Origin (user's call), SAM or not */
     case SDL_WINDOWEVENT_HIDDEN:
     case SDL_WINDOWEVENT_MINIMIZED:
       out = 1;
       break;
     case SDL_WINDOWEVENT_FOCUS_GAINED:
-      focusLost = 0;
-      in = 1;
-      break;
     case SDL_WINDOWEVENT_SHOWN:
     case SDL_WINDOWEVENT_RESTORED:
-      in = 1;
+      in = !foregroundSub || fgUs != 0; /* not while SAM says another app is in front */
       break;
     default:
       break;
@@ -329,6 +323,8 @@ int plat_lifecycle(const SDL_Event *e) {
     if (!away)
       fprintf(stderr, "[life] to the back (%d/%d)\n", e ? e->type : 0,
               e && e->type == SDL_WINDOWEVENT ? e->window.event : 0);
+    if (!away)
+      awayAt = SDL_GetTicks();
     away = 1;
     return -1;
   }
