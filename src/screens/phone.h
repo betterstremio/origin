@@ -59,9 +59,13 @@ float phone_peek_since(void); /* seconds it has been open */
 void phone_peek_shut_now(void); /* gone at once, no motion (the app sent to the back) */
 
 /* the streams sheet */
-void phone_streams_show(const char *type, const char *id, const char *vid, const char *title, const char *label);
+void phone_streams_show(const char *type, const char *id, const char *vid, const char *title, const char *label,
+                        int season, int episode);
 void phone_streams_close(void);
 int phone_streams_on(void);
+void phone_downloads_enter(void);
+void phone_downloads_tick(float dt);
+void phone_downloads_draw(float top, float bottom);
 
 extern Screen phoneHome, phoneDisc, phoneCol, phoneDetail, phoneSearch, phoneLib;
 #endif

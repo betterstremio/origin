@@ -408,7 +408,8 @@ static cJSON *fetch(const Job *j, int *err, int *none) {
     name = ov = "";
   cJSON_AddStringToObject(v, "name", name);
   cJSON_AddStringToObject(v, "overview", ov);
-  cJSON_ArrayForEach(t, enOnly ? NULL : js_arr(d, "genres")) { /* (English: the logo only, the genres stay) */
+  const cJSON *genres = enOnly ? NULL : js_arr(d, "genres"); /* English: the logo only, the genres stay */
+  cJSON_ArrayForEach(t, genres) {
     const char *g = js_str(t, "name", "");
     if (*g)
       cJSON_AddItemToArray(gs, cJSON_CreateString(g));

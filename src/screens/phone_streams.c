@@ -8,6 +8,7 @@
 #include "core/hit.h"
 #include "core/keys.h"
 #include "core/best.h"
+#include "core/downloads.h"
 #include "core/stremio.h"
 #include "platform/plat.h"
 #include "ui/gfx.h"
@@ -28,7 +29,7 @@ typedef struct {
   int n;
 } Group;
 static struct {
-  int open, closing;
+  int open, closing, season, episode;
   Tween k;
   unsigned tok;
   int loading, pending, asked;
@@ -134,7 +135,8 @@ static void on_ans(int pending, int count, void *ud) {
   }
 }
 
-void phone_streams_show(const char *type, const char *id, const char *vid, const char *title, const char *label) {
+void phone_streams_show(const char *type, const char *id, const char *vid, const char *title, const char *label,
+                        int season, int episode) {
   groups_clear();
   memset(S.items, 0, sizeof S.items);
   S.n = 0;
@@ -150,6 +152,8 @@ void phone_streams_show(const char *type, const char *id, const char *vid, const
   snprintf(S.vid, sizeof S.vid, "%s", vid);
   snprintf(S.title, sizeof S.title, "%s", title ? title : "");
   snprintf(S.label, sizeof S.label, "%s", label ? label : "");
+  S.season = season;
+  S.episode = episode;
   S.hasResume = sb_resume_stream(id, vid, &S.resume);
   if (S.hasResume)
     snprintf(S.resume.name, sizeof S.resume.name, "%s", T("Resume last stream"));
@@ -203,6 +207,27 @@ static void play_act(int i, int b) {
   app_play(&s, S.type, S.id, S.vid, 0);
 }
 
+static int downloadable(int i) {
+  return downloads_enabled() && S.kind[i] != R_RESUME && downloads_eligible(S.items[i]);
+}
+
+static void download_act(int i, int b) {
+  (void)b;
+  if (i < 0 || i >= S.n || !downloadable(i))
+    return;
+  Download d = { .season = S.season, .episode = S.episode };
+  snprintf(d.type, sizeof d.type, "%s", S.type);
+  snprintf(d.id, sizeof d.id, "%s", S.id);
+  snprintf(d.vid, sizeof d.vid, "%s", S.vid);
+  snprintf(d.title, sizeof d.title, "%s", S.title);
+  snprintf(d.label, sizeof d.label, "%s", S.label);
+  int result = downloads_add(&d, S.items[i], 0);
+  toast(T(result == DL_ADD_OK       ? "Added to Downloads"
+          : result == DL_ADD_EXISTS ? "Already in Downloads"
+                                    : "Could not add download"),
+        2200, NULL);
+}
+
 static int key(int k) {
   if (k == K_BACK)
     phone_streams_close();
@@ -234,7 +259,8 @@ static float row_h(int i, float w) {
   row_text(i, &nm, &ds);
   int a = text_wrap_count(nm, w, 2, PH_TX_BODY + 1, 700, 0),
       b = *ds ? text_wrap_count(ds, w, 4, PH_TX_SMALL + 1, 400, 0) : 0;
-  return 12 + 18 + a * 20 + (b ? 4 + b * 18 : 0) + (S.kind[i] == R_BEST && S.bestSum[0] ? 22 : 0) + 12;
+  return 12 + 18 + a * 20 + (b ? 4 + b * 18 : 0) + (S.kind[i] == R_BEST && S.bestSum[0] ? 22 : 0) + 12 +
+         (downloadable(i) ? 46 : 0);
 }
 static void draw(void) {
   if (!S.open)
@@ -325,7 +351,18 @@ static void draw(void) {
       }
       if (S.kind[i] == R_BEST && S.bestSum[0])
         text_draw(S.bestSum, tx, ty + 4, PH_TX_SMALL, 600, PH_TXT2, 0, rw, ALIGN_LEFT);
-      hit_act(x0 + PH_M, yy, W - 2 * PH_M, h - 8, play_act, i, 0);
+      int dl = downloadable(i);
+      hit_act(x0 + PH_M, yy, W - 2 * PH_M, h - 8 - (dl ? 46 : 0), play_act, i, 0);
+      if (dl) {
+        char label[96];
+        if (s->size >= 1e9)
+          snprintf(label, sizeof label, "%s · %.1f GB", T("Download"), s->size / 1e9);
+        else if (s->size > 0)
+          snprintf(label, sizeof label, "%s · %.0f MB", T("Download"), s->size / 1e6);
+        else
+          snprintf(label, sizeof label, "%s", T("Download"));
+        phone_button(label, NULL, tx, yy + h - 54, rw, 42, 0, download_act, i, 0);
+      }
     }
     yy += h;
   }

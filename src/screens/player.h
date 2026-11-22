@@ -7,6 +7,7 @@
 #include "core/trailer.h"
 void player_init(void);
 void player_play(const Stream *s, const char *type, const char *id, const char *vid, int fromStart);
+int player_play_download(int key);
 /* the title's art at once, before anything plays (a trailer being found: type "other", trailerName for its tag); then
    player_status / player_fail say how it goes on the art, player_close takes it away, and player_play starts behind it.
    player_waiting: that art is up and still waiting (Back closes it) */

@@ -280,6 +280,19 @@ public class MainActivity extends SDLActivity {
         try { Intent i = new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)); i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); a.startActivity(i); return true; }
         catch (Exception e) { Log.w(TAG, "open " + url, e); return false; }
     }
+    public static boolean uiDownloadNetwork(boolean wifiOnly) {
+        MainActivity a = self;
+        if (a == null || !touch || tablet) return false;
+        android.net.ConnectivityManager cm = a.getSystemService(android.net.ConnectivityManager.class);
+        android.net.Network network = cm == null ? null : cm.getActiveNetwork();
+        android.net.NetworkCapabilities caps = network == null ? null : cm.getNetworkCapabilities(network);
+        return caps != null && caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                && (!wifiOnly || caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI));
+    }
+    public static boolean uiDownloadStatus(int progress, boolean visible) {
+        MainActivity a = self;
+        return a != null && SbDownloads.update(a, progress, visible);
+    }
     /* SDL's onDestroy waits for the C main() to return (its store is saved by then) but leaves the process alive, and
        the next launch would run main() again over the last run's C globals ("quitting" still set: the app closed on its
        first frame, issue #1). So the process ends here, and every launch starts a fresh one. */

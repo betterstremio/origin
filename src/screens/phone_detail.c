@@ -10,6 +10,7 @@
 #include "core/hit.h"
 #include "core/json.h"
 #include "core/best.h"
+#include "core/downloads.h"
 #include "core/stremio.h"
 #include "ui/gfx.h"
 #include "ui/text.h"
@@ -39,7 +40,7 @@ static struct {
   const cJSON *const *vids;
   int nvids;
   Scroller page, seasons;
-  int descOpen;
+  int descOpen, seasonDownload, unwatchedOnly, downloadQuality;
   char cast[400];
 } D;
 static int is_series(void) {
@@ -204,9 +205,59 @@ static const cJSON *video_of(const char *vid) {
   return NULL;
 }
 static void open_list(const char *vid) {
+  const cJSON *v = is_series() ? video_of(vid) : NULL;
   char lb[300];
-  ep_label(is_series() ? video_of(vid) : NULL, lb, sizeof lb);
-  phone_streams_show(D.p.it.type, ID(), vid, D.it.name[0] ? D.it.name : D.p.it.name, lb);
+  ep_label(v, lb, sizeof lb);
+  phone_streams_show(D.p.it.type, ID(), vid, D.it.name[0] ? D.it.name : D.p.it.name, lb,
+                     v ? (int)js_num(v, "season", 0) : -1, v ? (int)js_num(v, "episode", js_num(v, "number", 0)) : 0);
+}
+static const int qualities[] = { 0, 1080, 720 };
+static void download_season_act(int a, int b) {
+  (void)a;
+  (void)b;
+  D.seasonDownload = !D.seasonDownload;
+}
+static void season_scope_act(int a, int b) {
+  (void)a;
+  (void)b;
+  D.unwatchedOnly = !D.unwatchedOnly;
+}
+static void season_quality_act(int a, int b) {
+  (void)a;
+  (void)b;
+  D.downloadQuality = (D.downloadQuality + 1) % (int)(sizeof qualities / sizeof *qualities);
+}
+static void queue_season_act(int a, int b) {
+  (void)a;
+  (void)b;
+  if (!D.ns || !D.seasonDownload)
+    return;
+  const Season *s = &D.s[D.si];
+  int added = 0, failed = 0, exists = 0;
+  Download d = { .season = s->n };
+  snprintf(d.type, sizeof d.type, "%s", D.p.it.type);
+  snprintf(d.id, sizeof d.id, "%s", ID());
+  snprintf(d.title, sizeof d.title, "%s", D.it.name[0] ? D.it.name : D.p.it.name);
+  for (int i = 0; i < s->neps; i++) {
+    const cJSON *v = s->eps[i];
+    if (unreleased(v) || (D.unwatchedOnly && ep_watched(v)))
+      continue;
+    snprintf(d.vid, sizeof d.vid, "%s", js_str(v, "id", ""));
+    if (!d.vid[0])
+      continue;
+    d.episode = (int)js_num(v, "episode", js_num(v, "number", i + 1));
+    ep_label(v, d.label, sizeof d.label);
+    int result = downloads_add(&d, NULL, qualities[D.downloadQuality]);
+    added += result == DL_ADD_OK;
+    exists += result == DL_ADD_EXISTS;
+    failed += result == DL_ADD_FAILED;
+  }
+  D.seasonDownload = 0;
+  toast(T(failed   ? (added ? "Some episodes could not be queued" : "Could not add downloads")
+          : added  ? "Added to Downloads"
+          : exists ? "Already in Downloads"
+                   : "No episodes to download"),
+        2400, NULL);
 }
 static void play_vid(const char *vid) {
   const cJSON *v = is_series() ? video_of(vid) : NULL;
@@ -325,6 +376,7 @@ static void enter(const void *pp) {
   D.it = D.p.it;
   D.cast[0] = 0;
   D.descOpen = 0;
+  D.seasonDownload = D.unwatchedOnly = D.downloadQuality = 0;
   scroller_set(&D.page, 0);
   scroller_set(&D.seasons, 0);
   cJSON *mm = sb_meta_cached(D.p.it.type, ID());
@@ -394,6 +446,22 @@ static float episodes_draw(float y, float bottom) {
     y += 34;
   }
   Season *s = &D.s[D.si];
+  if (downloads_enabled() && s->neps) {
+    float w = SB_W - 2 * PH_M;
+    phone_button(T(D.seasonDownload ? "Cancel season download" : "Download season"), NULL, PH_M, y, w, 44, 0,
+                 download_season_act, 0, 0);
+    y += 52;
+    if (D.seasonDownload) {
+      static const char *qualityNames[] = { "Quality: Auto", "Quality: Up to 1080p", "Quality: Up to 720p" };
+      phone_button(T(D.unwatchedOnly ? "Unwatched only" : "All aired episodes"), NULL, PH_M, y, w, 44, 0,
+                   season_scope_act, 0, 0);
+      y += 50;
+      phone_button(T(qualityNames[D.downloadQuality]), NULL, PH_M, y, w, 44, 0, season_quality_act, 0, 0);
+      y += 50;
+      phone_button(T("Start download"), NULL, PH_M, y, w, 44, 1, queue_season_act, 0, 0);
+      y += 54;
+    }
+  }
   float tw = SB_W >= 600 ? 200 : 136, th = tw * 9 / 16, rowH = th + 16 + 44;
   const char *cur = js_str(js_obj(lib_get(ID()), "state"), "video_id", "");
   for (int e = 0; e < s->neps; e++) {

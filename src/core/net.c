@@ -1300,7 +1300,8 @@ static int pipe_poll(void *ud, curl_off_t a, curl_off_t b, curl_off_t c, curl_of
   }
   return 0;
 }
-int net_pipe_sync(const char *url, const char *headers, int head, NetHdrSink hs, NetSink sink, void *ud, int stallSec) {
+static int pipe_sync(const char *url, const char *headers, int head, NetHdrSink hs, NetSink sink, void *ud,
+                     int stallSec, int media) {
   if (!f_easy_init && !resolve())
     return 0;
   CURL *c = f_easy_init();
@@ -1326,6 +1327,18 @@ int net_pipe_sync(const char *url, const char *headers, int head, NetHdrSink hs,
   f_easy_setopt(c, CURLOPT_NOPROGRESS, 0L);
   f_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L);
   f_easy_setopt(c, CURLOPT_MAXREDIRS, 8L);
+  if (media) {
+#if LIBCURL_VERSION_NUM >= 0x075500
+    f_easy_setopt(c, CURLOPT_PROTOCOLS_STR, "http,https");
+    f_easy_setopt(c, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
+#else
+    f_easy_setopt(c, CURLOPT_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
+    f_easy_setopt(c, CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
+#endif
+#if LIBCURL_VERSION_NUM >= 0x073600
+    f_easy_setopt(c, CURLOPT_SUPPRESS_CONNECT_HEADERS, 1L);
+#endif
+  }
   f_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
   f_easy_setopt(c, CURLOPT_CONNECTTIMEOUT_MS, 10000L);
   f_easy_setopt(c, CURLOPT_LOW_SPEED_LIMIT, 1L);
@@ -1348,6 +1361,12 @@ int net_pipe_sync(const char *url, const char *headers, int head, NetHdrSink hs,
   if (x.stopped)
     return -1;
   return rc == CURLE_OK ? (int)code : 0;
+}
+int net_pipe_sync(const char *url, const char *headers, int head, NetHdrSink hs, NetSink sink, void *ud, int stallSec) {
+  return pipe_sync(url, headers, head, hs, sink, ud, stallSec, 0);
+}
+int net_media_sync(const char *url, const char *headers, NetHdrSink hs, NetSink sink, void *ud) {
+  return pipe_sync(url, headers, 0, hs, sink, ud, 30, 1);
 }
 
 /* ---- ranged reads ---------------------------------------------------------------------------- */

@@ -73,7 +73,7 @@ int plat_install_poll(char *msg, int cap) {
 
 /* ---- phones and tablets: MainActivity's ui* methods (each hops to the UI thread itself) ---- */
 static jclass act;
-static jmethodID mOri, mImm, mHap, mSafe, mOpen, mBrG, mBrS, mVoG, mVoS, mGest;
+static jmethodID mOri, mImm, mHap, mSafe, mOpen, mBrG, mBrS, mVoG, mVoS, mGest, mDownloadNetwork, mDownloadStatus;
 static SDL_atomic_t touchCancelEv; /* the event type, registered once on the app thread (0 not yet, -1 none to be had);
                                       SDL_PushEvent is thread-safe */
 static int act_ready(JNIEnv *e) {
@@ -98,13 +98,39 @@ static int act_ready(JNIEnv *e) {
   mVoG = (*e)->GetStaticMethodID(e, act, "uiVolumeGet", "()I");
   mVoS = (*e)->GetStaticMethodID(e, act, "uiVolumeSet", "(I)I");
   mGest = (*e)->GetStaticMethodID(e, act, "uiGestureInsets", "()Ljava/lang/String;");
-  if (!mOri || !mImm || !mHap || !mSafe || !mOpen || !mBrG || !mBrS || !mVoG || !mVoS || !mGest) {
+  mDownloadNetwork = (*e)->GetStaticMethodID(e, act, "uiDownloadNetwork", "(Z)Z");
+  mDownloadStatus = (*e)->GetStaticMethodID(e, act, "uiDownloadStatus", "(IZ)Z");
+  if (!mOri || !mImm || !mHap || !mSafe || !mOpen || !mBrG || !mBrS || !mVoG || !mVoS || !mGest || !mDownloadNetwork ||
+      !mDownloadStatus) {
     (*e)->ExceptionClear(e);
     (*e)->DeleteGlobalRef(e, act);
     act = NULL;
     return 0;
   }
   return 1;
+}
+int plat_download_network(int wifiOnly) {
+  JNIEnv *e = env();
+  if (!act_ready(e))
+    return 0;
+  jboolean allowed = (*e)->CallStaticBooleanMethod(e, act, mDownloadNetwork, wifiOnly ? JNI_TRUE : JNI_FALSE);
+  if ((*e)->ExceptionCheck(e)) {
+    (*e)->ExceptionClear(e);
+    return 0;
+  }
+  return allowed != 0;
+}
+int plat_download_status(int progress, int visible) {
+  JNIEnv *e = env();
+  if (!act_ready(e))
+    return 0;
+  jboolean running =
+      (*e)->CallStaticBooleanMethod(e, act, mDownloadStatus, (jint)progress, visible ? JNI_TRUE : JNI_FALSE);
+  if ((*e)->ExceptionCheck(e)) {
+    (*e)->ExceptionClear(e);
+    return 0;
+  }
+  return running != 0;
 }
 static void call_int(jmethodID m, int v) {
   JNIEnv *e = env();

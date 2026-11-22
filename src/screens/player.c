@@ -30,6 +30,7 @@
 #include "ui/glass.h"
 #include "core/rating.h"
 #include "core/hproxy.h"
+#include "core/downloads.h"
 #include "core/addons.h"
 #include "core/subsync.h"
 #include "ui/asssubs.h"
@@ -271,6 +272,7 @@ typedef struct {
 } PPrompt;
 static struct {
   int open, closing, live, failed, started;
+  int downloadKey;
   double openedAt;
   char type[16], id[64], vid[80], name[256], logo[512], bg[512], poster[512], sname[600], saddon[96], url[SB_URL_MAX],
       alt[SB_URL_MAX];
@@ -691,7 +693,7 @@ static void fail(const char *t) {
   P.failed = 1;
   video_unload();
   P.live = 0;
-  P.canNext = P.st.url[0] && strcmp(P.type, "other") && !P.isTrailer;
+  P.canNext = P.st.url[0] && strcmp(P.type, "other") && !P.isTrailer && !P.downloadKey;
   if (P.canNext)
     best_skip(P.st.url); /* OK picks the best of the others */
   char s[400];
@@ -790,12 +792,17 @@ static void save_progress(int push) {
   double d = dur();
   if (!P.id[0] || P.isTrailer || d <= 0 || getenv("SB_PLAY_NOSAVE"))
     return; /* (SB_PLAY_NOSAVE: development plays leave the library alone) */
-  Item it = lib_item();
-  lib_set_progress(P.id, &it, P.vid, video_time() * 1000, d * 1000, push);
+  double pos = video_time();
+  if (P.downloadKey) {
+    downloads_save_position(P.downloadKey, pos >= d - 3 ? 0 : pos);
+  } else {
+    Item it = lib_item();
+    lib_set_progress(P.id, &it, P.vid, pos * 1000, d * 1000, push);
+  }
   P.lastSave = now_();
 }
 static void mark_watched(void) {
-  if (P.isTrailer || P.marked || getenv("SB_PLAY_NOSAVE"))
+  if (P.isTrailer || P.marked || P.downloadKey || getenv("SB_PLAY_NOSAVE"))
     return;
   P.marked = 1;
   Item it = lib_item();
@@ -5222,8 +5229,8 @@ static void start_video(void) {
   build_btns();
   apply_aspect();
   P.res = res_of(P.sname);
-  if ((episodic() || (strcmp(P.type, "movie") && strcmp(P.type, "other") && strcmp(P.vid, P.id))) && !P.isTrailer &&
-      (!P.next.has || !P.videos)) {
+  if (!P.downloadKey && (episodic() || (strcmp(P.type, "movie") && strcmp(P.type, "other") && strcmp(P.vid, P.id))) &&
+      !P.isTrailer && (!P.next.has || !P.videos)) {
     ask_meta();
     P.metaRetryAt = now_() + 20;
   }
@@ -5239,8 +5246,10 @@ static void start_video(void) {
   }
   if (!P.isHls && !P.isTrailer && !strncmp(P.url, "http", 4))
     mkv = mkv_open(P.url, P.startAt > 0 ? P.startAt : 0, P.isP2p); /* not Matroska: it gives up after one small read */
-  load_ext_subs(0);
-  load_addon_subs(0);
+  if (!P.downloadKey) {
+    load_ext_subs(0);
+    load_addon_subs(0);
+  }
   load_emb_tracks();
 }
 static char nextAlt[SB_URL_MAX];
@@ -5599,7 +5608,7 @@ static void on_best_done(const Stream *s, const BestRate *r, void *ud) {
 /* the logo the page showed (its own address, which can differ from the details' one: a translated logo, a board's):
    the player shows that very picture, already loaded, so it always flies in and is never drawn again */
 static char pageLogo[512], pageLogoId[64];
-static void open_title(const char *type, const char *id) {
+static void open_title(const char *type, const char *id, int local) {
   if (P.open && P.rateI && strcmp(P.id, id)) {
     P.rateI = 0;
     video_set_rate(1);
@@ -5629,6 +5638,14 @@ static void open_title(const char *type, const char *id) {
   } /* another title while it is open (a phone casting): never the last one's art while this one loads */
   snprintf(P.type, sizeof P.type, "%s", type);
   snprintf(P.id, sizeof P.id, "%s", id);
+  if (local) {
+    metaTok++;
+    cJSON_Delete(P.meta);
+    P.meta = NULL;
+    P.videos = NULL;
+    P.name[0] = P.logo[0] = P.bg[0] = P.poster[0] = 0;
+    return;
+  }
   cJSON *m = sb_meta_cached(type, id);
   if (!m && !strcmp(type, "other")) {
     m = sb_meta_cached("movie", id);
@@ -5681,7 +5698,7 @@ static void open_title(const char *type, const char *id) {
 /* the title's art at once, before there is anything to play (a trailer being found): status lines on it, a failure on
    it, Back closes it; the play that follows starts behind the same art */
 void player_prepare(const char *type, const char *id, const char *vid, const char *trailerName) {
-  open_title(type, id);
+  open_title(type, id, 0);
   prepare(vid, 0, 0);
   snprintf(P.trName, sizeof P.trName, "%s", trailerName ? trailerName : "");
 }
@@ -5709,15 +5726,32 @@ static void try_next(void) {
       best_choose(P.type, P.vid, best_dur(P.meta, P.type), on_best_status, on_best_done, (void *)(uintptr_t)bestSess);
 }
 void player_choose_best(const char *type, const char *id, const char *vid) {
-  open_title(type, id);
+  open_title(type, id, 0);
   prepare(vid, 0, 0);
   set_status(T("Choosing the best stream"));
   bestSess++;
   bestTok = best_choose(type, P.vid, best_dur(P.meta, type), on_best_status, on_best_done, (void *)(uintptr_t)bestSess);
 }
 void player_play(const Stream *s, const char *type, const char *id, const char *vid, int fromStart) {
-  open_title(type, id);
+  open_title(type, id, 0);
   play_stream(s, vid, fromStart ? -1 : 0);
+}
+int player_play_download(int key) {
+  const Download *d = downloads_get(key);
+  char file[512];
+  if (!d || !downloads_path(key, file, sizeof file))
+    return 0;
+  open_title(d->type, d->id, 1);
+  prepare(d->vid, d->position > 0 ? d->position : -1, 0);
+  P.downloadKey = key;
+  P.season = d->season;
+  P.episode = d->episode;
+  P.logo[0] = P.bg[0] = P.poster[0] = 0;
+  snprintf(P.name, sizeof P.name, "%s", d->title);
+  snprintf(P.epTitle, sizeof P.epTitle, "%.*s", (int)sizeof P.epTitle - 1, d->label);
+  snprintf(P.url, sizeof P.url, "file://%s", file);
+  start_video();
+  return 1;
 }
 /* ---- cast (core/castlink.c): a phone plays a stream here and drives it ---- */
 void player_next_subs(const char *const *urls, const char *const *langs, int n) {
@@ -5741,7 +5775,7 @@ void player_next_art(const char *name, const char *poster, const char *bg, const
   snprintf(artLogo, sizeof artLogo, "%s", logo ? logo : "");
 }
 void player_play_at(const Stream *s, const char *type, const char *id, const char *vid, double pos) {
-  open_title(type, id);
+  open_title(type, id, 0);
   play_stream(s, vid, pos > 0 ? pos : 0);
 }
 void player_cast(int cmd, double pos) {
@@ -6244,7 +6278,7 @@ static void on_age(const Rating *r, void *ud) {
   pg_decide();
 }
 static void pg_ask(void) {
-  if (P.pg.asked || P.isTrailer || strncmp(P.id, "tt", 2))
+  if (P.pg.asked || P.isTrailer || P.downloadKey || strncmp(P.id, "tt", 2))
     return;
   P.pg.asked = 1;
   P.pg.askAt = now_();

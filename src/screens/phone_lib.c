@@ -4,8 +4,10 @@
 #include "screens/phone.h"
 #include "screens/lib.h"
 #include "core/form.h"
+#include "core/downloads.h"
 #include "core/i18n.h"
 #include "core/hit.h"
+#include "core/keys.h"
 #include "core/stremio.h"
 #include "ui/gfx.h"
 #include "ui/text.h"
@@ -16,7 +18,15 @@
 
 static struct {
   Scroller page, chips;
+  int downloads;
 } B;
+static void downloads_act(int a, int b) {
+  (void)a;
+  (void)b;
+  B.downloads = !B.downloads;
+  if (B.downloads)
+    phone_downloads_enter();
+}
 static void chip_act(int f, int b) {
   (void)b;
   lib_ph_set_filter(f);
@@ -48,6 +58,10 @@ static void enter(const void *p) {
   lib_ph_refresh();
 }
 static void tick(float dt) {
+  if (B.downloads) {
+    phone_downloads_tick(dt);
+    return;
+  }
   lib_ph_refresh();
   scroller_tick(&B.page, dt);
   scroller_tick(&B.chips, dt);
@@ -56,8 +70,15 @@ static void draw(void) {
   float bottom = phone_bottom();
   float top = phone_content_top();
   gfx_rect(0, 0, SB_W, SB_H, PAGE);
-  text_draw(T("Library"), PH_M, top + PH_TOPBAR / 2 - text_line_height(22) / 2.0f, 22, 800, PH_TXT, -0.4f, SB_W / 2,
-            ALIGN_LEFT);
+  text_draw(T(B.downloads ? "Downloads" : "Library"), PH_M, top + PH_TOPBAR / 2 - text_line_height(22) / 2.0f, 22, 800,
+            PH_TXT, -0.4f, SB_W / 2, ALIGN_LEFT);
+  if (B.downloads) {
+    const char *label = T("My List");
+    float w = text_width(label, PH_TX_BODY, 700, 0) + 32;
+    phone_button(label, NULL, SB_W - PH_M - w, top + 6, w, 44, 0, downloads_act, 0, 0);
+    phone_downloads_draw(top + PH_TOPBAR, bottom);
+    return;
+  }
   {
     const char *sl = lib_ph_sort_label();
     float w = text_width(sl, PH_TX_SMALL + 1, 600, 0) + 40, x = SB_W - PH_M - w;
@@ -69,6 +90,10 @@ static void draw(void) {
     hit_act(x, top + PH_TOPBAR / 2 - 22, w, 44, sort_act, 0, 0);
   }
   float y = top + PH_TOPBAR + 2;
+  if (downloads_enabled()) {
+    phone_button(T("Downloads"), NULL, PH_M, y, SB_W - 2 * PH_M, 44, 0, downloads_act, 0, 0);
+    y += 53;
+  }
   /* the categories */
   {
     const char *lb[8];
@@ -128,7 +153,10 @@ static void draw(void) {
   scroller_limits(&B.page, 0, end + B.page.off - grid_top + 24 - (bottom - grid_top));
 }
 static int key(int k) {
-  (void)k;
+  if (k == K_BACK && B.downloads) {
+    B.downloads = 0;
+    return 1;
+  }
   return 0;
 }
 Screen phoneLib = { enter, NULL, key, tick, draw, NULL, NULL, NULL, NULL };

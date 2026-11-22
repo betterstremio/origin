@@ -59,6 +59,8 @@ int net_stream_sync(const char *url, int timeoutMs, NetSink sink, void *ud);
  */
 typedef void (*NetHdrSink)(const char *line, void *ud);
 int net_pipe_sync(const char *url, const char *headers, int head, NetHdrSink hs, NetSink sink, void *ud, int stallSec);
+/* A video file transfer. Limit redirects to HTTP(S) and suppress proxy CONNECT response headers. */
+int net_media_sync(const char *url, const char *headers, NetHdrSink hs, NetSink sink, void *ud);
 
 /* Ranged reads on one kept-alive connection (worker threads only: it blocks). net_range_get reads
    [start, start+len) into *out (malloc'd, *got bytes; a short read returns what came) and the file's

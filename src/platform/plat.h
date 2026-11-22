@@ -13,6 +13,10 @@ void plat_cursor_visible(
     int on); /* the TV's own pointer, which it draws itself: shown or hidden now (no-op where there is none) */
 const char *plat_asset_dir(void);
 const char *plat_data_dir(void);
+#ifdef __ANDROID__
+int plat_download_network(int wifiOnly);
+int plat_download_status(int progress, int visible);
+#endif
 /* the window size to ask for; fullscreen on TVs */
 void plat_window_size(int *w, int *h, Uint32 *flags);
 /* maps an SDL key event to the app's key codes (sb_keys.h); 0 = not a key the app uses */

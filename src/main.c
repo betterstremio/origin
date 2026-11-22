@@ -264,6 +264,7 @@ static void on_crash(int sig, siginfo_t *si, void *uc) {
 #include "ui/icon.h"
 #include "core/keys.h"
 #include "core/app.h"
+#include "core/downloads.h"
 #include "core/bgtrailer.h"
 #include "core/pace.h"
 #include "core/stress.h"
@@ -1145,6 +1146,7 @@ int main(int argc, char **argv) {
     if (app_away()) {
       /* No app/UI tick or GL work while away. These are the callbacks that must still make progress. */
       net_pump();
+      downloads_pump();
       store_pump();
       p2p_pump();
       plat_luna_pump();
@@ -1203,6 +1205,7 @@ int main(int argc, char **argv) {
     Uint32 tEv = SDL_GetTicks() - tEv0;
     Uint32 tP0 = SDL_GetTicks();
     net_pump();
+    downloads_pump();
     Uint32 tNet = SDL_GetTicks() - tP0;
     store_pump();
     p2p_pump();
@@ -1652,6 +1655,7 @@ int main(int argc, char **argv) {
     }
   }
   fprintf(stderr, "[exit] after %d frames\n", frame);
+  downloads_shutdown();
   p2p_shutdown(); /* the engine's threads end and its buffer files go */
   store_flush();
   GL_FREE(ctx);
