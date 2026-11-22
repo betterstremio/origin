@@ -77,6 +77,7 @@ static struct {
   int on;
 } V = { 100, 100, 100, 0, 0, 0 };
 static int awake;
+static int pauseWanted;
 
 enum {
   P_TIME = 1,
@@ -385,6 +386,7 @@ static void start_load(const char *u, double at) {
   reset_state();
   S.active = 1;
   S.st = VID_LOADING;
+  S.paused = pauseWanted;
   loadAt = SDL_GetTicks();
   snprintf(url, sizeof url, "%s", u);
   fprintf(stderr, "[video] load %.200s%s\n", u, at > 0 ? " (from a position)" : "");
@@ -405,7 +407,7 @@ static void start_load(const char *u, double at) {
     if (!pthread_create(&th, NULL, ask_device, NULL))
       pthread_detach(th);
   } /* (a changed device: the next video, or this one in video_pump) */
-  set_str("pause", "no");
+  set_str("pause", pauseWanted ? "yes" : "no");
   V.on = 0;
   V.cur = V.to = 100;
   set_dbl("volume", 100);
@@ -426,6 +428,7 @@ static void start_load(const char *u, double at) {
   cmd(R_LOAD, a);
 }
 void video_load(const char *u) {
+  pauseWanted = 0;
   timed.on = 0;
   start_load(u, 0);
 }
@@ -439,6 +442,7 @@ double video_reported_time(void) {
 }
 /* one continuous conversion: each seek loads "<base>?t=<s>" again; times count from the start of the file */
 void video_load_timed(const char *base, double durSec) {
+  pauseWanted = 0;
   snprintf(timed.base, sizeof timed.base, "%s", base);
   timed.dur = durSec;
   timed.off = 0;
@@ -448,6 +452,7 @@ void video_load_timed(const char *base, double durSec) {
   start_load(u, 0);
 }
 void video_unload(void) {
+  pauseWanted = 0;
   pending = 0;
   timed.on = 0;
   url[0] = 0;
@@ -459,10 +464,12 @@ void video_unload(void) {
   }
 }
 void video_play(void) {
+  pauseWanted = 0;
   S.paused = 0;
   set_str("pause", "no");
 }
 void video_pause(void) {
+  pauseWanted = 1;
   S.paused = 1;
   set_str("pause", "yes");
 }

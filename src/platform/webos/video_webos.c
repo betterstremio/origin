@@ -98,6 +98,7 @@ static struct {
   int bindWanted, died;
 } S;
 static char url[8192];
+static int pauseWanted;
 static struct {
   int on;
   char base[4096];
@@ -567,6 +568,7 @@ static bool on_event(LSHandle *h, LSMessage *m, void *ctx) {
   return true;
 }
 static void start_load(void);
+static void media_command_locked(const char *method);
 static int txtPending = -2; /* a subtitle choice made before the pipeline had loaded: sent once it has (-2 none) */
 static bool on_load(LSHandle *h, LSMessage *m, void *ctx) {
   (void)h;
@@ -599,9 +601,9 @@ static bool on_load(LSHandle *h, LSMessage *m, void *ctx) {
   call("notifyForeground", b, NULL, NULL);
   snprintf(b, sizeof b, "{\"mediaId\":\"%s\"}", mid);
   call("subscribe", b, on_event, ctx);
-  snprintf(b, sizeof b, "{\"mediaId\":\"%s\"}", mid);
-  call("play", b, NULL,
-       NULL); /* the pipeline picks its default tracks itself (choosing before sourceInfo can stall it) */
+  pthread_mutex_lock(&mu);
+  media_command_locked(S.pausedByUs ? "pause" : "play");
+  pthread_mutex_unlock(&mu); /* serialize the first play/pause with a pause arriving during load */
   return true;
 }
 /* the value after "key" in a flat JSON message, past the spaces the TV puts around the colon (tvpower sends
@@ -831,6 +833,7 @@ static void stop_session(void) {
   }
 }
 void video_unload(void) {
+  pauseWanted = 0;
   resume.on = 0;
   timed.on = 0;
   url[0] = 0;
@@ -848,7 +851,8 @@ static void start_load(void) {
   stop_session();
   txtPending = -2;
   pthread_mutex_lock(&mu);
-  S.st = VID_LOADING;
+  S.pausedByUs = pauseWanted;
+  S.st = pauseWanted ? VID_PAUSED : VID_LOADING;
   S.curTxt = -1;
   if (timed.on) {
     S.pos = timed.off;
@@ -888,6 +892,7 @@ static void start_load(void) {
   }
 }
 void video_load(const char *u) {
+  pauseWanted = 0;
   resume.on = 0;
   timed.on = 0;
   snprintf(url, sizeof url, "%s", u ? u : "");
@@ -903,6 +908,7 @@ double video_reported_time(void) {
   return lastCT;
 }
 void video_load_timed(const char *base, double durSec) {
+  pauseWanted = 0;
   resume.on = 0;
   timed.on = 1;
   timed.off = 0;
@@ -911,11 +917,9 @@ void video_load_timed(const char *base, double durSec) {
   snprintf(url, sizeof url, "%s?t=0", base);
   start_load();
 }
-static void simple(const char *method) {
+static void media_command_locked(const char *method) {
   char mid[64];
-  pthread_mutex_lock(&mu);
   snprintf(mid, sizeof mid, "%s", S.mediaId);
-  pthread_mutex_unlock(&mu);
   if (!mid[0])
     return;
   char b[160];
@@ -924,11 +928,12 @@ static void simple(const char *method) {
 }
 void video_play(void) {
   pthread_mutex_lock(&mu);
+  pauseWanted = 0;
   S.pausedByUs = 0;
   if (S.st == VID_PAUSED)
     S.st = VID_PLAYING;
+  media_command_locked("play");
   pthread_mutex_unlock(&mu);
-  simple("play");
 }
 /* the stream's own volume (0-100), reached over easeMs (the media service's own ease: no steps of ours) */
 int video_has_media(void) {
@@ -958,10 +963,11 @@ void video_set_volume(int pct, int easeMs) {
 }
 void video_pause(void) {
   pthread_mutex_lock(&mu);
+  pauseWanted = 1;
   S.pausedByUs = 1;
   S.st = VID_PAUSED;
+  media_command_locked("pause");
   pthread_mutex_unlock(&mu);
-  simple("pause");
 }
 /* presses add up: the shown position moves at once, the pipeline gets one seek 350 ms after the last (four
    seeks in under a second were followed by a dead pipeline) */

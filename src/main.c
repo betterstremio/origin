@@ -659,6 +659,11 @@ static int fingerOn, mouseFinger;
 static SDL_FingerID fingerId2;
 static int finger2On, fingerSwallow, cancelNext; /* cancelNext: the system took the fingers; their lifts follow */
 static float fingerX[2], fingerY[2];
+static void away_input_reset(void) {
+  touch_cancel();
+  player_touch_cancel();
+  fingerOn = finger2On = fingerSwallow = cancelNext = mouseFinger = 0;
+}
 int main(int argc, char **argv) {
   scrollin_launch_params(argc, argv);
   setlocale(LC_NUMERIC, "C");
@@ -904,6 +909,8 @@ int main(int argc, char **argv) {
     SDL_Event e;
     Uint32 tEv0 = SDL_GetTicks();
     while (SDL_PollEvent(&e)) {
+      if (app_away_take_input_leave())
+        away_input_reset(); /* clear gestures before the away guard drops queued touch events */
       if (getenv("SB_EVLOG") || frame < 120)
         if (e.type == SDL_QUIT || e.type == SDL_KEYDOWN || e.type == SDL_KEYUP || e.type == SDL_WINDOWEVENT)
           fprintf(stderr, "[ev] type=%d%s sc=%d sym=%d win=%d\n", e.type, e.type == SDL_QUIT ? " QUIT" : "",
@@ -1129,6 +1136,11 @@ int main(int argc, char **argv) {
     }
 #endif
     app_away_tick();
+#if SB_WEBOS
+    if (app_away() && plat_lifecycle(NULL) > 0)
+      app_away_set(0); /* SAM can answer before focus loss; SDL focus is the final webOS backstop */
+    sync_away_tick();
+#endif
     if (app_away()) {
       /* No app/UI tick or GL work while away. These are the callbacks that must still make progress. */
       net_pump();

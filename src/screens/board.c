@@ -89,6 +89,7 @@ typedef struct {
   CatalogDef def;
   int hasDef, skipAt, more, paging,
       asked; /* asked: a Shows / Movies row whose catalogue has been asked (near the focus only) */
+  int resolved; /* its catalogue request answered, including an empty or failed result */
   double pageAt;
   /* a collection's row: tiles, not titles (no Item, so no details, trailer or hold menu come near them) */
   const ColFolder *tiles;
@@ -495,6 +496,7 @@ static void on_catalog(ItemList *l, int cached, void *ud) {
   r->skipAt = r->items.total > r->items.n ? r->items.total : r->items.n;
   r->more = r->hasDef && r->def.skip && r->items.n > 0;
   r->paging = 0;
+  r->resolved = 1;
   r->hidden = r->items.n == 0;
   if (r->col >= r->items.n)
     r->col = r->items.n ? r->items.n - 1 : 0;
@@ -3927,22 +3929,22 @@ void board_ph_tick(int kind, int r0, int r1, float dt) {
     load_catalog_rows(b, 0, b->n > 0);
   }
   if (b->kind == 1 && (kindb(b) || b->dtype == 3 || b->dtype == 4)) {
-    /* rows asked as they come near: the visible ones and a few after; Anime uses ani_ask through kind_ask */
-    int last = r1 + 1 + 8 > b->n ? b->n : r1 + 1 + 8, budget = 3;
-    for (int i = r0 > 0 ? r0 : 0; i < last && i < b->n; i++) {
+    /* Ask visible rows and at most three unresolved rows after them. Resolved-empty rows do not consume the
+       look-ahead, so a later populated row cannot be stranded behind them. Anime uses ani_ask through kind_ask. */
+    int budget = 3;
+    for (int i = r1 + 1; i < b->n; i++)
+      if (b->rows[i].asked && !b->rows[i].resolved)
+        budget--;
+    for (int i = r0 > 0 ? r0 : 0; i < b->n; i++) {
       Row *r = &b->rows[i];
-      if (i > r1) {
-        if (!r->hidden)
-          budget--; /* (a row showing counts; one asked and still hidden is stepped past, bounded by the 8) */
-        else if (!r->asked) {
-          kind_ask(b, i);
-          if (r->asked)
-            budget--;
-        }
-        if (budget < 0)
-          break;
-      } else
+      if (i <= r1)
         kind_ask(b, i);
+      else if (!r->asked && budget > 0) {
+        kind_ask(b, i);
+        if (r->asked)
+          budget--;
+      } else if (budget <= 0 && r->hasDef && !r->asked)
+          break;
     }
   }
   if (b->kind == 1 && b->dtype == 4) { /* the Anime page's data half, its focus being the first row on screen */
@@ -4012,10 +4014,16 @@ int board_ph_empty(int kind) {
   Board *b = phb(kind);
   if (b->kind != 1 || b->dtype != 3)
     return 0;
-  for (int i = 0; i < b->n; i++)
-    if (!b->rows[i].hidden)
+  int eligible = 0;
+  for (int i = 0; i < b->n; i++) {
+    Row *r = &b->rows[i];
+    if (!r->hasDef)
+      continue;
+    eligible++;
+    if (!r->resolved || !r->hidden)
       return 0;
-  return !b->n || app_now() - catAt > 6;
+  }
+  return (!eligible || app_now() - catAt > 6);
 }
 /* a row drawn up to this card: the Anime page asks its details a few cards ahead of the furthest one seen */
 void board_ph_seen(int kind, int row, int col) {

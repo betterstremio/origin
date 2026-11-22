@@ -11,7 +11,7 @@
 static double bootAt, idleAt;
 static int libBoot, addonBoot;
 static volatile int resumed; /* set from SDL's event watch, read once a frame */
-static volatile int purgeWanted; /* sent away on another thread: the pictures are let go on the next frame */
+static volatile int purgeWanted; /* sent away on another thread: webOS lets pictures go after the grace period */
 static double awayAt; /* when it left (main-thread time) */
 #define PURGE_AFTER_S 10.0
 static int rebuildWanted;
@@ -119,4 +119,12 @@ void sync_tick(void) {
     if ((SCR == SCR_HOME || SCR == SCR_LIB) && !player_open())
       board_rebuild(); /* elsewhere: rebuilt when shown */
   }
+}
+void sync_away_tick(void) {
+#if SB_WEBOS
+  if (purgeWanted && app_away() && app_now() - awayAt >= PURGE_AFTER_S) {
+    purgeWanted = 0;
+    img_background();
+  }
+#endif
 }

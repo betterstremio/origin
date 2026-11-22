@@ -2311,6 +2311,10 @@ void app_color_key(int k) {
 void app_open_settings(void) {
   if (SCR == SCR_SET)
     return;
+  if (form_touch()) {
+    app_go(SCR_SET, NULL, 0); /* the tablet dock uses the same stack-preserving path as phone Settings */
+    return;
+  }
   topnav_flush(1);
   topNav.idx = -1;
   topnav_switch(NAV_SET);
@@ -2410,6 +2414,7 @@ void app_init(void) {
 }
 static void amb_bake(void);
 static SDL_atomic_t awayState, awayLeave;
+static SDL_atomic_t awayInputLeave;
 static int awayHandled;
 
 int app_away(void) {
@@ -2418,8 +2423,14 @@ int app_away(void) {
 
 void app_away_set(int away) {
   int old = SDL_AtomicSet(&awayState, away != 0);
-  if (away && !old)
+  if (away && !old) {
     SDL_AtomicSet(&awayLeave, 1);
+    SDL_AtomicSet(&awayInputLeave, 1);
+  }
+}
+
+int app_away_take_input_leave(void) {
+  return SDL_AtomicCAS(&awayInputLeave, 1, 0);
 }
 
 int app_away_take_leave(void) {
@@ -2432,7 +2443,9 @@ void app_away_tick(void) {
     btr_release();
     phone_peek_shut_now();
     saver_stop();
+#if !SB_WEBOS
     img_background();
+#endif
     sound_quiet(1);
     awayHandled = 1;
     fprintf(stderr, "[life] away: trailer stopped/unloaded, stream %s, drawing disabled\n",

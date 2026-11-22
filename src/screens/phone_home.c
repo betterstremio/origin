@@ -605,6 +605,23 @@ static void topbar_draw(Ph *p) {
   hit_act(bx - 6, ti, 48, PH_TOPBAR, open_settings, 0, 0);
   chips_draw(p, p->kind == 1, k);
 }
+static void touch_region_without_dock(float x, float y, float w, float h, Scroller *sx, Scroller *sy) {
+  float dx, dy, dw, dh;
+  if (!phone_dock_bounds(&dx, &dy, &dw, &dh) || x + w <= dx || x >= dx + dw || y + h <= dy || y >= dy + dh) {
+    touch_region(x, y, w, h, sx, sy);
+    return;
+  }
+  float x1 = x + w, y1 = y + h, mx0 = x > dx ? x : dx, mx1 = x1 < dx + dw ? x1 : dx + dw;
+  float my0 = y > dy ? y : dy, my1 = y1 < dy + dh ? y1 : dy + dh;
+  if (y < my0)
+    touch_region(x, y, w, my0 - y, sx, sy);
+  if (my1 < y1)
+    touch_region(x, my1, w, y1 - my1, sx, sy);
+  if (x < mx0)
+    touch_region(x, my0, mx0 - x, my1 - my0, sx, sy);
+  if (mx1 < x1)
+    touch_region(mx1, my0, x1 - mx1, my1 - my0, sx, sy);
+}
 static void draw(void) {
   Ph *p = cur();
   int kind = p->kind;
@@ -613,9 +630,9 @@ static void draw(void) {
   float th = top_h(p);
   if (phone_is_tablet() && p->hasHero && p->kind != 2) {
     scroller_limits(&p->heroSwipe, -1, 1);
-    touch_region(0, -p->page.off, SB_W, tablet_hero_h(), &p->heroSwipe, &p->page);
+    touch_region_without_dock(0, -p->page.off, SB_W, tablet_hero_h(), &p->heroSwipe, &p->page);
   }
-  touch_region(0, th, SB_W, bottom - th, NULL, &p->page); /* (the chips have their own region above it) */
+  touch_region_without_dock(0, th, SB_W, bottom - th, NULL, &p->page); /* (the chips have their own region above it) */
   gfx_clip_push(0, 0, SB_W, bottom);
   float y0 = -p->page.off, y = y0;
   y += hero_draw(p, y);

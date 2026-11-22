@@ -285,7 +285,22 @@ int plat_mem_total_mb(void) {
 int plat_lifecycle(const SDL_Event *e) {
   static int away;
   int in = 0, out = 0;
-  if (e->type == SDL_APP_WILLENTERBACKGROUND || e->type == SDL_APP_DIDENTERBACKGROUND)
+  if (!e) {
+    static Uint32 focusPollAt;
+    Uint32 now = SDL_GetTicks();
+    if (now - focusPollAt < 500)
+      return 0; /* webOS can leave the app with no matching focus-gained event */
+    focusPollAt = now;
+    if (!focusLost)
+      return 0;
+    SDL_Window *w = SDL_GetKeyboardFocus();
+    int hasFocus = w && (SDL_GetWindowFlags(w) & SDL_WINDOW_INPUT_FOCUS);
+    if (fgUs == 1 || hasFocus) {
+      focusLost = 0;
+      in = 1; /* SAM may have reported Origin before focus loss; SDL focus is the final backstop */
+    }
+  }
+  else if (e->type == SDL_APP_WILLENTERBACKGROUND || e->type == SDL_APP_DIDENTERBACKGROUND)
     out = 1;
   else if (e->type == SDL_APP_WILLENTERFOREGROUND || e->type == SDL_APP_DIDENTERFOREGROUND)
     in = 1;
@@ -312,13 +327,15 @@ int plat_lifecycle(const SDL_Event *e) {
     }
   if (out) {
     if (!away)
-      fprintf(stderr, "[life] to the back (%d/%d)\n", e->type, e->type == SDL_WINDOWEVENT ? e->window.event : 0);
+      fprintf(stderr, "[life] to the back (%d/%d)\n", e ? e->type : 0,
+              e && e->type == SDL_WINDOWEVENT ? e->window.event : 0);
     away = 1;
     return -1;
   }
   if (in && away) {
     away = 0;
-    fprintf(stderr, "[life] back in front (%d/%d)\n", e->type, e->type == SDL_WINDOWEVENT ? e->window.event : 0);
+    fprintf(stderr, "[life] back in front (%d/%d)\n", e ? e->type : 0,
+            e && e->type == SDL_WINDOWEVENT ? e->window.event : 0);
     return 1;
   }
   return 0;

@@ -5,6 +5,7 @@
 #define SB_SYNC_H
 void sync_init(void); /* at start, before the first screen */
 void sync_tick(void);
+void sync_away_tick(void); /* webOS-only delayed artwork purge while the main loop is idle */
 void sync_after_switch(void);
 /* another profile is in use: its addons and library brought up to date, boards rebuilt if they changed */ /* once a
                                                                                                               frame

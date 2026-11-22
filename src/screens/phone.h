@@ -31,6 +31,7 @@
 void phone_register(void); /* main.c: the phone's screens in place of the TV's (a phone or a tablet only) */
 int phone_owns(int scr); /* that screen is the phone's own (else a TV page shown as it is, for now) */
 void phone_bars_draw(void); /* the tab bar, over the page (app.c) */
+int phone_dock_bounds(float *x, float *y, float *w, float *h); /* tablet dock overlay, for touch-region exclusion */
 int phone_is_tablet(void); /* a touch form whose shorter side is at least 600 dp */
 float phone_top_inset(void); /* status bar/cutout room, in dp; shared by every phone page */
 float phone_content_top(void); /* the first clear content line below the tablet dock, or the inset on phones */

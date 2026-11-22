@@ -152,6 +152,24 @@ static float dock_item_width(const DockItem *it) {
     return 56;
   return text_width(T(it->label), 15, 600, 0) + 32;
 }
+int phone_dock_bounds(float *x, float *y, float *w, float *h) {
+  static const DockItem all[] = {
+      { DOCK_SEARCH, 0, "Search", "ph_search" }, { DOCK_HOME, 0, "Home", NULL },
+      { DOCK_SHOWS, 1, "Shows", NULL },          { DOCK_MOVIES, 2, "Movies", NULL },
+      { DOCK_ANIME, 4, "Anime", NULL },          { DOCK_CATALOGUE, 3, "Catalogue", NULL },
+      { DOCK_LIB, 0, "My List", NULL },          { DOCK_PROFILE, 0, NULL, NULL } };
+  if (!phone_is_tablet() || !dock_shown())
+    return 0;
+  float total = 8;
+  for (size_t i = 0; i < sizeof all / sizeof *all; i++)
+    if (!((all[i].id == DOCK_ANIME && !app_anime_on()) || (all[i].id == DOCK_CATALOGUE && !app_catalogue_on())))
+      total += dock_item_width(&all[i]);
+  *x = SB_W / 2 - total / 2;
+  *y = phone_top_inset() + 12;
+  *w = total;
+  *h = 56;
+  return 1;
+}
 static void dock_draw(void) {
   static const DockItem all[] = {
       { DOCK_SEARCH, 0, "Search", "ph_search" }, { DOCK_HOME, 0, "Home", NULL },

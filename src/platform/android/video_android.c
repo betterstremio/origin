@@ -22,6 +22,7 @@ static int nA, nT;
 static unsigned trackGen, seenGen = ~0u;
 static double timedDur;
 static char timedBase[4096];
+static int pauseWanted;
 
 static JNIEnv *env(void) {
   return (JNIEnv *)SDL_AndroidGetJNIEnv();
@@ -92,9 +93,12 @@ static void load_at(const char *url, double startSec) {
   err[0] = hdr[0] = 0;
   nA = nT = 0;
   seenGen = ~0u;
+  if (pauseWanted)
+    call_v(mPause, "pause"); /* the Java load is asynchronous; preserve a pause that arrived during it */
   fprintf(stderr, "[video] load %.200s%s\n", url, startSec > 0 ? " (timed)" : "");
 }
 void video_load(const char *url) {
+  pauseWanted = 0;
   timedBase[0] = 0;
   timedDur = 0;
   load_at(url, 0);
@@ -102,6 +106,7 @@ void video_load(const char *url) {
 /* one continuous conversion: each seek loads "<base>?t=<s>" again; the times count from the start of the file */
 static double timedOff;
 void video_load_timed(const char *base, double durSec) {
+  pauseWanted = 0;
   snprintf(timedBase, sizeof timedBase, "%s", base);
   timedDur = durSec;
   timedOff = 0;
@@ -110,15 +115,18 @@ void video_load_timed(const char *base, double durSec) {
   load_at(u, 0);
 }
 void video_unload(void) {
+  pauseWanted = 0;
   call_v(mUnload, "unload");
   memset(&S, 0, sizeof S);
   timedBase[0] = 0;
   nA = nT = 0;
 }
 void video_play(void) {
+  pauseWanted = 0;
   call_v(mPlay, "play");
 }
 void video_pause(void) {
+  pauseWanted = 1;
   call_v(mPause, "pause");
 }
 void video_seek(double sec) {
