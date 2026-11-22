@@ -197,11 +197,10 @@ void phone_bars_draw(void) {
       dock_draw();
     return;
   }
-  float y = phone_bottom(), w = SB_W / NTABS;
-  y -= PH_TABBAR;
-  gfx_rect(0, y, SB_W, PH_TABBAR, RGBA(18, 18, 20, 246));
+  float y = phone_bottom(), w = SB_W / NTABS; /* (phone_bottom is already the bar's top) */
+  gfx_rect(0, y, SB_W, SB_H - y, RGBA(18, 18, 20, 246)); /* down behind the system's navigation bar */
   gfx_rect(0, y, SB_W, 1, WHITE_A(18));
-  hit_shield(0, y, SB_W, PH_TABBAR);
+  hit_shield(0, y, SB_W, SB_H - y);
   for (int i = 0; i < NTABS; i++) {
     float x = i * w;
     int on = TABS[i].scr == (int)SCR || (TABS[i].scr == SCR_HOME && SCR == SCR_DISC);
