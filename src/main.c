@@ -294,6 +294,7 @@ static int vsyncOn
 #include "core/migrate.h"
 #include "core/i18n.h"
 #include "core/stremio.h"
+#include "core/sync.h"
 #include "screens/board.h"
 #include "screens/login.h"
 #include "screens/detail.h"
