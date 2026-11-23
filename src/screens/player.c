@@ -404,6 +404,7 @@ static struct {
   Stream st;
   int nSubAddons;
   char subLang[24];
+  int browseProvider; /* source order + 1, or zero to browse by language */
   unsigned ytTok;
   /* the addons' subtitles (the stream's own, then each subtitles addon's), apart from the built-in list in ext */
   SubEntry *adx;
@@ -458,7 +459,8 @@ static struct {
   double subDelay;
   VidTrack emb[16];
   int nEmb;
-  int autoSubDone;
+  int subAutoReady;
+  enum { SUB_SEARCH, SUB_INTERIM, SUB_AUTO_PICKED, SUB_MANUAL } subMode;
   unsigned subReq;
   unsigned trSubTok;
   int locDone;
@@ -916,7 +918,18 @@ static void sub_begin(void) {
   SL.wait = 1;
   SL.tv = SL.mkv = SL.failed = SL.shown = SL.retry = SL.ready = 0;
 }
+/* Only failed automatic loads need storage. Their URLs survive cumulative list replacements. */
+typedef struct FailedSub {
+  struct FailedSub *next;
+  char url[];
+} FailedSub;
+static FailedSub *failedSubs;
 static void sub_reset(void) {
+  while (failedSubs) {
+    FailedSub *next = failedSubs->next;
+    free(failedSubs);
+    failedSubs = next;
+  }
   unsigned t = SL.tok + 1;
   memset(&SL, 0, sizeof SL);
   SL.tok = t;
@@ -931,7 +944,7 @@ static int tv_has_text(int n) {
   return 0;
 }
 static void subs_off(void) {
-  P.autoSubDone = 1;
+  P.subMode = SUB_MANUAL;
   sync_stop(0);
   snprintf(P.curSub, sizeof P.curSub, "off");
   subs_free(P.cues, P.ncues);
@@ -945,7 +958,7 @@ static void subs_off(void) {
   fprintf(stderr, "[subs] off\n");
   refresh_tray(4);
 }
-static void set_ext_sub(int list, const SubEntry *e);
+static void auto_sub(void);
 static void on_sub_cues(int status_, Cue *cues, int n, void *ud) {
   if (!P.open || (unsigned)(uintptr_t)ud != SL.tok || strncmp(P.curSub, "ext:", 4)) {
     subs_free(cues, n);
@@ -961,7 +974,7 @@ static void on_sub_cues(int status_, Cue *cues, int n, void *ud) {
     return;
   }
   subs_free(cues, n);
-  if (status_ <= 0 && !SL.retry) {
+  if (status_ <= 0 && P.subMode == SUB_MANUAL && !SL.retry) {
     SL.retry = 1;
     fprintf(stderr, "[subs] external: no answer, asking once more\n");
     subs_load(P.curSub + 4, on_sub_cues, (void *)(uintptr_t)SL.tok);
@@ -969,9 +982,22 @@ static void on_sub_cues(int status_, Cue *cues, int n, void *ud) {
   } /* one network hiccup */
   fprintf(stderr, "[subs] external: failed (HTTP %d, %s)\n", status_,
           status_ >= 200 && status_ < 300 ? "nothing readable in it" : "no file");
-  toast(T("Couldn’t load these subtitles"), 3000, NULL);
+  if (P.subMode == SUB_AUTO_PICKED) {
+    const char *url = P.curSub + 4;
+    FailedSub *bad = malloc(sizeof *bad + strlen(url) + 1);
+    if (bad) {
+      strcpy(bad->url,url);
+      bad->next = failedSubs;
+      failedSubs = bad;
+      P.subMode = SUB_SEARCH;
+      fprintf(stderr, "[subs] auto: %s failed, trying next\n", P.pick.addon);
+    }
+  } else
+    toast(T("Couldn’t load these subtitles"), 3000, NULL);
   snprintf(P.curSub, sizeof P.curSub, "off");
   SL.wait = 0;
+  if (P.subMode == SUB_SEARCH)
+    auto_sub();
   refresh_tray(4); /* the tray tells the truth: nothing is on */
 }
 /* a downloaded subtitle is known by the list it came from and its identity there (the same file can be in both lists,
@@ -986,9 +1012,9 @@ static int sub_row(int list, const SubEntry *l, int n) {
       return i;
   return -1;
 }
-static void set_ext_sub(int list, const SubEntry *e) {
+static void set_ext_sub(int list, const SubEntry *e, int automatic) {
   const char *u = e->url;
-  P.autoSubDone = 1;
+  P.subMode = automatic ? SUB_AUTO_PICKED : SUB_MANUAL;
   sync_stop(0);
   snprintf(P.curSub, sizeof P.curSub, "ext:%s", u);
   P.pick.list = list;
@@ -1001,12 +1027,12 @@ static void set_ext_sub(int list, const SubEntry *e) {
   if (mkv)
     mkv_select(mkv, -1);
   sub_begin();
-  fprintf(stderr, "[subs] chose external %s\n", u);
+  fprintf(stderr, "[subs] chose external %s/%s\n", e->addon, e->lang);
   subs_load(u, on_sub_cues, (void *)(uintptr_t)SL.tok);
   refresh_tray(4);
 }
-static void set_emb_sub(int n) {
-  P.autoSubDone = 1;
+static void set_emb_sub(int n, int mode) {
+  P.subMode = mode;
   sync_stop(0);
   snprintf(P.curSub, sizeof P.curSub, "emb:%d", n);
   subs_free(P.cues, P.ncues);
@@ -1126,54 +1152,72 @@ static void ass_sync(void) {
                SUB_SIZES[size_idx()] / 100.0f);
 }
 static void sync_auto_arm(void);
+static int auto_candidate(const SubEntry *e, const char *lang) {
+  if (strcmp(e->lang, lang))
+    return 0;
+  for (FailedSub *bad = failedSubs; bad; bad = bad->next)
+    if (!strcmp(e->url,bad->url))
+      return 0;
+  return 1;
+}
+static void auto_external(int list, const SubEntry *e, const char *why) {
+  fprintf(stderr, "[subs] auto: %s -> %s/%s\n",why,e->addon,e->lang);
+  set_ext_sub(list,e,1);
+  sync_auto_arm();
+}
 static void auto_sub(void) {
-  const char *w = want_sub();
-  if (P.autoSubDone || strcmp(P.curSub, "off"))
+  if (!P.subAutoReady || P.subMode == SUB_MANUAL || P.subMode == SUB_AUTO_PICKED || P.isTrailer)
     return;
-  if (!*w)
+  const char *want = want_sub();
+  if (!*want)
     return;
-  int em = -1;
-  for (int j = 0; j < P.nEmb; j++)
-    if (lang_match(P.emb[j].lang, w) && (em < 0 || (P.emb[em].forced && !P.emb[j].forced)))
-      em = j;
-  if (em >= 0) {
-    set_emb_sub(P.emb[em].idx);
-    return;
-  } /* embedded wins: it is in sync with the file */
-  if (!P.embKnown && !P.embWaitOver) {
-    if (!P.embWaitAt)
-      P.embWaitAt = now_() + 8;
-    return;
-  } /* the file's own tracks get 8 s to show up first */
-  if (P.adxUsePreference) {
-    int preferred = -1;
-    for (int i = 0; i < P.nAdx; i++)
-      if (P.adx[i].preferred && lang_match(P.adx[i].lang, w) &&
-          (preferred < 0 || P.adx[i].preferred < P.adx[preferred].preferred))
-        preferred = i;
-    if (preferred >= 0) {
-      set_ext_sub(2, &P.adx[preferred]);
-      sync_auto_arm();
+  for (const char *w = want; w; w = w == want ? subs_lang_fallback(want) : NULL) {
+    if (P.adxUsePreference) {
+      int preferred = -1;
+      for (int i = 0; i < P.nAdx; i++)
+        if (P.adx[i].preferred && auto_candidate(&P.adx[i], w) &&
+            (preferred < 0 || P.adx[i].preferred < P.adx[preferred].preferred))
+          preferred = i;
+      if (preferred >= 0) {
+        auto_external(2,&P.adx[preferred],"preferred add-on");
+        return;
+      }
+    }
+    if (P.subMode == SUB_INTERIM)
+      return;
+    int em = -1;
+    for (int j = 0; j < P.nEmb; j++)
+      if (lang_match(P.emb[j].lang, w) && (em < 0 || (P.emb[em].forced && !P.emb[j].forced)))
+        em = j;
+    if (em >= 0) {
+      int interim = P.adxUsePreference && (P.adxPreferredPending || P.adxRetryAt);
+      fprintf(stderr,"[subs] auto: %s -> embedded/%s\n",interim ? "waiting for preferred add-on" : "in file", P.emb[em].lang);
+      set_emb_sub(P.emb[em].idx, interim ? SUB_INTERIM : SUB_AUTO_PICKED);
       return;
     }
-    if (P.adxPreferredPending || (P.extLoading && !P.extRetryAt && !P.nExt))
+    if (!P.embKnown && !P.embWaitOver) {
+      if (!P.embWaitAt)
+        P.embWaitAt = now_() + 8;
+      return;
+    }
+    if (P.adxUsePreference && (P.adxPreferredPending || (P.extLoading && !P.extRetryAt && !P.nExt)))
+      return;
+    for (int i = 0; i < P.nExt; i++)
+      if (auto_candidate(&P.ext[i], w)) {
+        auto_external(1,&P.ext[i],"external language match");
+        return;
+      }
+    if (P.adxUsePreference && P.adxLoading && !P.adxRetryAt)
+      return;
+    for (int i = 0; i < P.nAdx; i++)
+      if (auto_candidate(&P.adx[i], w)) {
+        auto_external(2,&P.adx[i],"add-on language match");
+        return;
+      }
+    /* Pending lists can still supply the exact regional match. */
+    if ((P.adxLoading && !P.adxRetryAt) || (P.extLoading && !P.extRetryAt))
       return;
   }
-  for (int i = 0; i < P.nExt; i++)
-    if (lang_match(P.ext[i].lang, w)) {
-      set_ext_sub(1, &P.ext[i]);
-      sync_auto_arm();
-      return;
-    }
-  /* With an explicit preference, use the installed order for fallback even when its requests finish out of order. */
-  if (P.adxUsePreference && P.adxLoading && !P.adxRetryAt)
-    return;
-  for (int i = 0; i < P.nAdx; i++)
-    if (lang_match(P.adx[i].lang, w)) {
-      set_ext_sub(2, &P.adx[i]);
-      sync_auto_arm();
-      return;
-    }
 }
 /* a trailer's captions (IMDb's or YouTube's): handed over with the trailer, read when the CC button turns them on */
 static TrailerSub trSubs[TRAILER_MAX_SUBS], trNext[TRAILER_MAX_SUBS];
@@ -1209,12 +1253,13 @@ static void cc_toggle(void) {
     return;
   }
   const char *w = want_sub();
-  int pick = 0;
-  for (int i = 0; i < trSubsN; i++)
-    if (lang_match(trSubs[i].lang, w)) {
-      pick = i;
-      break;
-    }
+  int pick = -1;
+  for (const char *lang = w; lang && pick < 0; lang = lang == w ? subs_lang_fallback(w) : NULL)
+    for (int i = 0; i < trSubsN && pick < 0; i++)
+      if (lang_match(trSubs[i].lang, lang))
+        pick = i;
+  if (pick < 0)
+    pick = 0;
   snprintf(P.curSub, sizeof P.curSub, "ext:%s", trSubs[pick].url);
   P.pick.list = 0;
   subs_free(P.cues, P.ncues);
@@ -1260,6 +1305,13 @@ static void on_adx(SubEntry *subs, int n, int final, int ok, int preferredPendin
   }
   free(P.adx);
   P.adx = subs;
+  if (P.pick.list == 2 && !strncmp(P.curSub, "ext:", 4))
+    for (int i = 0; i < n; i++)
+      if (!strcmp(P.curSub + 4, subs[i].url)) {
+        snprintf(P.pick.addon, sizeof P.pick.addon, "%s", subs[i].addon);
+        snprintf(P.pick.lang, sizeof P.pick.lang, "%s", subs[i].lang);
+        break;
+      }
   P.nAdx = n;
   P.adxLoading = !final;
   auto_sub();
@@ -1295,6 +1347,8 @@ static void load_ext_subs(int n) {
     castSubsN = -1;
     SubEntry *l = calloc(16, sizeof *l);
     memcpy(l, castSubs, sizeof castSubs);
+    for (int i = 0; i < k; i++)
+      subs_lang_canon(castSubs[i].lang, l[i].lang, sizeof l[i].lang);
     P.subReq = ++subtitleRequest;
     on_subs(l, k, 1, (void *)(uintptr_t)P.subReq);
     return;
@@ -1337,10 +1391,6 @@ static void load_addon_subs(int n) {
   fill_sub_query(&q);
   SubEntry *own = NULL;
   int nown = sb_stream_subs(&P.st, &own);
-  if (!P.nSubAddons && !nown) {
-    free(own);
-    return;
-  } /* nobody to ask */
   P.adxLoading = 1;
   subs_find(&q, own, nown, preferred, on_adx, (void *)(uintptr_t)P.adxReq);
   free(own);
@@ -1387,7 +1437,7 @@ static void load_emb_tracks(void) {
   sig2 = sig2 * 3 + (unsigned)P.nEmb + (unsigned)P.embKnown * 101;
   if (sig2 != sig)
     fprintf(stderr, "[subs] %d embedded track(s) %s\n", P.nEmb, P.mkvTracksOk ? "read from the file" : "from the TV");
-  if (!P.autoSubDone)
+  if (P.subMode == SUB_SEARCH)
     auto_sub();
   if (sig2 != sig)
     refresh_tray(4);
@@ -1788,9 +1838,10 @@ static void auto_audio(void) {
   if (!n)
     return;
   int pick = -1;
-  for (int i = 0; i < n; i++)
-    if (lang_match(ts[i].lang, want) && (pick < 0 || (aud_bad(&ts[pick]) && !aud_bad(&ts[i]))))
-      pick = i; /* in that language, one whose sound plays here first */
+  for (const char *w = want; w && pick < 0; w = w == want ? subs_lang_fallback(want) : NULL)
+    for (int i = 0; i < n; i++)
+      if (lang_match(ts[i].lang, w) && (pick < 0 || (aud_bad(&ts[pick]) && !aud_bad(&ts[i]))))
+        pick = i;
   if (pick < 0 && strcmp(want, "eng"))
     for (int i = 0; i < n; i++)
       if (lang_match(ts[i].lang, "eng") && (pick < 0 || (aud_bad(&ts[pick]) && !aud_bad(&ts[i]))))
@@ -1875,9 +1926,10 @@ static int dv7_audio(int *copy) {
     return -1;
   const char *want =
       !strcmp(store_get("enableDefaultAudioTrack", "true"), "true") ? store_get("defaultAudioTrack", "eng") : "";
-  for (int i = 0; i < m && pick < 0; i++)
-    if (*want && lang_match(ma[i].lang, want))
-      pick = i;
+  for (const char *w = want; w && pick < 0; w = w == want ? subs_lang_fallback(want) : NULL)
+    for (int i = 0; i < m && pick < 0; i++)
+      if (lang_match(ma[i].lang, w))
+        pick = i;
   for (int i = 0; i < m && pick < 0; i++)
     if (ma[i].def)
       pick = i;
@@ -2105,6 +2157,16 @@ static void dts_tick(void) {
   int hm = mkv_listed(mkv) ? mkv_audio_tracks(mkv, hma, 16) : 0;
   const char *wl =
       !strcmp(store_get("enableDefaultAudioTrack", "true"), "true") ? store_get("defaultAudioTrack", "eng") : "";
+  const char *fallback = subs_lang_fallback(wl);
+  if (fallback) {
+    int exact = 0;
+    for (int i = 0; !exact && i < n; i++)
+      exact = lang_match(ts[i].lang, wl);
+    for (int i = 0; !exact && i < hm; i++)
+      exact = lang_match(hma[i].lang, wl);
+    if (!exact)
+      wl = fallback;
+  }
   for (int i = 0; i < n; i++)
     if (*wl && lang_match(ts[i].lang, wl))
       anyWant = 1;
@@ -3411,8 +3473,18 @@ static unsigned str_sig(unsigned h, const char *s) {
     h = h * 31 + (unsigned char)*s++;
   return h * 31 + 7;
 }
+static int sub_filter(const TItem *it) {
+  return !strncmp(it->u, "lang:", 5) || !strncmp(it->u, "provider:", 9);
+}
+static void browse_subs(const TItem *it) {
+  P.browseProvider = 0;
+  if (!strncmp(it->u, "lang:", 5))
+    snprintf(P.subLang, sizeof P.subLang, "%s", it->u + 5);
+  else
+    P.browseProvider = it->i + 1;
+}
 static int item_on(const TItem *it) {
-  return strncmp(it->u, "lang:", 5) ? it->on && !it->tool : it->d > 0;
+  return !sub_filter(it) ? it->on && !it->tool : it->d > 0;
 }
 /* after each rebuild: a list whose items changed fades in, a tick that moved fades in at its new place */
 static void tm_after(void) {
@@ -3975,11 +4047,10 @@ static void tray_data(void) {
       char keys[64][24], names[64][64], onKey[24] = "";
       int cnt[64], nk = 0, onAdx = sub_row(2, P.adx, P.nAdx);
       if (onAdx >= 0)
-        subs_lang_canon(P.adx[onAdx].lang, onKey, sizeof onKey);
+        snprintf(onKey, sizeof onKey, "%s", P.adx[onAdx].lang);
       for (int i = 0; i < P.nAdx; i++) {
         const SubEntry *e = &P.adx[i];
-        char k[24];
-        subs_lang_canon(e->lang, k, sizeof k);
+        const char *k = e->lang;
         int f = -1;
         for (int q = 0; q < nk; q++)
           if (!strcmp(keys[q], k))
@@ -4032,12 +4103,25 @@ static void tray_data(void) {
         snprintf(x->lb, 200, "%s", names[q]);
         snprintf(x->vl, 48, "%d", cnt[q]);
         snprintf(x->u, 1024, "lang:%s", keys[q]);
-        x->on = !strcmp(keys[q], P.subLang);
+        x->on = !P.browseProvider && !strcmp(keys[q], P.subLang);
         if (x->on)
           snprintf(c2->title, 64, "%s", names[q]);
         if (onKey[0] && !strcmp(onKey, keys[q]))
           x->d = 1;
       } /* d: the tick (a subtitle of this language is on); on: the language shown beside */
+      /* One shortcut per source, including those with no files in the selected language. */
+      for (int i = 0; i < P.nAdx; i++) {
+        const SubEntry *e = &P.adx[i];
+        if (i && e->order == P.adx[i-1].order)
+          continue;
+        x = col_add(c1,4);
+        snprintf(x->lb,sizeof x->lb,"%s",e->addon);
+        snprintf(x->u,sizeof x->u,"provider:%d",e->order);
+        x->i = e->order;
+        x->on = P.browseProvider == e->order + 1;
+        if (x->on)
+          snprintf(c2->title,sizeof c2->title,"%s",e->addon);
+      }
       if (!nk) {
         if (P.adxLoading) {
           col_add(c1, 1);
@@ -4052,23 +4136,17 @@ static void tray_data(void) {
         snprintf(c2->title, 64, "%s", T("Subtitles"));
       for (int i = 0; i < P.nAdx; i++) {
         const SubEntry *e = &P.adx[i];
-        char k[24];
-        if (strcmp(subs_lang_canon(e->lang, k, sizeof k), P.subLang))
+        const char *k = e->lang;
+        if (P.browseProvider ? P.browseProvider != e->order + 1 : strcmp(k, P.subLang))
           continue;
-        int same = 0;
-        for (int j = 0; j < P.nAdx; j++) {
-          char k2[24];
-          if (P.adx[j].order == e->order && !strcmp(subs_lang_canon(P.adx[j].lang, k2, sizeof k2), k))
-            same++;
-        }
         x = col_add(c2, 4);
         if (e->label[0])
           snprintf(x->lb, 200, "%s", e->label);
-        else if (same > 1)
+        else if (e->n > 1)
           snprintf(x->lb, 200, "%s %d", T(e->name), e->n);
         else
           snprintf(x->lb, 200, "%s", T(e->name));
-        snprintf(x->sub, 120, "%s", e->addon);
+        snprintf(x->sub, 120, "%s", P.browseProvider ? T(e->name) : e->addon);
         x->on = i == onAdx;
         x->spin = x->on && SL.wait;
         x->ls = 2;
@@ -4500,8 +4578,8 @@ static void choose(TItem *it) {
   if (!it)
     return;
   if (it->k == 4 && P.tray.kind == 4) {
-    if (!strncmp(it->u, "lang:", 5)) {
-      snprintf(P.subLang, sizeof P.subLang, "%s", it->u + 5);
+    if (sub_filter(it)) {
+      browse_subs(it);
       render_tray(0);
       if (P.tray.ncols > 1) {
         int r = first_on(P.tray.cols[1].items, P.tray.cols[1].n);
@@ -4514,7 +4592,7 @@ static void choose(TItem *it) {
     else if (!strcmp(it->u, "off"))
       subs_off();
     else if (!strncmp(it->u, "emb:", 4))
-      set_emb_sub(it->i);
+      set_emb_sub(it->i, SUB_MANUAL);
     else if (it->tool) {
       if (strcmp(it->u, "sync")) {
         TM.vkC = P.tray.c;
@@ -4543,7 +4621,7 @@ static void choose(TItem *it) {
         for (k = 0; k < n && strcmp(l[k].url, it->u); k++)
           ;
       if (k < n)
-        set_ext_sub(it->ls, &l[k]);
+        set_ext_sub(it->ls, &l[k], 0);
     }
   } else if (it->k == 4 && P.tray.kind == 3 && it->i >= 1000) {
     int ord = it->i - 1000; /* another track converted, from here */
@@ -4688,8 +4766,8 @@ static int tray_key(int k) {
         P.tray.zone = 1;
       else
         nudge_start(&P.nudge, k);
-      if (n >= 0 && P.tray.kind == 4 && !strncmp(col->items[n].u, "lang:", 5)) {
-        snprintf(P.subLang, sizeof P.subLang, "%s", col->items[n].u + 5);
+      if (n >= 0 && P.tray.kind == 4 && sub_filter(&col->items[n])) {
+        browse_subs(&col->items[n]);
         render_tray(0);
       }
     } /* the language under the focus: its subtitles beside it */
@@ -5242,6 +5320,8 @@ static void start_video(void) {
   load_ext_subs(0);
   load_addon_subs(0);
   load_emb_tracks();
+  P.subAutoReady = 1;
+  auto_sub();
 }
 static char nextAlt[SB_URL_MAX];
 void player_fallback(const char *url) {
@@ -5864,13 +5944,13 @@ void player_cast_track(const char *kind, const char *id, int ms) {
     if (!strcmp(id, "off"))
       subs_off();
     else if (!strncmp(id, "emb:", 4))
-      set_emb_sub(atoi(id + 4));
+      set_emb_sub(atoi(id + 4), SUB_MANUAL);
     else if (!strncmp(id, "ext1:", 5) || !strncmp(id, "ext2:", 5)) {
       int li = id[3] - '0', k = atoi(id + 5);
       const SubEntry *l = li == 1 ? P.ext : P.adx;
       int n = li == 1 ? P.nExt : P.nAdx;
       if (k >= 0 && k < n)
-        set_ext_sub(li, &l[k]);
+        set_ext_sub(li, &l[k], 0);
     }
     refresh_tray(4);
     return;

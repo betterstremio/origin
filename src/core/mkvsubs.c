@@ -545,12 +545,8 @@ static int each_tracks(void *c_, unsigned id, long d, long long sz, long at) {
   Ctx k = *c;
   k.t = t;
   each(c->b, c->n, d, d + (long)sz, each_track, &k);
-  if (t->bcp[0] && (!t->lang[0] || !strcmp(t->lang, "und"))) {
-    char *dash = strchr(t->bcp, '-');
-    if (dash)
-      *dash = 0;
-    snprintf(t->lang, sizeof t->lang, "%s", t->bcp);
-  }
+  if (t->bcp[0])
+    snprintf(t->lang, sizeof t->lang, "%.*s", (int)sizeof t->lang - 1, t->bcp);
   if (!strcmp(t->lang, "und"))
     t->lang[0] = 0;
   c->info->ntr++;

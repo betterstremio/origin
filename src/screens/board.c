@@ -619,7 +619,7 @@ static void pinned_rows(Board *b) {
   }
 }
 /* Discover's head, under its spotlight: the collections, the pinned first */
-static void col_disc_rows(Board *b, int keep, const int *oldCols) {
+static void col_disc_rows(Board *b) {
   const ColSet *s = colstore();
   for (int pass = 1; pass >= 0; pass--)
     for (int i = 0; i < s->n; i++) {
@@ -632,8 +632,6 @@ static void col_disc_rows(Board *b, int keep, const int *oldCols) {
       r->tiles = c->folders;
       r->ntiles = c->nfolders;
       r->hidden = 0;
-      if (keep && oldCols[r - b->rows] < r->ntiles)
-        r->col = oldCols[r - b->rows];
     }
 }
 /* a For You page's rows (recs.c): only their titles and counts here; the cards are loaded near the focus (rows_window).
@@ -905,7 +903,7 @@ static void ani_ask(Board *b, int ri) {
   r->asked = 1;
   anime_page_ask(&aniPlan[r->alIdx1 - 1], on_anime, tok(b, ri));
 }
-static void ani_rows(Board *b, int keep, const int *oldCols) {
+static void ani_rows(Board *b) {
   int mem = plat_mem_total_mb(), cap = mem > 0 && mem <= 1200 ? 14 : 24;
   anime_page_open();
   aniT0 = app_now();
@@ -926,8 +924,6 @@ static void ani_rows(Board *b, int keep, const int *oldCols) {
     int ri = (int)(r - b->rows);
     r->poster =
         aniPlan[i].src == AS_KITSU; /* (AniList rows are drawn as Shows rows; only the Kitsu fallback has covers) */
-    if (keep && ri < MAXROWS)
-      r->col = oldCols[ri];
     if (aniPlan[i].src == AS_KITSU) {
       if (!anime_page_def(&aniPlan[i], &r->def))
         continue; /* (the addon is not in yet: this row stays hidden) */
@@ -940,16 +936,14 @@ static void ani_rows(Board *b, int keep, const int *oldCols) {
 }
 static double catAt; /* when the Catalogue last built: an empty page says so a moment after */
 #define CATDEFS 60 /* the Catalogue: every installed catalogue of every addon, as many as fit the board's rows */
-static void load_catalog_rows(Board *b, int disc, int keep) {
+static void build_catalog_rows(Board *b, int disc, int keep) {
   b->animeLibVer = lib_anime_version();
   if (b->kind == 2) {
     col_rows(b, colFolder);
     return;
   }
   double t0 = app_now();
-  int hadN = b->n, oldRow = b->rowIdx, oldCols[MAXROWS] = { 0 }; /* (rows new since: at their start) */
-  for (int i = 0; i < b->n; i++)
-    oldCols[i] = b->rows[i].col;
+  int hadN = b->n, oldRow = b->rowIdx;
   Item *was = NULL;
   int nwas = 0; /* Continue Watching as it was, to find one taken out of it */
   if (keep && !disc && b->n && !strcmp(b->rows[0].title, "Continue Watching") && b->rows[0].items.n) {
@@ -1009,7 +1003,7 @@ static void load_catalog_rows(Board *b, int disc, int keep) {
   if (disc) {
     b->cine = b->dtype && strcmp(store_get("homeLayout", "cinematic"), "classic");
     if (b->dtype == 0 || b->dtype == 3)
-      col_disc_rows(b, keep, oldCols); /* (the collections live on the Catalogue now; phones' Discover keeps them) */
+      col_disc_rows(b); /* (the collections live on the Catalogue now; phones' Discover keeps them) */
   }
   int kb = disc && (b->dtype == 1 || b->dtype == 2), an = disc && b->dtype == 4;
   int phCat = disc && b->dtype == 3 && form_touch(); /* (a phone's Catalogue asks its rows as they come near) */
@@ -1027,7 +1021,7 @@ static void load_catalog_rows(Board *b, int disc, int keep) {
   }
   int nd;
   if (an) {
-    ani_rows(b, keep, oldCols);
+    ani_rows(b);
     nd = 0;
   } else if (fy)
     nd = 0;
@@ -1044,8 +1038,6 @@ static void load_catalog_rows(Board *b, int disc, int keep) {
     if (!r)
       break;
     int ri = (int)(r - b->rows);
-    if (keep && ri < MAXROWS)
-      r->col = oldCols[ri];
     r->def = defs[d];
     r->hasDef = 1;
     if (!kb && !phCat)
@@ -1060,11 +1052,6 @@ static void load_catalog_rows(Board *b, int disc, int keep) {
       if (nx >= 0)
         b->rowIdx = nx;
     } /* (never on the row closing) */
-    for (int j = 0; j < b->n; j++) {
-      Row *r = &b->rows[j];
-      if (row_n(r) && r->col >= row_n(r))
-        r->col = row_n(r) - 1;
-    }
   } else
     b->rowIdx = 0;
   if (an)
@@ -1085,6 +1072,44 @@ static void load_catalog_rows(Board *b, int disc, int keep) {
     if (kb && getenv("SB_ROWLOG"))
       for (int i = 0; i < b->n; i++)
         fprintf(stderr, "[tabs]   %2d %s\n", i + 1, b->rows[i].title);
+  }
+}
+/* Restore by row title because adding or removing Continue Watching shifts all later rows. */
+static void load_catalog_rows(Board *b, int disc, int keep) {
+  static char titles[MAXROWS][96];
+  int cols[MAXROWS], n = b->n, focused = b->rowIdx;
+  char first[64] = "";
+  for (int i = 0; i < n; i++) {
+    Row *r = &b->rows[i];
+    snprintf(titles[i], sizeof titles[i], "%s", r->title);
+    cols[i] = r->col;
+    if (r->items.n && !strcmp(r->title, "Continue Watching"))
+      snprintf(first, sizeof first, "%s", r->items.items[0].id);
+  }
+  build_catalog_rows(b, disc, keep);
+  if (!n)
+    return;
+  for (int j = 0; j < b->n; j++) {
+    Row *r = &b->rows[j];
+    if (r->closing)
+      continue;
+    r->col = 0;
+    for (int i = 0; i < n; i++) {
+      if (strcmp(titles[i], r->title))
+        continue;
+      titles[i][0] = 0;
+      if (i == focused)
+        b->rowIdx = j;
+      if (strcmp(r->title, "Continue Watching") || (r->items.n && !strcmp(first, r->items.items[0].id))) {
+        r->col = cols[i];
+        int count = r->ntiles ? r->ntiles : row_n(r);
+        if (count && r->col >= count)
+          r->col = count - 1;
+      }
+      break;
+    }
+    tween_set(&r->off, r->col * step_of(r));
+    tween_set(&r->pos, (float)r->col);
   }
 }
 /* ---- the spotlight's own picks: this year's new films and the trending series, alternating (not the first row again)
@@ -2610,6 +2635,29 @@ static void board_tick(float dt) {
   if ((b->kind == 0 && b->recsVer != recs_version()) || kind_stale(b)) {
     b->recsVer = recs_version();
     board_rebuild(); /* (a tab's page just became ready, or changed: the rows swap in place, the focus row kept) */
+   } else if (b->kind == 0 && b->libVer != lib_version()) {
+    ItemList cw;
+    lib_cw_items(&cw);
+    Row *r = b->n && !strcmp(b->rows[0].title, "Continue Watching") ? &b->rows[0] : NULL;
+    b->libVer = lib_version();
+    if (r && !r->closing && cw.n) {
+      int col = r->items.n && !strcmp(cw.items[0].id, r->items.items[0].id) ? r->col : 0;
+      row_clear(r);
+      r->items = cw;
+      col = col < cw.n ? col : cw.n - 1;
+      if (col != r->col || !col) {
+        r->col = col;
+        tween_set(&r->off, col * step_of(r));
+        tween_set(&r->pos, (float)col);
+      }
+      if (b->rowIdx == 0)
+        hero_soon(b, 70);
+    } else {
+      int structural = r || cw.n;
+      itemlist_clear(&cw);
+      if (structural)
+        board_rebuild();
+    }
   }
   if ((b->kind == 0 || kindb(b)) && b->winRow != b->rowIdx)
     rows_window(b); /* (the focused row changed) */
@@ -3796,30 +3844,9 @@ void board_rebuild(void) {
   if (!b)
     return;
   fill_rebuild();
-  static char titles[MAXROWS][96];
-  int cols[MAXROWS], n = b->n, ri = b->rowIdx;
-  for (int i = 0; i < n; i++) {
-    snprintf(titles[i], sizeof titles[i], "%s", b->rows[i].title);
-    cols[i] = b->rows[i].col;
-  }
   b->built = 1;
   b->libVer = lib_version();
   load_catalog_rows(b, b->kind == 1, 0);
-  b->rowIdx = 0;
-  for (int j = 0; j < b->n; j++) {
-    Row *r = &b->rows[j];
-    for (int i = 0; i < n; i++)
-      if (!strcmp(titles[i], r->title)) {
-        r->col = cols[i];
-        if (row_n(r) && r->col >= row_n(r))
-          r->col = row_n(r) - 1;
-        if (r->ntiles && r->col >= r->ntiles)
-          r->col = r->ntiles - 1;
-        if (i == ri)
-          b->rowIdx = j;
-        break;
-      }
-  }
   rows_window(b);
   for (int i = 0; i < b->n; i++) {
     slide_row(&b->rows[i]);

@@ -1773,6 +1773,10 @@ void lib_set_progress(const char *id, const Item *it, const char *vid, double to
   cJSON *l = lib_get(id);
   if (!l)
     l = lib_new_item(it);
+  if (to > 0 && js_bool(l, "removed", 0) && !js_bool(l, "temp", 0)) {
+    cJSON_DeleteItemFromObjectCaseSensitive(l, "temp");
+    cJSON_AddBoolToObject(l, "temp", 1);
+  }
   cJSON *s = cJSON_GetObjectItemCaseSensitive(l, "state");
   if (!s) {
     s = cJSON_CreateObject();
@@ -2525,9 +2529,6 @@ static void stream_subs_keep(const char *key, const cJSON *arr, const char *addo
     SubEntry *o = &e->subs[e->n++];
     copy_str(o->url, sizeof o->url, u);
     copy_str(o->lang, sizeof o->lang, js_str(x, "lang", "und"));
-    for (char *p = o->lang; *p; p++)
-      if (*p >= 'A' && *p <= 'Z')
-        *p += 32;
     copy_str(o->label, sizeof o->label, js_str(x, "label", ""));
     copy_str(o->addon, sizeof o->addon, addon);
     o->from = SUB_STREAM;

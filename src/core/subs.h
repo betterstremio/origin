@@ -19,6 +19,7 @@ void subs_pump(void); /* every frame while the player is open */
 void subs_free(Cue *c, int n);
 /* languages: one canonical code per language whatever the source uses (639-2 B/T, 639-1, BCP-47) */
 const char *subs_lang_canon(const char *code, char *out, size_t cap);
+const char *subs_lang_fallback(const char *wanted);
 int subs_lang_match(const char *a, const char *b);
 const char *subs_lang_name(const char *code); /* a track's language (eng / en / en-US) in English; NULL when unknown */
 const char *subs_sub_name(

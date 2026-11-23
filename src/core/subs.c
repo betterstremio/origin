@@ -412,124 +412,6 @@ int subs_parse_body(const unsigned char *body, size_t len, Cue **out) {
   return k;
 }
 
-/* ---- language codes ---- */
-static const char *ALIAS[][2] = {
-  { "en", "eng" },  { "ar", "ara" },  { "fr", "fre" }, { "fra", "fre" }, { "es", "spa" },  { "spl", "spa" },
-  { "de", "ger" },  { "deu", "ger" }, { "it", "ita" }, { "pt", "por" },  { "pob", "por" }, { "ru", "rus" },
-  { "tr", "tur" },  { "pl", "pol" },  { "nl", "dut" }, { "nld", "dut" }, { "sv", "swe" },  { "he", "heb" },
-  { "iw", "heb" },  { "hi", "hin" },  { "ja", "jpn" }, { "ko", "kor" },  { "zh", "chi" },  { "zho", "chi" },
-  { "ro", "rum" },  { "ron", "rum" }, { "el", "gre" }, { "ell", "gre" }, { "cs", "cze" },  { "ces", "cze" },
-  { "fa", "per" },  { "fas", "per" }, { "da", "dan" }, { "fi", "fin" },  { "no", "nor" },  { "nb", "nor" },
-  { "nob", "nor" }, { "hu", "hun" },  { "bg", "bul" }, { "uk", "ukr" },  { "sr", "srp" },  { "hr", "hrv" },
-  { "sk", "slo" },  { "slk", "slo" }, { "sl", "slv" }, { "id", "ind" },  { "ms", "may" },  { "msa", "may" },
-  { "th", "tha" },  { "vi", "vie" },  { NULL, NULL }
-};
-/* a track's language as a name (the player's chips and lists) */
-static const char *LANGS[][2] = {
-  { "en", "English" },     { "eng", "English" },    { "fr", "French" },      { "fre", "French" },
-  { "fra", "French" },     { "es", "Spanish" },     { "spa", "Spanish" },    { "de", "German" },
-  { "ger", "German" },     { "deu", "German" },     { "it", "Italian" },     { "ita", "Italian" },
-  { "pt", "Portuguese" },  { "por", "Portuguese" }, { "ru", "Russian" },     { "rus", "Russian" },
-  { "ar", "Arabic" },      { "ara", "Arabic" },     { "tr", "Turkish" },     { "tur", "Turkish" },
-  { "pl", "Polish" },      { "pol", "Polish" },     { "nl", "Dutch" },       { "dut", "Dutch" },
-  { "nld", "Dutch" },      { "sv", "Swedish" },     { "swe", "Swedish" },    { "ja", "Japanese" },
-  { "jpn", "Japanese" },   { "ko", "Korean" },      { "kor", "Korean" },     { "zh", "Chinese" },
-  { "chi", "Chinese" },    { "zho", "Chinese" },    { "hi", "Hindi" },       { "hin", "Hindi" },
-  { "he", "Hebrew" },      { "heb", "Hebrew" },     { "el", "Greek" },       { "gre", "Greek" },
-  { "ell", "Greek" },      { "ro", "Romanian" },    { "rum", "Romanian" },   { "ron", "Romanian" },
-  { "hu", "Hungarian" },   { "hun", "Hungarian" },  { "cs", "Czech" },       { "cze", "Czech" },
-  { "ces", "Czech" },      { "da", "Danish" },      { "dan", "Danish" },     { "fi", "Finnish" },
-  { "fin", "Finnish" },    { "no", "Norwegian" },   { "nor", "Norwegian" },  { "nb", "Norwegian" },
-  { "nob", "Norwegian" },  { "uk", "Ukrainian" },   { "ukr", "Ukrainian" },  { "th", "Thai" },
-  { "tha", "Thai" },       { "vi", "Vietnamese" },  { "vie", "Vietnamese" }, { "id", "Indonesian" },
-  { "ind", "Indonesian" }, { "fa", "Persian" },     { "per", "Persian" },    { "fas", "Persian" },
-  { NULL, NULL }
-};
-/* OpenSubtitles' own codes, ahead of the list above */
-static const char *SUBNAMES[][2] = { { "spl", "Spanish (LA)" },
-                                     { "pob", "Portuguese (BR)" },
-                                     { "hrv", "Croatian" },
-                                     { "bul", "Bulgarian" },
-                                     { "bos", "Bosnian" },
-                                     { "srp", "Serbian" },
-                                     { "slo", "Slovak" },
-                                     { "slk", "Slovak" },
-                                     { "slv", "Slovenian" },
-                                     { "est", "Estonian" },
-                                     { "lav", "Latvian" },
-                                     { "lit", "Lithuanian" },
-                                     { "alb", "Albanian" },
-                                     { "sqi", "Albanian" },
-                                     { "mac", "Macedonian" },
-                                     { "mkd", "Macedonian" },
-                                     { "ice", "Icelandic" },
-                                     { "isl", "Icelandic" },
-                                     { "may", "Malay" },
-                                     { "msa", "Malay" },
-                                     { "cat", "Catalan" },
-                                     { "baq", "Basque" },
-                                     { "eus", "Basque" },
-                                     { "glg", "Galician" },
-                                     { "geo", "Georgian" },
-                                     { "kat", "Georgian" },
-                                     { "arm", "Armenian" },
-                                     { "hye", "Armenian" },
-                                     { "ben", "Bengali" },
-                                     { "tam", "Tamil" },
-                                     { "tel", "Telugu" },
-                                     { "urd", "Urdu" },
-                                     { "mal", "Malayalam" },
-                                     { "sin", "Sinhala" },
-                                     { "tgl", "Tagalog" },
-                                     { "kur", "Kurdish" },
-                                     { "mon", "Mongolian" },
-                                     { "ze", "Chinese (bilingual)" },
-                                     { "zht", "Chinese (traditional)" },
-                                     { "zhe", "Chinese (bilingual)" },
-                                     { "ell", "Greek" },
-                                     { "ron", "Romanian" },
-                                     { "ces", "Czech" },
-                                     { "nld", "Dutch" },
-                                     { NULL, NULL } };
-static const char *lookup(const char *t[][2], const char *k) {
-  for (int i = 0; t[i][0]; i++)
-    if (!strcmp(t[i][0], k))
-      return t[i][1];
-  return NULL;
-}
-static void base_code(const char *c, char *k, size_t cap) {
-  size_t i = 0;
-  for (; c && c[i] && c[i] != '-' && c[i] != '_' && i + 1 < cap; i++)
-    k[i] = (char)(c[i] >= 'A' && c[i] <= 'Z' ? c[i] + 32 : c[i]);
-  k[i] = 0;
-}
-const char *subs_lang_canon(const char *code, char *out, size_t cap) {
-  char k[16];
-  base_code(code, k, sizeof k);
-  const char *a = lookup(ALIAS, k);
-  snprintf(out, cap, "%s", a ? a : k);
-  return out;
-}
-int subs_lang_match(const char *a, const char *b) {
-  if (!a || !b || !*a || !*b)
-    return 0;
-  char x[16], y[16];
-  return !strcmp(subs_lang_canon(a, x, sizeof x), subs_lang_canon(b, y, sizeof y));
-}
-const char *subs_lang_name(const char *code) {
-  char k[16];
-  base_code(code, k, sizeof k);
-  return *k ? lookup(LANGS, k) : NULL;
-}
-const char *subs_sub_name(const char *code) {
-  char k[16];
-  base_code(code, k, sizeof k);
-  if (!*k)
-    return NULL;
-  const char *n = lookup(SUBNAMES, k);
-  return n ? n : lookup(LANGS, k);
-}
-
 /* ---- fetching on a thread of their own ----
    The shared request queue can sit behind six stream addons for 45 s each: a subtitle the viewer just picked, or the
    lists, must not wait there. Each fetch runs on its own short thread (files are also read there, off the drawing
@@ -548,7 +430,8 @@ typedef struct SubJob {
   FindQ *fq;
   int src;
   SubEntry *got;
-  int ngot;
+  int ngot, parsed, raw, noUrl, longUrl, langCap, sourceCap;
+  Uint32 elapsed;
   int os;
 } SubJob; /* list: one addon's answer for a FindQ (src: which); os: the built-in OpenSubtitles list */
 static pthread_mutex_t jmu = PTHREAD_MUTEX_INITIALIZER;
@@ -565,7 +448,9 @@ static void *job_main(void *a) {
   SubJob *j = a;
   /* Some add-ons time subtitles on the first request. Each has its own worker, so the others can still answer. */
   int timeout = j->os ? 20000 : j->list ? 35000 : 45000;
+  Uint32 started = SDL_GetTicks();
   j->body = net_fetch_sync(j->url, &j->len, &j->status, timeout);
+  j->elapsed = SDL_GetTicks() - started;
   if (j->os) {
   } /* read on the main thread (on_list) */
   else if (j->list)
@@ -750,27 +635,25 @@ static void on_list(int st, const unsigned char *b, size_t n, void *ud) {
   const cJSON *arr = js_arr(j, "subtitles"), *s;
   SubEntry *out = calloc(256, sizeof *out);
   int no = 0;
-  char langs[64][8];
+  char langs[64][24];
   int per[64], nl = 0;
   if (arr)
     cJSON_ArrayForEach(s, arr) {
       if (no >= 256)
         break;
       const char *url = js_str(s, "url", NULL);
-      char lang[8];
-      snprintf(lang, sizeof lang, "%s", js_str(s, "lang", ""));
-      for (char *p = lang; *p; p++)
-        if (*p >= 'A' && *p <= 'Z')
-          *p += 32;
+      const char *lang = js_str(s, "lang", "");
+      char key[24];
+      subs_lang_canon(lang, key, sizeof key);
       if (!*lang || !url || strlen(url) >= sizeof out->url)
         continue;
       int li = -1;
       for (int i = 0; i < nl; i++)
-        if (!strcmp(langs[i], lang))
+        if (!strcmp(langs[i], key))
           li = i;
       if (li < 0 && nl < 64) {
         li = nl++;
-        snprintf(langs[li], 8, "%s", lang);
+        snprintf(langs[li], sizeof langs[li], "%s", key);
         per[li] = 0;
       }
       if (li < 0)
@@ -778,7 +661,7 @@ static void on_list(int st, const unsigned char *b, size_t n, void *ud) {
       if (++per[li] > 12)
         continue;
       SubEntry *e = &out[no++];
-      snprintf(e->lang, sizeof e->lang, "%s", lang);
+      snprintf(e->lang, sizeof e->lang, "%s", key);
       const char *nm = subs_sub_name(lang);
       if (nm)
         snprintf(e->name, sizeof e->name, "%s", nm);
@@ -837,35 +720,45 @@ struct FindQ {
   void (*cb)(SubEntry *, int, int, int, int, void *);
   void *ud;
 };
+static void entry_name(SubEntry *e, const char *raw) {
+  const char *name = subs_sub_name(raw);
+  snprintf(e->name,sizeof e->name,"%s", name ? name : raw);
+  if (!name && strlen(e->name) <= 3)
+    for (char *p = e->name; *p; p++)
+      *p = (char)toupper((unsigned char)*p);
+}
 static void list_parse(SubJob *j) {
   cJSON *js = j->body && j->status == 200 ? cJSON_ParseWithLength((const char *)j->body, j->len) : NULL;
   const cJSON *arr = js_arr(js, "subtitles"), *s;
   if (j->body && j->status == 200 && !js)
     fprintf(stderr, "[subs] %s: the answer is not JSON\n", j->fq->src[j->src].name);
-  if (js)
-    j->status = 1000; /* read */
-  int n = arr ? cJSON_GetArraySize(arr) : 0;
+  j->parsed = js != NULL;
+  int n = j->raw = arr ? cJSON_GetArraySize(arr) : 0;
   if (n > 400)
     n = 400;
   j->got = calloc(n ? n : 1, sizeof *j->got);
-  char langs[64][16];
+  char langs[64][24];
   int per[64], nl = 0;
   const FindSrc *fs = &j->fq->src[j->src];
   if (arr)
     cJSON_ArrayForEach(s, arr) {
-      if (j->ngot >= n)
+      if (j->ngot >= n) {
+        j->sourceCap = j->raw - j->ngot - j->noUrl - j->longUrl - j->langCap;
         break;
+      }
       const char *url = js_str(s, "url", NULL);
-      if (!url || !*url || strlen(url) >= 1024)
+      if (!url || !*url) {
+        j->noUrl++;
         continue;
-      char lang[24];
-      snprintf(lang, sizeof lang, "%s", js_str(s, "lang", "und"));
-      for (char *p = lang; *p; p++)
-        if (*p >= 'A' && *p <= 'Z')
-          *p += 32;
+      }
+      if (strlen(url) >= sizeof j->got->url) {
+        j->longUrl++;
+        continue;
+      }
+      const char *lang = js_str(s, "lang", "und");
       if (!*lang)
-        snprintf(lang, sizeof lang, "und");
-      char key[16];
+        lang = "und";
+      char key[24];
       subs_lang_canon(lang, key, sizeof key);
       int li = -1;
       for (int i = 0; i < nl; i++)
@@ -876,15 +769,17 @@ static void list_parse(SubJob *j) {
         snprintf(langs[li], sizeof langs[li], "%s", key);
         per[li] = 0;
       }
-      if (li < 0)
+      if (li < 0 || per[li] >= 12) {
+        j->langCap++;
         continue;
-      if (++per[li] > 12)
-        continue; /* 12 per language from one source: enough to choose from */
+      }
+      per[li]++;
       SubEntry *e = &j->got[j->ngot++];
-      snprintf(e->lang, sizeof e->lang, "%s", lang);
+      snprintf(e->lang, sizeof e->lang, "%s", key);
       snprintf(e->url, sizeof e->url, "%s", url);
       snprintf(e->label, sizeof e->label, "%s", js_str(s, "label", ""));
       snprintf(e->addon, sizeof e->addon, "%s", fs->name);
+      entry_name(e,lang);
       e->from = SUB_ADDON;
       e->order = fs->order;
       e->n = per[li];
@@ -894,22 +789,6 @@ static void list_parse(SubJob *j) {
   cJSON_Delete(js);
   free(j->body);
   j->body = NULL;
-}
-static void entry_name(SubEntry *e) {
-  const char *nm = subs_sub_name(e->lang);
-  if (nm)
-    snprintf(e->name, sizeof e->name, "%s", nm);
-  else {
-    snprintf(e->name, sizeof e->name, "%s", e->lang);
-    size_t l = strlen(
-        e->name); /* "a valid ISO 639-2 code, else the text itself": a short code in capitals, words as they are */
-    if (l <= 3) {
-      for (char *p = e->name; *p; p++)
-        if (*p >= 'a' && *p <= 'z')
-          *p -= 32;
-    } else if (e->name[0] >= 'a' && e->name[0] <= 'z')
-      e->name[0] -= 32;
-  }
 }
 static int cmp_entry(const void *a, const void *b) {
   const SubEntry *x = a, *y = b;
@@ -929,15 +808,17 @@ static void find_deliver(FindQ *f) {
     free(f);
   }
 }
-static void find_add(FindQ *f, const SubEntry *e, int n) {
+static int find_add(FindQ *f, const SubEntry *e, int n) {
+  int duplicates = 0;
   for (int i = 0; i < n; i++) {
     int k = 0;
     for (; k < f->n && strcmp(f->all[k].url, e[i].url); k++)
       ;
     if (k < f->n) {
-      /* Keep the existing visible row, including the selection if it is already playing. */
-      if (e[i].preferred && !f->all[k].preferred && subs_lang_match(f->all[k].lang, e[i].lang))
-        f->all[k].preferred = e[i].preferred;
+      duplicates++;
+      if (e[i].preferred && !f->all[k].preferred) {
+        f->all[k] = e[i];
+      }
       continue;
     }
     if (f->n == f->cap) {
@@ -949,26 +830,51 @@ static void find_add(FindQ *f, const SubEntry *e, int n) {
       f->cap = cap;
     }
     f->all[f->n] = e[i];
-    entry_name(&f->all[f->n]);
+    if (e[i].from == SUB_STREAM) {
+      entry_name(&f->all[f->n], e[i].lang);
+      subs_lang_canon(e[i].lang, f->all[f->n].lang, sizeof f->all[f->n].lang);
+    }
     f->n++;
   }
   if (f->n > 1)
     qsort(f->all, f->n, sizeof *f->all, cmp_entry);
+  return duplicates;
+}
+static void addon_host(const char *url, char *host, size_t cap) {
+  const char *p = strstr(url, "://");
+  if (!p) {
+    snprintf(host,cap,"?");
+    return;
+  }
+  p += 3;
+  const char *end = p + strcspn(p, "/?#");
+  for (const char *x = p; x < end; x++)
+    if (*x == '@')
+      p = x+1;
+  snprintf(host,cap,"%.*s",(int)(end-p),p);
+}
+static void log_skipped(const char *name, const char *url, const char *reason) {
+  char host[128];
+  addon_host(url,host,sizeof host);
+  fprintf(stderr,"[subs] addon %s (%s): skipped: %s\n",name,host,reason);
 }
 static void find_answer(SubJob *j) {
   FindQ *f = j->fq;
   f->pending--;
   if (f->src[j->src].preferred)
     f->preferredPending = 0;
-  if (j->status == 1000)
+  int before = f->n, dup = find_add(f, j->got, j->ngot);
+  char host[128];
+  const FindSrc *src = &f->src[j->src];
+  addon_host(src->base, host, sizeof host);
+  if (j->parsed)
     f->nok++;
-  if (j->status == 1000)
-    fprintf(stderr, "[subs] %s: %d subtitles\n", f->src[j->src].name, j->ngot);
-  else if (j->status > 0)
-    fprintf(stderr, "[subs] %s: HTTP %d\n", f->src[j->src].name, j->status);
+  if (j->status > 0)
+    fprintf(stderr, "[subs] addon %s (%s): http %d, %d raw, %d kept, dropped: %d no-url, %d long-url, "
+            "%d lang-cap, %d dup, %d source-cap\n", src->name, host, j->status, j->raw, f->n-before,
+            j->noUrl, j->longUrl, j->langCap, dup, j->sourceCap);
   else
-    fprintf(stderr, "[subs] %s: no answer\n", f->src[j->src].name);
-  find_add(f, j->got, j->ngot);
+    fprintf(stderr, "[subs] addon %s (%s): no answer after %.1fs\n", src->name, host, j->elapsed / 1000.0);
   find_deliver(f);
 }
 /* the hash (when the file can be read in ranges), then one request per source */
@@ -993,8 +899,8 @@ static void *find_main(void *a) {
     size_t used = strlen(ex);
     snprintf(ex + used, sizeof ex - used, "%sfilename=%s", used ? "&" : "", name);
   }
-  fprintf(stderr, "[subs] asking %d source(s) for %s %s (%s)\n", f->nsrc, q->type, q->vid,
-          ex[0] ? ex : "no file facts");
+  fprintf(stderr, "[subs] asking %d source(s) (hash %d, size %d, filename %d)\n", f->nsrc,
+          !!q->hash[0], q->size > 0, !!q->filename[0]);
   int ns = f->nsrc; /* f may be gone once the last request is out */
   for (int i = 0; i < ns; i++) {
     SubJob *j = calloc(1, sizeof *j);
@@ -1027,16 +933,25 @@ void subs_find(const SubQuery *q, const SubEntry *own, int nown, const char *pre
   if (a)
     cJSON_ArrayForEach(ad, a) {
       order++;
-      if (!addon_serves_subs(ad, q->type, q->vid))
+      if (!addon_serves_subs(ad, q->type, q->vid)) {
+        if (addon_serves_subs(ad, "movie", NULL))
+          log_skipped(addon_name(ad), js_str(ad,"transportUrl",""), "ineligible type or id prefix");
         continue;
+      }
       int selected = 0;
       if (*preferred && !f->preferredPending) {
         char key[SUBS_PROVIDER_KEY_SIZE];
         sb_addon_key(ad, key, sizeof key);
         selected = !strcmp(key, preferred);
       }
-      if (f->nsrc >= SUBS_ADDONS_MAX && !selected)
-        continue;
+      if (f->nsrc >= SUBS_ADDONS_MAX) {
+        if (!selected) {
+          log_skipped(addon_name(ad),js_str(ad,"transportUrl",""),"over the 16-provider cap");
+          continue;
+        }
+        FindSrc *last = &f->src[SUBS_ADDONS_MAX - 1];
+        log_skipped(last->name,last->base,"over the 16-provider cap");
+      }
       int index = f->nsrc < SUBS_ADDONS_MAX ? f->nsrc++ : SUBS_ADDONS_MAX - 1;
       FindSrc *s = &f->src[index];
       snprintf(s->name, sizeof s->name, "%s", addon_name(ad));

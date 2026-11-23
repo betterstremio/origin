@@ -101,6 +101,11 @@ static void first_run_defaults(void) {
   if (done)
     return;
   done = 1;
+  if (!store_get("subsPtBrMigrated", NULL)) {
+    if (!strcmp(lang, "pt-BR") && !strcmp(store_get("subsLang", ""), "por"))
+      store_set("subsLang", "pob");
+    store_set("subsPtBrMigrated", "1");
+  }
   if (store_get("subsLang", NULL) && store_get("defaultAudioTrack", NULL))
     return;
   static const char *M[][2] = { { "en", "eng" }, { "ar", "ara" }, { "fr", "fre" }, { "es", "spa" }, { "de", "ger" },
@@ -111,11 +116,10 @@ static void first_run_defaults(void) {
   for (size_t i = 0; i < sizeof M / sizeof M[0]; i++)
     if (!strncmp(M[i][0], tv, 2))
       c = M[i][1];
-  if (!c)
-    return;
-  if (!store_get("subsLang", NULL))
-    store_set("subsLang", c);
-  if (!store_get("defaultAudioTrack", NULL))
+  const char *sub = !strcmp(lang, "pt-BR") || !strcmp(tv, "pt-BR") ? "pob" : c;
+  if (sub && !store_get("subsLang", NULL))
+    store_set("subsLang", sub);
+  if (c && !store_get("defaultAudioTrack", NULL))
     store_set("defaultAudioTrack", c);
 }
 static unsigned langGen = 1;

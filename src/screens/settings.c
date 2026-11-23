@@ -89,7 +89,7 @@ static const Opt SVOL[] = { { "10", "10%" }, { "20", "20%" }, { "30", "30%" }, {
                             { "60", "60%" }, { "70", "70%" }, { "80", "80%" }, { "90", "90%" }, { "100", "100%" } };
 static const Opt LANG_OPTS[] = { { "", "Off" },         { "eng", "English" },    { "ara", "Arabic" },
                                  { "fre", "French" },   { "spa", "Spanish" },    { "ger", "German" },
-                                 { "ita", "Italian" },  { "por", "Portuguese" }, { "rus", "Russian" },
+                                 { "ita", "Italian" },  { "por", "Portuguese" }, { "pob", "Portuguese (Brazil)" }, { "rus", "Russian" },
                                  { "tur", "Turkish" },  { "pol", "Polish" },     { "dut", "Dutch" },
                                  { "swe", "Swedish" },  { "heb", "Hebrew" },     { "hin", "Hindi" },
                                  { "jpn", "Japanese" }, { "kor", "Korean" },     { "chi", "Chinese" } };
@@ -609,9 +609,9 @@ static void build(void) {
   set_s(&playBase[6], "bgTrailerVol", "Volume", "The sound comes up softly to this level", SVOL, 10, "70");
   playBase[6].sub = 1; /* (shown right under the trailers while they are on: play_layout; drawn as theirs, set in) */
   usb_row();
-  set_s(&subsS[0], "subsLang", "Default subtitles", "Chosen by itself when a film starts", LANG_OPTS, 18, "eng");
+  set_s(&subsS[0], "subsLang", "Default subtitles", "Chosen by itself when a film starts", LANG_OPTS, sizeof LANG_OPTS / sizeof *LANG_OPTS, "eng");
   set_s(&subsS[1], "subsProvider", "Preferred subtitle add-on",
-        "Used for the default subtitle language when the file has no matching track", subProviderOpts, 1, "");
+        "A matching track from this add-on takes priority over subtitles in the file", subProviderOpts, 1, "");
   subs_provider_opts();
   set_s(&subsS[2], "subsOpenSubtitles", "OpenSubtitles v3",
         "Include Origin's built-in subtitle results and sync references", OO, 2, "true");
@@ -625,7 +625,7 @@ static void build(void) {
   int naud = 0; /* (DTS: only where the app converts it; the startup sound: only where the package has one) */
   set_s(&audS[naud++], "enableDefaultAudioTrack", "Auto audio track",
         "Pick the audio language below when a film has several", OO, 2, "true");
-  set_s(&audS[naud++], "defaultAudioTrack", "Default audio language", "", LANG_OPTS + 1, 17, "eng");
+  set_s(&audS[naud++], "defaultAudioTrack", "Default audio language", "", LANG_OPTS + 1, sizeof LANG_OPTS / sizeof *LANG_OPTS - 1, "eng");
   if (SB_HAS_DTS)
     set_s(&audS[naud++], "dtsMode", "DTS sound",
           "Auto finds out what this TV plays. Convert if you are not sure. Off leaves it to the TV", DTSM, 3, "auto");
