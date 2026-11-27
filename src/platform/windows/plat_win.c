@@ -268,7 +268,19 @@ static void live_now(void) {
     dragFrames++;
   }
 }
+static int compLayer; /* the UI draws into a composition layer over the window (plat_gl_create) */
 static LRESULT CALLBACK live_proc(HWND h, UINT m, WPARAM a, LPARAM b) {
+  if (m == WM_PAINT && compLayer) {
+    /* The window's own pixels lie under the UI's layer and show wherever the UI is clear and no film covers them,
+       as in the bars beside a film. SDL marks them painted without drawing anything, so a switch to fullscreen left
+       the old window border there (issue #14). Paint them all black first (WS_CLIPCHILDREN: the film is left alone). */
+    RECT r;
+    HDC dc;
+    if (GetClientRect(h, &r) && (dc = GetDC(h))) {
+      FillRect(dc, &r, (HBRUSH)GetStockObject(BLACK_BRUSH));
+      ReleaseDC(h, dc);
+    }
+  }
   if (m == WM_ENTERSIZEMOVE) {
     inDrag = 1;
     dragFrames = 0;
@@ -282,14 +294,20 @@ static LRESULT CALLBACK live_proc(HWND h, UINT m, WPARAM a, LPARAM b) {
     return 0;
   }
   LRESULT r = CallWindowProcW(sdlProc, h, m, a, b);
-  if (m == WM_SIZE)
+  if (m == WM_SIZE) {
     live_now(); /* (after SDL has heard of the size) */
+    if (compLayer) /* SDL's window class has no CS_HREDRAW/CS_VREDRAW: Windows may keep old pixels, an old border too,
+                      as valid after a size change and never ask for them to be painted */
+      InvalidateRect(h, NULL, FALSE);
+  }
   return r;
 }
 void plat_live_draw(void (*fn)(void)) {
   liveDraw = fn;
-  if (top && !sdlProc)
+  if (top && !sdlProc) {
     sdlProc = (WNDPROC)SetWindowLongPtrW(top, GWLP_WNDPROC, (LONG_PTR)live_proc);
+    InvalidateRect(top, NULL, FALSE); /* (the window may have been shown, even fullscreen, before this) */
+  }
 }
 void plat_post_window(SDL_Window *w) {
   find_hwnd(w);
@@ -810,6 +828,7 @@ void *plat_gl_create(SDL_Window *w) {
   int comp = ext && strstr(ext, "EGL_ANGLE_direct_composition");
   const EGLint sa[] = { EGL_DIRECT_COMPOSITION_ANGLE, 1, EGL_NONE_ };
   surf = comp ? E.CreateWindowSurface(dpy, cfg, top, sa) : NULL;
+  compLayer = surf != NULL; /* (a plain surface: the app's frames cover the window's pixels, nothing to paint) */
   if (!surf) {
     fprintf(stderr, "[gl] no composition layer (%s): the video will not show through the UI\n",
             comp ? "refused" : "not offered");

@@ -83,6 +83,18 @@ void win_dev_input(void *hwnd, int frame) {
             win_screen_shot(w, getenv("SB_DRAG_SHOT"));
         }
         SendMessageW(w, WM_EXITSIZEMOVE, 0, 0);
+      } else if (!strcmp(a, "stale")) { /* the window's own pixels red, nothing invalidated: stale pixels as an old
+                                           border leaves them (issue #14); the bars beside a film show them */
+        RECT r;
+        HDC dc;
+        if (GetClientRect(w, &r) && (dc = GetDC(w))) {
+          HBRUSH b = CreateSolidBrush(RGB(255, 0, 0));
+          FillRect(dc, &r, b);
+          DeleteObject(b);
+          ReleaseDC(w, dc);
+        }
+      } else if (!strcmp(a, "invalidate")) { /* Windows asks for the whole window to be painted again */
+        InvalidateRect(w, NULL, FALSE);
       } else if (!strncmp(a, "type ", 5)) {
         for (const char *t = a + 5; *t; t++)
           PostMessageW(w, WM_CHAR, (WPARAM)(unsigned char)*t, 1);
