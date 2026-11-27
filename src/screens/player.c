@@ -39,6 +39,10 @@
 #include <math.h>
 #include <SDL2/SDL.h>
 
+#ifndef SB_WINDOWED
+#define SB_WINDOWED 0
+#endif
+
 /* ---- the stream's text, read for the info chips: resolution, HDR, audio ---- */
 static void lower(const char *s, char *out, size_t cap) {
   size_t i = 0;
@@ -241,6 +245,7 @@ static float kf(double at, float dur, const float *c, float delay) {
 /* ---- state ---- */
 #define MAXBTN 8
 #define MAXROW 64
+#define AUDIO_MAX MAXROW /* the Matroska reader keeps up to 64 track entries */
 typedef struct {
   int k; /* 0 note 1 skel 2 ep 3 src 4 chip; ls: a subtitle row's list, 1 OpenSubtitles 2 the addons' */
   char lb[200], sub[120], ov[300], th[512], vl[48];
@@ -467,23 +472,20 @@ static struct {
   int curAud;
   int autoAudDone;
   int didResume;
-  /* sound this TV can't decode (DTS, TrueHD): when the DTS track started playing, the codecs refused on this stream
-     (error 200), what was said */
   struct {
     double playAt;
-    char bad[4][16];
-    int nbad, said, gaveUp, switches, hidSw;
-    int told, ownTried; /* the file's tracks logged; its own track tried converting (your language nowhere in it) */
-    /* the sound converted on this device (hproxy): 0 no, 1 opening, 2 playing it; the file's audio track converted, the
-       moment to come back to, since when, the picture is HEVC; a first load held back until the file's tracks are read
-     */
-    int conv, convOrd, hevc;
+    int warned;
+    /* While converting, convOrd is the index among the original file's audio tracks. */
+    int conv, convOrd, hevc, outCh;
     double convAt, convT0, okAt, deferUntil;
-    /* the same conversion for a Dolby Vision profile 7 picture: dv the picture goes out as 8.1, copyA the audio track
-       as it is, dvTried started once already, dvSeen what the TV showed was checked */
+    int nativeOrd; /* file track to select after returning to the original container, plus one */
+    double nativeUntil;
+    int nOriginal;
+    VidTrack original[AUDIO_MAX]; /* platform inventory when Matroska metadata is unavailable */
     int dv, copyA, dvTried, dvSeen;
     double dvAt;
   } dts;
+  int audioFileListed, audioNativeCount, audioFilePick;
   int assPlain; /* styled subtitles were too slow here: plain for the rest of this film */
   double lastSave;
   int marked;
@@ -1770,123 +1772,238 @@ static void sync_tick(void) {
 }
 
 /* ---- audio ---- */
-static void set_audio(int i) {
+#define FILE_AUDIO_ID 1000
+typedef struct {
+  MkvAudio file[AUDIO_MAX];
+  VidTrack native[AUDIO_MAX];
+  int nFile, nNative;
+  int map[AUDIO_MAX]; /* file ordinal to position in native[], -1 if absent or ambiguous */
+} AudioTracks;
+
+static void set_audio(int i, int fileOrd) {
   P.curAud = i;
+  P.audioFilePick = fileOrd + 1;
+  P.autoAudDone = 1;
+  P.dts.warned = 0;
+  P.dts.playAt = 0;
   video_select_audio(i);
+  if (P.dts.nativeOrd) {
+    P.dts.nativeOrd = 0;
+    video_play();
+  }
   P.infoKey[0] = 0;
 }
-/* ---- sound this TV can't decode: DTS where it was seen failing (or not yet seen playing), TrueHD always (passed
-   through to a receiver only), and any codec the TV refused on this stream (error 200: the picture plays on) ---- */
-static int
-aud_kind(const char *codec) { /* 1 DTS, 2 TrueHD, 0 another; the TV's names ("dts") and Matroska's ("A_DTS") alike */
+static int aud_kind(const char *codec) { /* the platform's "dts" and Matroska's "A_DTS" */
   char c[32];
   lower(codec, c, sizeof c);
   return strstr(c, "dts") ? 1 : (strstr(c, "truehd") || strstr(c, "mlp")) ? 2 : 0;
 }
-static int aud_bad(const VidTrack *t) {
-  int k = aud_kind(t->codec), dm = best_dts_mode();
-  if (k == 2 || (k == 1 && (dm == 1 || (dm == 0 && best_learned("dts") == 0) || getenv("SB_DTS_CONVERT"))))
-    return 1;
-  /* DTS: Convert always; Auto once the TV was seen failing it; Off left to the TV */ /* (SB_DTS_CONVERT:
-                                                                                         development, a TV that
-                                                                                         plays DTS converts it
-                                                                                         anyway) */
-  for (int i = 0; i < P.dts.nbad; i++)
-    if (t->codec[0] && !strcasecmp(P.dts.bad[i], t->codec))
+static int dts_allowed(int kind) {
+  return kind == 2 || (kind == 1 && best_dts_mode() != 2);
+}
+static int aud_convert_needed(int kind) {
+  int mode = best_dts_mode();
+  return kind == 2 || (kind == 1 && mode != 2 && (mode == 1 || best_learned("dts") == 0 || getenv("SB_DTS_CONVERT")));
+}
+static const char *aud_codec_name(const char *codec) {
+  return !strncmp(codec, "A_", 2) ? codec + 2 : codec;
+}
+static int audio_matches(const MkvAudio *a, const VidTrack *t) {
+  if (t->codec[0]) {
+    int ka = aud_kind(a->codec), kt = aud_kind(t->codec);
+    if (ka || kt) {
+      if (ka != kt)
+        return 0;
+    } else {
+      const char *codec = aud_codec_name(a->codec);
+      size_t len = strlen(t->codec);
+      if (strncasecmp(codec, t->codec, len) || (codec[len] && codec[len] != '/'))
+        return 0;
+    }
+  } else if (aud_kind(a->codec)) {
+    return 0; /* TV entries without a codec cannot identify an omitted DTS or TrueHD track */
+  }
+  return (!a->lang[0] || !t->lang[0] || lang_match(a->lang, t->lang)) && (!t->channels || a->channels == t->channels);
+}
+static void audio_read(AudioTracks *a) {
+  a->nFile = mkv_audio_tracks(mkv, a->file, AUDIO_MAX);
+  a->nNative = P.dts.conv ? 0 : video_audio_tracks(a->native, AUDIO_MAX);
+  if (!a->nFile && P.dts.nOriginal) {
+    a->nFile = P.dts.nOriginal;
+    for (int i = 0; i < a->nFile; i++) {
+      const VidTrack *v = &P.dts.original[i];
+      MkvAudio *t = &a->file[i];
+      *t = (MkvAudio){ .channels = v->channels };
+      snprintf(t->codec, sizeof t->codec, "%s", v->codec);
+      snprintf(t->name, sizeof t->name, "%s", v->name);
+      snprintf(t->lang, sizeof t->lang, "%s", v->lang);
+    }
+  }
+  for (int i = 0; i < a->nFile; i++)
+    a->map[i] = a->nFile == a->nNative ? i : -1;
+  if (!a->nNative || a->nNative >= a->nFile)
+    return;
+  /* The pipeline keeps the file's order but can omit tracks. A mapping is safe when the earliest and
+     latest possible matches agree. The file ordinal is used when the converter reads the source. */
+  int first[AUDIO_MAX], i = 0;
+  for (int j = 0; j < a->nNative; j++) {
+    while (i < a->nFile && !audio_matches(&a->file[i], &a->native[j]))
+      i++;
+    if (i == a->nFile)
+      return;
+    first[j] = i++;
+  }
+  i = a->nFile - 1;
+  for (int j = a->nNative - 1; j >= 0; j--) {
+    while (!audio_matches(&a->file[i], &a->native[j]))
+      i--;
+    if (i == first[j])
+      a->map[i] = j;
+    i--;
+  }
+}
+static int audio_file_default(const AudioTracks *a) {
+  const char *want =
+      !strcmp(store_get("enableDefaultAudioTrack", "true"), "true") ? store_get("defaultAudioTrack", "eng") : "";
+  const char *fallback = subs_lang_fallback(want);
+  int pick = 0, score = -1;
+  for (int i = 0; i < a->nFile; i++) {
+    const char *lang = a->file[i].lang;
+    int rank = a->file[i].def;
+    if (*want && lang_match(lang, want))
+      rank += 4;
+    else if (fallback && lang_match(lang, fallback))
+      rank += 2;
+    if (rank > score) {
+      score = rank;
+      pick = i;
+    }
+  }
+  return pick;
+}
+static int audio_native_current(void) {
+  return P.curAud >= 0 ? P.curAud : video_audio_current();
+}
+static int audio_file_current(const AudioTracks *a) {
+  if (P.dts.conv)
+    return P.dts.convOrd;
+  if (P.dts.nativeOrd)
+    return P.dts.nativeOrd - 1;
+  if (P.audioFilePick)
+    return P.audioFilePick - 1;
+  if (!P.autoAudDone && !SB_WINDOWED && !P.isTrailer)
+    return audio_file_default(a);
+  int sel = audio_native_current();
+  for (int i = 0; i < a->nFile; i++)
+    if (a->map[i] >= 0 && a->native[a->map[i]].idx == sel)
+      return i;
+  return -1;
+}
+static void aud_format(const char *codec, int channels, char *out, size_t cap) {
+  char c[32], ch[16] = "";
+  snprintf(c, sizeof c, "%s", aud_codec_name(codec));
+  if (!strcasecmp(c, "TRUEHD"))
+    snprintf(c, sizeof c, "TrueHD");
+  else
+    for (char *p = c; *p; p++)
+      *p = (char)toupper((unsigned char)*p);
+  if (channels == 6 || channels == 8)
+    snprintf(ch, sizeof ch, "%d.1", channels - 1);
+  else if (channels == 1 || channels == 2)
+    snprintf(ch, sizeof ch, "%d.0", channels);
+  else if (channels > 0)
+    snprintf(ch, sizeof ch, "%d ch", channels);
+  snprintf(out, cap, "%s%s%s", c, c[0] && ch[0] ? " " : "", ch);
+}
+static void aud_label(const VidTrack *t, char *out, size_t cap) {
+  aud_format(t->codec, t->channels, out, cap);
+}
+static void auto_audio(void) {
+  if (P.autoAudDone || P.dts.conv || P.dts.nativeOrd || strcmp(store_get("enableDefaultAudioTrack", "true"), "true"))
+    return;
+  if (!SB_WINDOWED && (video_audio_unsupported() || (mkv && (mkv_listed(mkv) || mkv_state(mkv) != MKV_FALLBACK))))
+    return; /* dts_tick uses the file's tracks, including any the TV omits */
+  const char *want = store_get("defaultAudioTrack", "eng");
+  if (!*want)
+    return;
+  VidTrack ts[AUDIO_MAX];
+  int n = video_audio_tracks(ts, AUDIO_MAX);
+  for (const char *w = want; w; w = w == want ? subs_lang_fallback(want) : NULL)
+    for (int i = 0; i < n; i++)
+      if (lang_match(ts[i].lang, w)) {
+        set_audio(ts[i].idx, -1);
+        return;
+      }
+  for (int i = 0; SB_WINDOWED && i < n; i++)
+    if (lang_match(ts[i].lang, "eng")) {
+      set_audio(ts[i].idx, -1);
+      return;
+    }
+}
+static int aud_copyable(const char *codec) {
+  static const char *const formats[] = { "AC3", "EAC3", "AAC", "DTS", "TRUEHD", "MPEG/L3", "MPEG/L2", "MP3", "MP2" };
+  codec = aud_codec_name(codec);
+  for (size_t i = 0; i < sizeof formats / sizeof formats[0]; i++)
+    if (!strncasecmp(codec, formats[i], strlen(formats[i])))
       return 1;
   return 0;
 }
-/* the TV's list, its codecs filled from the file's own tracks (same order) where the TV leaves them out */
-static int aud_list(VidTrack *ts, int max) {
-  int n = video_audio_tracks(ts, max);
-  if (!n || !mkv_listed(mkv))
-    return n;
-  MkvAudio ma[16];
-  int m = mkv_audio_tracks(mkv, ma, 16);
-  if (m == n)
-    for (int i = 0; i < n; i++) {
-      if (!ts[i].lang[0])
-        snprintf(ts[i].lang, sizeof ts[i].lang, "%s", ma[i].lang); /* the TV names no language: the file does */
-      if (!ts[i].codec[0]) {
-        snprintf(ts[i].codec, sizeof ts[i].codec, "%s", ma[i].codec);
-        if (!ts[i].channels)
-          ts[i].channels = ma[i].channels;
-      }
-    }
-  return n;
-}
-static void aud_label(const VidTrack *t, char *out, size_t cap) { /* "AC3 5.1" */
-  char c[16];
-  size_t i = 0;
-  const char *s = t->codec;
-  if (!strncmp(s, "A_", 2))
-    s += 2;
-  for (; s[i] && i + 1 < sizeof c; i++)
-    c[i] = (char)toupper((unsigned char)s[i]);
-  c[i] = 0;
-  int ch = t->channels;
-  snprintf(out, cap, "%s%s", c, ch == 6 ? " 5.1" : ch == 8 ? " 7.1" : ch == 2 ? " 2.0" : ch == 1 ? " 1.0" : "");
-}
-static void auto_audio(void) {
-  if (P.autoAudDone || P.curAud >= 0 || strcmp(store_get("enableDefaultAudioTrack", "true"), "true"))
-    return;
-  const char *want = store_get("defaultAudioTrack", "eng");
-  if (!*want)
-    return; /* (a track picked by hand stays) */
-  VidTrack ts[16];
-  int n = aud_list(ts, 16);
-  if (!n)
-    return;
-  int pick = -1;
-  for (const char *w = want; w && pick < 0; w = w == want ? subs_lang_fallback(want) : NULL)
-    for (int i = 0; i < n; i++)
-      if (lang_match(ts[i].lang, w) && (pick < 0 || (aud_bad(&ts[pick]) && !aud_bad(&ts[i]))))
-        pick = i;
-  if (pick < 0 && strcmp(want, "eng"))
-    for (int i = 0; i < n; i++)
-      if (lang_match(ts[i].lang, "eng") && (pick < 0 || (aud_bad(&ts[pick]) && !aud_bad(&ts[i]))))
-        pick = i; /* not in the file: English, when the file has it */
-  if (pick >= 0) {
-    P.autoAudDone = 1;
-    set_audio(ts[pick].idx);
-  }
-}
-/* No track this TV plays: the file is converted on the TV itself (video copied, the sound as Dolby Digital 5.1) and
-   played from a local HLS stream through the same pipeline, from the same moment; the subtitles still read the file.
-   Not for a stream that isn't a plain http file, nor HEVC where this TV showed it can't play it from HLS. tvIdx: the
-   track in the TV's list (the same order as the file's), -1 the first DTS / TrueHD one. 1 started */
 static int dv7_wanted(void);
-static int dts_convert(int tvIdx, const char *why) {
-  if (P.isTrailer || P.isHls || strncmp(P.url, "http", 4) || !hls_conv_available())
+static const char *audio_error(void) {
+  return T("This TV can’t play this video’s sound (DTS or TrueHD)");
+}
+static double audio_position(void) {
+  if (P.dts.conv == 1)
+    return P.dts.convAt;
+  if (video_has_media() && P.didResume) {
+    double at = video_time();
+    return at > 0 ? at : -1;
+  }
+  return P.startAt;
+}
+static void audio_reload_at(double at) {
+  P.startAt = at;
+  P.live = 0;
+  P.liveT0 = 0;
+  P.didResume = 0;
+  P.curAud = -1;
+  P.infoKey[0] = 0;
+}
+static void audio_open_conversion(void) {
+  hls_conv_start(P.url, P.dts.convOrd,
+                 (mkv_has_index(mkv) == 0 ? HC_NOINDEX : 0) | (P.dts.dv ? HC_DV81 : 0) |
+                     (P.dts.copyA ? HC_COPYAUDIO : 0));
+}
+static int audio_convert(int ord, int copy, int dv, const char *why) {
+  if (ord < 0 || P.isTrailer || P.isHls || strncmp(P.url, "http", 4) || !hls_conv_available())
     return 0;
   char vc[32] = "";
-  int hevc = mkv_video_codec(mkv, vc, sizeof vc)
-                 ? strstr(vc, "HEVC") != NULL
-                 : has_word(P.sname, "hevc") || has_word(P.sname, "x265") || has_word(P.sname, "h265");
-  if (hevc && best_learned("hlsHevcOk") == 0) {
-    fprintf(stderr, "[dts] no conversion: HEVC from local HLS failed on this TV before\n");
+  int hevc = dv || (mkv_video_codec(mkv, vc, sizeof vc)
+                        ? strstr(vc, "HEVC") != NULL
+                        : has_word(P.sname, "hevc") || has_word(P.sname, "x265") || has_word(P.sname, "h265"));
+  if (hevc && best_learned("hlsHevcOk") == 0)
     return 0;
-  }
-  int ord = tvIdx;
-  MkvAudio ma[16];
-  int m = mkv_audio_tracks(mkv, ma, 16);
-  if (ord >= m || (ord >= 0 && !aud_kind(ma[ord].codec)))
-    ord = -1; /* (the TV's list and the file's disagree: the first DTS / TrueHD one) */
+  P.dts.convAt = audio_position();
   P.dts.conv = 1;
+  P.dts.deferUntil = 0;
   P.dts.convOrd = ord;
   P.dts.hevc = hevc;
   P.dts.convT0 = now_();
-  P.dts.convAt = P.live ? video_time() : P.startAt;
-  P.dts.dv = dv7_wanted();
-  P.dts.copyA = 0;
-  P.dts.dvTried = 1; /* a profile 7 picture: 8.1 in the same run */
-  hls_conv_start(P.url, ord, (mkv_has_index(mkv) == 0 ? HC_NOINDEX : 0) | (P.dts.dv ? HC_DV81 : 0));
-  fprintf(stderr, "[dts] path c: converting audio track %d (%s, %s%s) at %.0f s\n", ord, why,
-          hevc    ? "HEVC"
-          : vc[0] ? vc
-                  : "video",
-          P.dts.dv ? ", Dolby Vision 7 as 8.1" : "", P.dts.convAt);
-  toast(T("Converting the sound for this TV…"), 4000, NULL);
+  P.dts.dv = dv;
+  P.dts.copyA = copy;
+  P.dts.outCh = 0;
+  P.dts.dvTried = 1;
+  P.autoAudDone = 1;
+  if (video_state() != VID_IDLE)
+    video_unload();
+  audio_reload_at(P.dts.convAt);
+  P.dts.nativeOrd = 0;
+  audio_open_conversion();
+  fprintf(stderr, "[dts] audio track %d %s (%s%s) at %.0f s\n", ord, copy ? "copied" : "converted", why,
+          dv ? ", Dolby Vision 7 as 8.1" : "", P.dts.convAt);
+  if (!copy)
+    toast(T("Converting the sound for this TV…"), 4000, NULL);
+  refresh_tray(3);
   return 1;
 }
 /* ---- Dolby Vision profile 7 (Blu-ray remuxes: a base layer, an enhancement layer and the RPU in one track). A TV
@@ -1904,79 +2021,13 @@ static int dv7_wanted(void) {
   const TvCaps *c = best_caps();
   return c && c->dv && mkv_dovi(mkv, NULL) == 7;
 }
-static int aud_copyable(const char *codec) { /* the tracks the stream can carry as they are */
-  static const char *const OK[] = { "A_AC3", "A_EAC3", "A_AAC", "A_DTS", "A_TRUEHD", "A_MPEG/L3", "A_MPEG/L2" };
-  for (int i = 0; i < 7; i++)
-    if (!strncmp(codec, OK[i], strlen(OK[i])))
-      return 1;
-  return 0;
-}
-static int mkv_aud_bad(const MkvAudio *a) {
-  VidTrack v;
-  memset(&v, 0, sizeof v);
-  snprintf(v.codec, sizeof v.codec, "%s", a->codec);
-  return aud_bad(&v);
-}
-/* the track that goes with the converted picture: the default-audio language, else the file's default, else the first;
-   one this TV can't decode gives way to one it plays in the same language, else it is converted. -1 none fits */
-static int dv7_audio(int *copy) {
-  MkvAudio ma[16];
-  int m = mkv_audio_tracks(mkv, ma, 16), pick = -1;
-  if (!m)
-    return -1;
-  const char *want =
-      !strcmp(store_get("enableDefaultAudioTrack", "true"), "true") ? store_get("defaultAudioTrack", "eng") : "";
-  for (const char *w = want; w && pick < 0; w = w == want ? subs_lang_fallback(want) : NULL)
-    for (int i = 0; i < m && pick < 0; i++)
-      if (lang_match(ma[i].lang, w))
-        pick = i;
-  for (int i = 0; i < m && pick < 0; i++)
-    if (ma[i].def)
-      pick = i;
-  if (pick < 0)
-    pick = 0;
-  if (mkv_aud_bad(&ma[pick]) || !aud_copyable(ma[pick].codec))
-    for (int i = 0; i < m; i++)
-      if (!mkv_aud_bad(&ma[i]) && aud_copyable(ma[i].codec) && !strcasecmp(ma[i].lang, ma[pick].lang)) {
-        pick = i;
-        break;
-      }
-  if (!mkv_aud_bad(&ma[pick]) && aud_copyable(ma[pick].codec)) {
-    *copy = 1;
-    return pick;
-  }
-  if (aud_kind(ma[pick].codec)) {
-    *copy = 0;
-    return pick;
-  } /* DTS / TrueHD this TV can't decode: as Dolby Digital */
-  return -1;
-}
-static int conv_flags(int ord) { /* another audio track while converting */
-  MkvAudio ma[16];
-  int m = mkv_audio_tracks(mkv, ma, 16),
-      copy = P.dts.dv && ord >= 0 && ord < m && !mkv_aud_bad(&ma[ord]) && aud_copyable(ma[ord].codec);
-  return (mkv_has_index(mkv) == 0 ? HC_NOINDEX : 0) | (P.dts.dv ? HC_DV81 : 0) | (copy ? HC_COPYAUDIO : 0);
-}
-static int dv7_convert(const char *why) {
-  if (P.dts.conv || P.dts.dvTried || !dv7_wanted())
+static int dv7_convert(const AudioTracks *a, int ord, const char *why) {
+  if (P.dts.dvTried || !dv7_wanted())
     return 0;
   P.dts.dvTried = 1;
-  int copy = 1, ord = dv7_audio(&copy);
-  if (ord < 0) {
-    fprintf(stderr, "[dv] profile 7, but no audio track can go with it: played as it is\n");
-    return 0;
-  }
-  P.dts.conv = 1;
-  P.dts.convOrd = ord;
-  P.dts.dv = 1;
-  P.dts.copyA = copy;
-  P.dts.hevc = 1;
-  P.dts.convT0 = now_();
-  P.dts.convAt = P.live ? video_time() : P.startAt;
-  hls_conv_start(P.url, ord, (mkv_has_index(mkv) == 0 ? HC_NOINDEX : 0) | HC_DV81 | (copy ? HC_COPYAUDIO : 0));
-  fprintf(stderr, "[dv] profile 7 (%s): the picture as 8.1, audio track %d %s, from %.0f s\n", why, ord,
-          copy ? "copied" : "as Dolby Digital", P.dts.convAt);
-  return 1;
+  int kind = aud_kind(a->file[ord].codec);
+  int copy = !aud_convert_needed(kind) && aud_copyable(a->file[ord].codec);
+  return (copy || dts_allowed(kind)) && audio_convert(ord, copy, 1, why);
 }
 /* A stream whose text says Dolby Vision from a Blu-ray (a remux, FEL / MEL) on a TV with Dolby Vision: the first load
    waits for the file's head (a moment), so a profile 7 picture starts converted instead of switching after a second */
@@ -1997,7 +2048,95 @@ static int dv7_defer_wanted(void) {
   return dv && (strstr(l, "remux") || strstr(l, "bluray") || strstr(l, "blu-ray") || has_word(l, "bdmv") ||
                 has_word(l, "fel") || has_word(l, "mel") || has_word(l, "p7") || has_word(l, "dvp7"));
 }
-/* while converting: the stream once it is ready, then whether the TV plays it (HEVC in HLS: learned once) */
+static void audio_restore_native(int ord, double at) {
+  hls_conv_stop();
+  P.dts.conv = 0;
+  P.dts.dv = 0;
+  P.dts.nativeOrd = ord + 1;
+  P.dts.nativeUntil = now_() + 20;
+  audio_reload_at(at);
+  video_load(P.url);
+  video_pause(); /* wait for the chosen track before resuming the original container */
+  refresh_tray(3);
+}
+static void audio_unavailable(void) {
+  toast(T("Audio track unavailable"), 4000, NULL);
+}
+static void audio_file_select(int ord) {
+  AudioTracks a;
+  audio_read(&a);
+  if (ord < 0 || ord >= a.nFile || (P.dts.conv && ord == P.dts.convOrd))
+    return;
+  int kind = aud_kind(a.file[ord].codec), j = a.map[ord];
+  if (SB_HAS_DTS && !SB_WINDOWED && (aud_convert_needed(kind) || (j < 0 && dts_allowed(kind)))) {
+    if (!audio_convert(ord, 0, P.dts.dv || dv7_wanted(), "selected in Audio"))
+      fail(audio_error());
+    return;
+  }
+  if (P.dts.conv) {
+    if (aud_copyable(a.file[ord].codec) && audio_convert(ord, 1, P.dts.dv, "selected in Audio"))
+      return;
+    audio_restore_native(ord, audio_position());
+  } else if (j >= 0) {
+    set_audio(a.native[j].idx, ord);
+  } else {
+    audio_unavailable();
+  }
+}
+static void audio_select(int id) {
+  if (id >= FILE_AUDIO_ID) {
+    audio_file_select(id - FILE_AUDIO_ID);
+  } else if (!P.dts.conv) {
+    VidTrack tracks[AUDIO_MAX];
+    int n = video_audio_tracks(tracks, AUDIO_MAX);
+    for (int i = 0; i < n; i++)
+      if (tracks[i].idx == id) {
+        set_audio(id, -1);
+        return;
+      }
+  }
+}
+static int audio_selected_id(const AudioTracks *a) {
+  if (!a->nFile)
+    return audio_native_current();
+  int ord = audio_file_current(a);
+  return ord >= 0 ? FILE_AUDIO_ID + ord : -1;
+}
+static void audio_id(int key, char *out, size_t cap) {
+  if (key >= FILE_AUDIO_ID)
+    snprintf(out, cap, "file:%d", key - FILE_AUDIO_ID);
+  else
+    snprintf(out, cap, "%d", key);
+}
+static int audio_row(const AudioTracks *a, int i, char *label, size_t cap, char *detail, size_t detailCap) {
+  const MkvAudio *file = a->nFile ? &a->file[i] : NULL;
+  const VidTrack *v = !file ? &a->native[i] : a->map[i] >= 0 ? &a->native[a->map[i]] : NULL;
+  const char *lang = file && file->lang[0] ? file->lang : v ? v->lang : "";
+  const char *name = file && file->name[0] ? file->name : v ? v->name : "";
+  const char *ln = lang_name(lang);
+  if (*ln || *lang)
+    snprintf(label, cap, "%s", *ln ? ln : lang);
+  else
+    snprintf(label, cap, "%s %d", T("Audio"), i + 1);
+  char fmt[48];
+  if (file)
+    aud_format(file->codec, file->channels, fmt, sizeof fmt);
+  else
+    aud_label(v, fmt, sizeof fmt);
+  if (!*name || !strcasecmp(name, label) || (file && !strcasecmp(name, aud_codec_name(file->codec))))
+    snprintf(detail, detailCap, "%s", fmt);
+  else if (!*fmt || !strncasecmp(name, fmt, strlen(fmt)))
+    snprintf(detail, detailCap, "%s", name);
+  else
+    snprintf(detail, detailCap, "%s · %s", name, fmt);
+  if (file && P.dts.conv == 2 && !P.dts.copyA && i == P.dts.convOrd) {
+    size_t len = strlen(detail);
+    snprintf(detail + len, detailCap - len, "%s%s", len ? " · " : "",
+             P.dts.outCh >= 6 ? T("Dolby Digital 5.1 (converted)") : T("Dolby Digital 2.0 (converted)"));
+  }
+  return file ? FILE_AUDIO_ID + i : v->idx;
+}
+/* While converting, every retry keeps the same source audio ordinal. */
 static void dts_conv_tick(void) {
   if (P.dts.conv == 1) {
     char url[256], why[160];
@@ -2005,52 +2144,28 @@ static void dts_conv_tick(void) {
     int st = hls_conv_poll(url, sizeof url, why, sizeof why, &ci);
     if (!st)
       return;
-    if (st < 0 && P.dts.dv && P.dts.copyA) { /* the picture only: the file as it is, nothing said */
-      P.dts.conv = 0;
-      P.dts.dv = 0;
-      fprintf(stderr, "[dv] the converter can't take this file (%s): played as it is\n", why);
-      if (video_state() == VID_IDLE) {
-        P.live = 0;
-        P.liveT0 = 0;
-        P.didResume = 0;
-        video_load(P.url);
+    if (st < 0) {
+      fprintf(stderr, "[dts] audio track %d: %s\n", P.dts.convOrd, why);
+      if (P.dts.copyA) {
+        audio_restore_native(P.dts.convOrd, P.dts.convAt);
+      } else if (P.dts.dv) {
+        P.dts.dv = 0;
+        audio_open_conversion();
+      } else {
+        hls_conv_stop();
+        P.dts.conv = 0;
+        fail(audio_error());
       }
       return;
     }
-    if (st < 0 && P.dts.dv) { /* the picture couldn't be converted: the sound alone */
-      fprintf(stderr, "[dv] the converter can't take this picture (%s): the sound alone\n", why);
-      P.dts.dv = 0;
-      hls_conv_start(P.url, P.dts.convOrd, conv_flags(P.dts.convOrd));
-      return;
-    }
-    if (st < 0) {
-      P.dts.conv = 0;
-      P.dts.gaveUp = 1;
-      fprintf(stderr, "[dts] conversion failed: %s\n", why);
-      toast(T("This TV can’t play this video’s sound (DTS or TrueHD)"), 6000, NULL);
-      if (video_state() == VID_IDLE) {
-        P.live = 0;
-        P.liveT0 = 0;
-        P.didResume = 0;
-        video_load(P.url);
-      } /* the picture as before, without its sound */
-      return;
-    }
     P.dts.conv = 2;
+    P.dts.outCh = ci.outCh;
+    refresh_tray(3);
     P.dts.hevc = strstr(ci.vcodec, "hevc") != NULL;
     P.dts.convT0 = now_();
     P.dts.okAt = 0;
-    double at = P.live && video_has_media() ? video_time() : P.dts.convAt;
-    if (at < 1)
-      at = P.startAt;
-    P.live = 0;
-    P.liveT0 = 0;
-    P.didResume = 0;
-    P.startAt = at > 1 ? at : P.startAt;
-    P.curAud = -1;
-    P.infoKey[0] = 0;
-    fprintf(stderr, "[dts] playing the converted stream (%s, %s; %s) from %.0f s\n",
-            ci.indexed ? "segments" : "one stream", ci.vcodec, ci.path, at);
+    fprintf(stderr, "[dts] playing audio track %d (%s, %s; %s) from %.0f s\n", P.dts.convOrd,
+            ci.indexed ? "segments" : "one stream", ci.vcodec, ci.path, P.dts.convAt);
     P.dts.dvSeen = 0;
     P.dts.dvAt = 0;
     if (ci.indexed)
@@ -2090,236 +2205,108 @@ static void dts_conv_tick(void) {
       P.dts.dvAt = 0;
   }
 }
-static void dts_conv_failed(
-    const char *why) { /* the converted stream didn't play: today's reason, and HEVC from HLS is not tried again here */
-  fprintf(stderr, "[dts] the converted stream didn't play (%s)\n", why);
-  if (P.dts.dv) { /* the converted picture: not converted again on this TV; from here the file as it is, or (DTS) the
-                     sound alone converted */
+static void dts_conv_failed(const char *why) {
+  fprintf(stderr, "[dts] audio track %d did not play (%s)\n", P.dts.convOrd, why);
+  double at = audio_position();
+  if (P.dts.dv)
     best_learn("dv81Hls", 0);
-    hls_conv_stop();
-    P.dts.dv = 0;
-    double at = P.lastPos > 1 ? P.lastPos : P.dts.convAt;
-    P.startAt = at > 1 ? at : P.startAt;
-    P.live = 0;
-    P.liveT0 = 0;
-    P.didResume = 0;
-    P.curAud = -1;
-    if (P.dts.copyA) {
-      P.dts.conv = 0;
-      video_load(P.url);
-      return;
-    }
-    P.dts.conv = 1;
-    P.dts.convAt = P.startAt;
-    P.dts.convT0 = now_();
-    hls_conv_start(P.url, P.dts.convOrd, conv_flags(P.dts.convOrd));
-    fprintf(stderr, "[dts] the sound alone converted from %.0f s\n", P.startAt);
+  if (P.dts.copyA) {
+    audio_restore_native(P.dts.convOrd, at);
     return;
   }
-  if (P.dts.hevc)
+  if (P.dts.dv) {
+    video_unload();
+    audio_reload_at(at);
+    P.dts.conv = 1;
+    P.dts.convAt = at;
+    P.dts.convT0 = now_();
+    P.dts.dv = 0;
+    audio_open_conversion();
+    return;
+  }
+  if (P.dts.hevc && !video_audio_unsupported())
     best_learn("hlsHevcOk", 0);
   hls_conv_stop();
   P.dts.conv = 0;
-  P.dts.gaveUp = 1;
-  fail(T("This TV can’t play this video’s sound (DTS or TrueHD)"));
+  fail(audio_error());
 }
-/* Once a second while playing: the track the TV plays is checked against what this TV decodes. DTS still unknown here
-   is left to the TV (3 s of play without an error 200 teaches "yes", the error "no"); a track that can't play gives way
-   to one that does, in the language of the default-audio setting, else the same language, else the first; with none,
-   the reason is said once and the picture plays on */
 static void dts_tick(void) {
+  if (P.failed || P.isTrailer)
+    return;
+  int listed = mkv_listed(mkv);
+  if (listed != P.audioFileListed) {
+    P.audioFileListed = listed;
+    P.infoKey[0] = 0;
+    refresh_tray(3);
+  }
   if (P.dts.conv) {
     dts_conv_tick();
     return;
   }
-  if (!P.dts.dvTried && mkv_listed(mkv) && dv7_convert("read in the file's head"))
+  if (SB_WINDOWED || P.dts.deferUntil || (mkv && !listed && mkv_state(mkv) != MKV_FALLBACK))
     return;
-#if SB_WINDOWED
-  return; /* a desktop: mpv decodes DTS and TrueHD itself (folded down for stereo, audiodev_win.c): no track is swapped,
-             nothing to say */
-#endif
-  if (P.isTrailer || P.dts.gaveUp)
-    return;
-  VidTrack ts[16];
-  int n = aud_list(ts, 16);
-  if (!n)
-    return; /* only after the TV listed them: choosing earlier stalls it */
-  int cur = P.curAud >= 0 ? P.curAud : video_audio_current(), ci = 0;
-  for (int i = 0; i < n; i++)
-    if (ts[i].idx == cur)
-      ci = i;
-  VidTrack *t = &ts[ci];
-  int kind = aud_kind(t->codec), unsup = video_audio_unsupported();
-  /* the TV hides tracks it can't decode (TrueHD) from its list yet starts on one: an error 200 then belongs to the
-   * hidden track, not to the listed one; the listed tracks all play */
-  int hid = 0, hidWant = -1, own = -1, anyWant = 0, hk = 1; /* hk: 2 when a TrueHD track is among the hidden */
-  MkvAudio hma[16];
-  int hm = mkv_listed(mkv) ? mkv_audio_tracks(mkv, hma, 16) : 0;
-  const char *wl =
-      !strcmp(store_get("enableDefaultAudioTrack", "true"), "true") ? store_get("defaultAudioTrack", "eng") : "";
-  const char *fallback = subs_lang_fallback(wl);
-  if (fallback) {
-    int exact = 0;
-    for (int i = 0; !exact && i < n; i++)
-      exact = lang_match(ts[i].lang, wl);
-    for (int i = 0; !exact && i < hm; i++)
-      exact = lang_match(hma[i].lang, wl);
-    if (!exact)
-      wl = fallback;
+  AudioTracks a;
+  audio_read(&a);
+  if (a.nNative != P.audioNativeCount) {
+    P.audioNativeCount = a.nNative;
+    refresh_tray(3);
   }
-  for (int i = 0; i < n; i++)
-    if (*wl && lang_match(ts[i].lang, wl))
-      anyWant = 1;
-  if (hm) {
-    int nb = 0, tvb = 0, tvWant = anyWant, d = -1;
-    for (int i = 0; i < hm; i++) {
-      if (aud_kind(hma[i].codec))
-        nb++;
-      if (aud_kind(hma[i].codec) == 2)
-        hk = 2;
-      if (*wl && lang_match(hma[i].lang, wl))
-        anyWant = 1;
-      if (d < 0 && hma[i].def)
-        d = i;
-    }
-    for (int i = 0; i < n; i++)
-      if (aud_kind(ts[i].codec))
-        tvb++;
-    hid = hm > n && nb >= hm - n && !tvb;
-    if (hid && *wl && !tvWant)
-      for (int i = 0; i < hm && hidWant < 0; i++)
-        if (aud_kind(hma[i].codec) && lang_match(hma[i].lang, wl))
-          hidWant = i;
-    if (d < 0)
-      d = 0; /* the track the file starts on: its first default one */
-    /* your language nowhere in the file (or none set): a DTS / TrueHD track in a language no track the TV plays has is
-       the film's own sound in a dubbed release (Talaash: Hindi DTS beside two Russian AC3 dubs). That one is converted
-       rather than a dub played; the file's default first, then the most channels */
-    for (int i = 0; hid && !anyWant && i < hm; i++) {
-      if (!aud_kind(hma[i].codec) || !hma[i].lang[0] || !strcasecmp(hma[i].lang, "und"))
-        continue;
-      int dub = 0;
-      for (int j = 0; j < n && !dub; j++)
-        dub = lang_match(ts[j].lang, hma[i].lang);
-      if (!dub && (own < 0 || (hma[i].def && !hma[own].def) ||
-                   (hma[i].def == hma[own].def && hma[i].channels > hma[own].channels)))
-        own = i;
-    }
-    if (!P.dts.told) {
-      P.dts.told = 1;
-      char l[400];
-      size_t k = 0;
-      for (int i = 0; i < hm && k < sizeof l - 80; i++)
-        k += (size_t)snprintf(l + k, sizeof l - k, "%s track %d %s %s %d ch%s", i ? "," : "", i, hma[i].codec,
-                              hma[i].lang[0] ? hma[i].lang : "und", hma[i].channels, i == d ? " (starts here)" : "");
-      fprintf(stderr, "[dts] the file's sound:%s; the TV lists %d\n", l, n);
-    }
-  } /* the default-audio language only in a hidden track: that one is converted */
-  if (unsup && own >= 0 && !P.dts.ownTried) {
-    P.dts.ownTried = 1;
-    if (dts_convert(own, "error 200, your language isn't in the file: the only track in its language, not a dub"))
-      return;
-  } /* (the converter can't take it: a track the TV lists, below) */
-  if (unsup && hid && hidWant < 0 && P.dts.hidSw < 2) {
-    int pk = -1, ps = -1;
-    for (int i = 0; i < n; i++) {
-      int sc = ((*wl && lang_match(ts[i].lang, wl)) ? 100 : 0) + ts[i].channels;
-      if (sc > ps) {
-        ps = sc;
-        pk = i;
+  int ord = a.nFile ? audio_file_current(&a) : -1;
+  if (ord >= a.nFile)
+    ord = -1;
+  int j = ord >= 0 ? a.map[ord] : -1, unsup = video_audio_unsupported();
+  int initial = !P.autoAudDone || P.dts.nativeOrd;
+  if (ord < 0) {
+    for (int i = 0, sel = audio_native_current(); i < a.nNative; i++)
+      if (a.native[i].idx == sel) {
+        j = i;
+        break;
       }
-    }
-    if (pk >= 0) {
-      char lb[32], msg[160];
-      aud_label(&ts[pk], lb, sizeof lb);
-      snprintf(msg, sizeof msg, "%s",
-               hk == 2 ? T1("Playing the {t} track: this TV can’t play TrueHD", "t", lb)
-                       : T1("Playing the {t} track: this TV can’t play DTS", "t", lb));
-      fprintf(
-          stderr,
-          "[dts] path b: the TV hides the file's TrueHD/DTS track and refused it (error 200), track %d (%s %s, %d ch) instead\n",
-          pk, ts[pk].codec, ts[pk].lang, ts[pk].channels);
-      P.dts.hidSw++;
-      set_audio(ts[pk].idx);
-      if (!P.dts.said) {
-        P.dts.said = 1;
-        toast(msg, 4000, NULL);
-      }
-      return;
-    }
   }
-  if (unsup && hid) {
-    if (dts_convert(hidWant,
-                    hidWant >= 0 ? "error 200, your language only in a hidden track" : "error 200, hidden track"))
-      return;
-  }
-  if (kind == 1 && best_dts_mode() == 2)
-    return; /* DTS sound Off: the TV does with it whatever it can, nothing here steps in */
-  if (unsup && !hid) {
-    if (kind == 1 && !best_dts_mode()) {
+  int kind = ord >= 0 ? aud_kind(a.file[ord].codec) : j >= 0 ? aud_kind(a.native[j].codec) : 0;
+  int hidden = ord >= 0 && j < 0 && (a.nNative || video_live() || unsup);
+  int rejected = !P.dts.nativeOrd && unsup && (hidden || (j >= 0 && audio_native_current() == a.native[j].idx));
+  if (SB_HAS_DTS && dts_allowed(kind) && (aud_convert_needed(kind) || hidden || rejected)) {
+    if (kind == 1 && !best_dts_mode() && rejected)
       best_learn("dts", 0);
-      fprintf(stderr, "[dts] auto: this TV refused DTS, converting from now on\n");
+    if (ord < 0 && !a.nFile) {
+      ord = j; /* the platform supplied the complete list for this container */
+      P.dts.nOriginal = a.nNative;
+      memcpy(P.dts.original, a.native, a.nNative * sizeof a.native[0]);
     }
-    int known = 0;
-    for (int i = 0; i < P.dts.nbad; i++)
-      if (!strcasecmp(P.dts.bad[i], t->codec))
-        known = 1;
-    if (!known && t->codec[0] && P.dts.nbad < 4)
-      snprintf(P.dts.bad[P.dts.nbad++], sizeof P.dts.bad[0], "%s", t->codec);
-  }
-  if (kind == 1 && !unsup && !best_dts_mode() && best_learned("dts") < 0 && video_state() == VID_PLAYING) {
-    if (!P.dts.playAt)
-      P.dts.playAt = now_();
-    else if (now_() - P.dts.playAt >= 3) {
-      best_learn("dts", 1);
-      fprintf(stderr, "[dts] auto: this TV plays DTS itself\n");
-    }
-  } else
-    P.dts.playAt = 0;
-  if (!unsup && !aud_bad(t))
-    return;
-  const char *want =
-      !strcmp(store_get("enableDefaultAudioTrack", "true"), "true") ? store_get("defaultAudioTrack", "eng") : "";
-  int pick = -1, score = -1;
-  for (int i = 0; i < n && P.dts.switches < 4; i++) {
-    if (i == ci || aud_bad(&ts[i]))
-      continue; /* (tracks the TV doesn't name: a few tries at most) */
-    int sc = (*want && lang_match(ts[i].lang, want)) ? 2 : (t->lang[0] && !strcasecmp(ts[i].lang, t->lang)) ? 1 : 0;
-    if (sc > score) {
-      score = sc;
-      pick = i;
-    }
-  }
-  const char *what = kind == 2 ? "TrueHD" : "DTS";
-  if (pick >= 0 && score == 0 && !anyWant && kind && !P.dts.ownTried) {
-    P.dts.ownTried =
-        1; /* only another language's track plays here, and yours is nowhere in the file: this one converted */
-    if (dts_convert(ci, unsup ? "error 200, your language isn't in the file: this track, not a dub"
-                              : "your language isn't in the file: this track, not a dub"))
+    if (audio_convert(ord, 0, dv7_wanted(), rejected ? "native audio refused" : "selected track needs conversion"))
       return;
+    fail(audio_error());
+    return;
   }
-  if (pick >= 0) {
-    char lb[32], msg[160];
-    aud_label(&ts[pick], lb, sizeof lb);
-    snprintf(msg, sizeof msg, "%s",
-             kind == 2 ? T1("Playing the {t} track: this TV can’t play TrueHD", "t", lb)
-                       : T1("Playing the {t} track: this TV can’t play DTS", "t", lb));
-    fprintf(stderr, "[dts] path b: %s track %d (%s) can't play here%s, track %d (%s %s) instead\n", what, ci, t->codec,
-            unsup ? " (error 200)" : "", pick, ts[pick].codec, ts[pick].lang);
-    set_audio(ts[pick].idx);
-    P.dts.switches++;
-    if (!P.dts.said) {
-      P.dts.said = 1;
-      toast(msg, 4000, NULL);
+  if (ord >= 0 && (kind != 1 || j >= 0) && !P.dts.nativeOrd && dv7_convert(&a, ord, "read from the file"))
+    return;
+  if (initial && ord >= 0 && j >= 0) {
+    if (P.dts.nativeOrd || unsup || audio_native_current() != a.native[j].idx) {
+      set_audio(a.native[j].idx, ord);
+      refresh_tray(3);
+      return;
     }
+    P.autoAudDone = 1;
+    P.audioFilePick = ord + 1;
+    refresh_tray(3);
+  }
+  if (P.dts.nativeOrd && now_() >= P.dts.nativeUntil) {
+    P.dts.nativeOrd = 0;
+    fail(T("Audio track unavailable"));
     return;
   }
-  if (dts_convert(ci, unsup ? "error 200" : "known"))
-    return;
-  P.dts.gaveUp = 1;
-  fprintf(stderr, "[dts] path c: only %s here (track %d, %s)%s: no track this TV plays\n", what, ci, t->codec,
-          unsup ? ", error 200" : "");
-  toast(T("This TV can’t play this video’s sound (DTS or TrueHD)"), 6000, NULL);
+  if (unsup && (kind != 1 || dts_allowed(kind)) && !P.dts.warned) {
+    P.dts.warned = 1;
+    toast(audio_error(), 6000, NULL);
+  }
+  if (kind != 1 || unsup || hidden || best_dts_mode() || best_learned("dts") >= 0 || video_state() != VID_PLAYING) {
+    P.dts.playAt = 0;
+  } else if (!P.dts.playAt) {
+    P.dts.playAt = now_();
+  } else if (now_() - P.dts.playAt >= 3) {
+    best_learn("dts", 1);
+  }
 }
 
 /* ---- skips: intro / recap / credits. Sources, best first, merged per segment: the file's own chapters (a reader
@@ -4212,74 +4199,15 @@ static void tray_data(void) {
       memset(&P.tray.cols[3], 0, sizeof P.tray.cols[3]);
       P.tray.ncols = 3;
     }
-  } else if (t.kind == 3 && P.dts.conv) {
-    snprintf(P.tray.title, 300, "%s", T("Audio"));
-    MkvAudio ma[16];
-    int m = mkv_audio_tracks(mkv, ma, 16), on = P.dts.convOrd;
-    /* converted here: the file's own tracks (another one is converted from the same moment) */
-    if (on < 0)
-      for (int i = 0; i < m; i++)
-        if (aud_kind(ma[i].codec)) {
-          on = i;
-          break;
-        }
-    /* (with the picture converted too: every track the stream can carry, the ones this TV can't decode as Dolby
-     * Digital) */
-    for (int i = 0; i < m; i++) {
-      int asIs = P.dts.dv && !mkv_aud_bad(&ma[i]) && aud_copyable(ma[i].codec);
-      if (!asIs && !aud_kind(ma[i].codec))
-        continue;
-      TItem *x = add_item(P.tray.row, &P.tray.n, MAXROW, 4);
-      const char *ln = lang_name(ma[i].lang);
-      if (*ln)
-        snprintf(x->lb, 200, "%s", ln);
-      else if (ma[i].lang[0])
-        snprintf(x->lb, 200, "%s", ma[i].lang);
-      else {
-        char k[8];
-        snprintf(k, sizeof k, "%d", i + 1);
-        snprintf(x->lb, 200, "%s %s", T("Audio"), k);
-      }
-      if (asIs) {
-        VidTrack v;
-        memset(&v, 0, sizeof v);
-        snprintf(v.codec, sizeof v.codec, "%s", ma[i].codec);
-        v.channels = ma[i].channels;
-        aud_label(&v, x->sub, 120);
-      } else
-        snprintf(x->sub, 120, "%s",
-                 ma[i].channels >= 6 ? T("Dolby Digital 5.1 (converted)") : T("Dolby Digital 2.0 (converted)"));
-      x->i = 1000 + i;
-      x->on = i == on;
-    }
-    if (!P.tray.n) {
-      TItem *x = add_item(P.tray.row, &P.tray.n, MAXROW, 4);
-      snprintf(x->lb, 200, "%s", T("Dolby Digital 5.1 (converted)"));
-      x->i = 1000 + on;
-      x->on = 1;
-    }
   } else if (t.kind == 3) {
     snprintf(P.tray.title, 300, "%s", T("Audio"));
-    VidTrack ts[16];
-    int n = video_audio_tracks(ts, 16);
-    int sel = P.curAud >= 0 ? P.curAud : video_audio_current();
-    /* the language is the name; the format (AC3 5.1, EAC3 Atmos...) the line under it */
+    AudioTracks a;
+    audio_read(&a);
+    int n = a.nFile ? a.nFile : a.nNative, sel = audio_selected_id(&a);
     for (int i = 0; i < n; i++) {
       TItem *x = add_item(P.tray.row, &P.tray.n, MAXROW, 4);
-      const char *ln = lang_name(ts[i].lang);
-      if (*ln)
-        snprintf(x->lb, 200, "%s", ln);
-      else if (ts[i].lang[0])
-        snprintf(x->lb, 200, "%s", ts[i].lang);
-      else {
-        char k[8];
-        snprintf(k, sizeof k, "%d", i + 1);
-        snprintf(x->lb, 200, "%s %s", T("Audio"), k);
-      }
-      if (ts[i].name[0] && strcmp(ts[i].name, x->lb))
-        snprintf(x->sub, 120, "%s", ts[i].name);
-      x->i = ts[i].idx;
-      x->on = ts[i].idx == sel;
+      x->i = audio_row(&a, i, x->lb, sizeof x->lb, x->sub, sizeof x->sub);
+      x->on = x->i == sel;
     }
     if (!n) {
       TItem *x = add_item(P.tray.row, &P.tray.n, MAXROW, 0);
@@ -4417,7 +4345,7 @@ static void render_tray(int fresh) {
   } /* the sources: their own list */
   char keepU[1024] = "";
   char keepLb[200] = "";
-  int keepK = -1;
+  int keepK = -1, keepId = -1;
   {
     TItem *cur = NULL;
     if (P.tray.ncols)
@@ -4430,6 +4358,7 @@ static void render_tray(int fresh) {
       snprintf(keepU, sizeof keepU, "%s", cur->u);
       snprintf(keepLb, sizeof keepLb, "%s", cur->lb);
       keepK = cur->k;
+      keepId = cur->i;
     }
   }
   tray_data();
@@ -4462,7 +4391,8 @@ static void render_tray(int fresh) {
     int idx = -1;
     if (!fresh && keepK >= 0)
       for (int i = 0; i < P.tray.n; i++)
-        if (P.tray.row[i].k == keepK && !strcmp(P.tray.row[i].lb, keepLb) &&
+        if (P.tray.row[i].k == keepK &&
+            (P.tray.kind == 3 ? P.tray.row[i].i == keepId : !strcmp(P.tray.row[i].lb, keepLb)) &&
             (keepK != 3 || (P.tray.row[i].st && !strcmp(P.tray.row[i].st->url, keepU)))) {
           idx = i;
           break;
@@ -4623,24 +4553,8 @@ static void choose(TItem *it) {
       if (k < n)
         set_ext_sub(it->ls, &l[k], 0);
     }
-  } else if (it->k == 4 && P.tray.kind == 3 && it->i >= 1000) {
-    int ord = it->i - 1000; /* another track converted, from here */
-    if (P.dts.conv == 2 && ord != P.dts.convOrd && ord >= 0) {
-      P.dts.convOrd = ord;
-      P.dts.conv = 1;
-      P.dts.convAt = video_time();
-      P.dts.convT0 = now_();
-      int fl = conv_flags(ord);
-      P.dts.copyA = !!(fl & HC_COPYAUDIO);
-      video_unload();
-      P.live = 0;
-      P.liveT0 = 0;
-      hls_conv_start(P.url, ord, fl);
-      fprintf(stderr, "[dts] audio track %d instead (%s)\n", ord, P.dts.copyA ? "copied" : "converted");
-    }
-    render_tray(0);
   } else if (it->k == 4 && P.tray.kind == 3) {
-    set_audio(it->i);
+    audio_select(it->i);
     render_tray(0);
   } else if (it->k == 2) { /* an episode: its sources, right here */
     const cJSON *v = it->v;
@@ -5245,47 +5159,33 @@ static void on_size(int st, const unsigned char *body, size_t len, void *ud) {
     snprintf(P.sizeTxt, sizeof P.sizeTxt, "%s", T1("{n} MB", "n", n));
   }
 }
-/* A stream whose text names only TrueHD, or only DTS on a TV seen failing it: the TV is not given it until the file's
-   tracks are read (the subtitle reader's head read, a moment): a track it plays is chosen once it lists them, else the
-   conversion starts without a silent first try. Every other stream loads at once, as always */
+/* Wait briefly for a likely unsupported soundtrack, so its first load can use the file's chosen track. */
 static int dts_defer_wanted(void) {
   if (P.isTrailer || P.isHls || strncmp(P.url, "http", 4) || !hls_conv_available())
     return 0;
-  BestRate r;
-  if (!best_rate(&P.st, NULL, -1, 100, &r) || !r.mute)
-    return 0;
-  char au[48];
-  best_audio_of(P.sname, au, sizeof au);
-  return strstr(au, "TrueHD") || best_learned("dts") == 0;
+  char label[1100], codec[48];
+  snprintf(label, sizeof label, "%s %s", P.sname, P.st.filename);
+  best_audio_of(label, codec, sizeof codec);
+  return aud_convert_needed(aud_kind(codec));
 }
 static void dts_defer_tick(void) {
-  if (P.dts.conv) {
-    P.dts.deferUntil = 0;
-    return;
-  } /* (started meanwhile, from the file's head) */
   int listed = mkv_listed(mkv);
   if (!listed && mkv_state(mkv) != MKV_FALLBACK && now_() < P.dts.deferUntil)
     return;
   P.dts.deferUntil = 0;
-  MkvAudio ma[16];
-  int m = listed ? mkv_audio_tracks(mkv, ma, 16) : 0, playable = 0, first = -1;
-  for (int i = 0; i < m; i++) {
-    VidTrack v;
-    memset(&v, 0, sizeof v);
-    snprintf(v.codec, sizeof v.codec, "%s", ma[i].codec);
-    if (!aud_bad(&v))
-      playable = 1;
-    else if (first < 0)
-      first = i;
+  AudioTracks a;
+  audio_read(&a);
+  if (a.nFile) {
+    int ord = audio_file_default(&a);
+    int kind = aud_kind(a.file[ord].codec);
+    if (aud_convert_needed(kind)) {
+      if (!audio_convert(ord, 0, dv7_wanted(), "before loading the file"))
+        fail(audio_error());
+      return;
+    }
+    if (kind != 1 && dv7_convert(&a, ord, "before loading the file"))
+      return;
   }
-  fprintf(stderr, "[dts] the file's sound: %d track(s), %s\n", m,
-          !m         ? "not read: the TV tries it"
-          : playable ? "one plays here: the TV loads it"
-                     : "none plays here");
-  if (m && !playable && first >= 0 && dts_convert(first, "known before loading"))
-    return;
-  if (listed && dv7_convert("known before loading"))
-    return;
   video_load(P.url);
 }
 static void start_video(void) {
@@ -5838,7 +5738,7 @@ void player_cast(int cmd, double pos) {
     close_player(0, 0);
 }
 /* the subtitles and audio as the trays list them, for a phone: ids it hands back as they are ("off", "emb:<track>",
-   "ext1:<n>" the stream's and OpenSubtitles', "ext2:<n>" the addons', audio "<track>" or "conv:<n>" a converted one) */
+   "ext1:<n>" the stream's and OpenSubtitles', "ext2:<n>" the addons', audio "<track>" or "file:<ordinal>") */
 char *player_cast_tracks(void) {
   if (!P.open || P.closing)
     return NULL;
@@ -5880,46 +5780,25 @@ char *player_cast_tracks(void) {
     }
   }
   cJSON_AddStringToObject(j, "sub", cur);
-  if (P.dts.conv) {
-    MkvAudio ma[16];
-    int m = mkv ? mkv_audio_tracks(mkv, ma, 16) : 0;
-    for (int i = 0; i < m; i++) {
-      cJSON *o = cJSON_CreateObject();
-      snprintf(id, sizeof id, "conv:%d", i);
-      const char *ln = lang_name(ma[i].lang);
-      snprintf(lb, sizeof lb, "%s", *ln ? ln : ma[i].lang[0] ? ma[i].lang : T("Audio"));
-      cJSON_AddStringToObject(o, "id", id);
-      cJSON_AddStringToObject(o, "label", lb);
-      cJSON_AddStringToObject(o, "lang", ma[i].lang);
-      cJSON_AddItemToArray(al, o);
+  AudioTracks a;
+  audio_read(&a);
+  int n = a.nFile ? a.nFile : a.nNative;
+  for (int i = 0; i < n; i++) {
+    char detail[160];
+    int key = audio_row(&a, i, lb, sizeof lb, detail, sizeof detail);
+    audio_id(key, id, sizeof id);
+    if (detail[0]) {
+      size_t len = strlen(lb);
+      snprintf(lb + len, sizeof lb - len, " · %s", detail);
     }
-    snprintf(id, sizeof id, "conv:%d", P.dts.convOrd);
-    cJSON_AddStringToObject(j, "aud", id);
-  } else {
-    VidTrack ts[16];
-    int n = video_audio_tracks(ts, 16), sel = P.curAud >= 0 ? P.curAud : video_audio_current();
-    for (int i = 0; i < n; i++) {
-      cJSON *o = cJSON_CreateObject();
-      snprintf(id, sizeof id, "%d", ts[i].idx);
-      const char *ln = lang_name(ts[i].lang);
-      if (*ln)
-        snprintf(lb, sizeof lb, "%s", ln);
-      else if (ts[i].lang[0])
-        snprintf(lb, sizeof lb, "%s", ts[i].lang);
-      else
-        snprintf(lb, sizeof lb, "%s %d", T("Audio"), i + 1);
-      if (ts[i].name[0] && strcmp(ts[i].name, lb)) {
-        size_t L = strlen(lb);
-        snprintf(lb + L, sizeof lb - L, " · %s", ts[i].name);
-      }
-      cJSON_AddStringToObject(o, "id", id);
-      cJSON_AddStringToObject(o, "label", lb);
-      cJSON_AddStringToObject(o, "lang", ts[i].lang);
-      cJSON_AddItemToArray(al, o);
-    }
-    snprintf(id, sizeof id, "%d", sel);
-    cJSON_AddStringToObject(j, "aud", id);
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddStringToObject(o, "id", id);
+    cJSON_AddStringToObject(o, "label", lb);
+    cJSON_AddStringToObject(o, "lang", a.nFile ? a.file[i].lang : a.native[i].lang);
+    cJSON_AddItemToArray(al, o);
   }
+  audio_id(audio_selected_id(&a), id, sizeof id);
+  cJSON_AddStringToObject(j, "aud", id);
   cJSON_AddNumberToObject(j, "delay", (int)lround(P.subDelay * 1000));
   char *s = cJSON_PrintUnformatted(j);
   cJSON_Delete(j);
@@ -5956,23 +5835,10 @@ void player_cast_track(const char *kind, const char *id, int ms) {
     return;
   }
   if (!strcmp(kind, "audio")) {
-    if (!strncmp(id, "conv:", 5)) {
-      int ord = atoi(id + 5);
-      if (P.dts.conv == 2 && ord != P.dts.convOrd && ord >= 0) {
-        P.dts.convOrd = ord;
-        P.dts.conv = 1;
-        P.dts.convAt = video_time();
-        P.dts.convT0 = now_();
-        int fl = conv_flags(ord);
-        P.dts.copyA = !!(fl & HC_COPYAUDIO);
-        video_unload();
-        P.live = 0;
-        P.liveT0 = 0;
-        hls_conv_start(P.url, ord, fl);
-        fprintf(stderr, "[dts] audio track %d instead (phone)\n", ord);
-      }
-    } else
-      set_audio(atoi(id));
+    if (!strncmp(id, "file:", 5) || !strncmp(id, "conv:", 5))
+      audio_file_select(atoi(id + 5));
+    else
+      audio_select(atoi(id));
     refresh_tray(3);
   }
 }
@@ -6127,14 +5993,20 @@ static void info_update(void) {
            codec); /* the page's "  ·  " collapses to one space each side */
   char aud[96] = "";
   {
-    VidTrack ts[16];
-    int nt = video_audio_tracks(ts, 16);
-    int sel = P.curAud >= 0 ? P.curAud : video_audio_current();
-    for (int i = 0; i < nt; i++)
-      if (ts[i].idx == sel) {
-        const char *ln = lang_name(ts[i].lang);
-        snprintf(aud, sizeof aud, "%s", *ln ? ln : ts[i].name);
-      }
+    AudioTracks tracks;
+    audio_read(&tracks);
+    int id = audio_selected_id(&tracks);
+    if (id >= FILE_AUDIO_ID && id - FILE_AUDIO_ID < tracks.nFile) {
+      const MkvAudio *track = &tracks.file[id - FILE_AUDIO_ID];
+      const char *ln = lang_name(track->lang);
+      snprintf(aud, sizeof aud, "%s", *ln ? ln : track->lang);
+    } else if (!tracks.nFile) {
+      for (int i = 0; i < tracks.nNative; i++)
+        if (tracks.native[i].idx == id) {
+          const char *ln = lang_name(tracks.native[i].lang);
+          snprintf(aud, sizeof aud, "%s", *ln ? ln : tracks.native[i].name);
+        }
+    }
   }
   if (chs[0]) {
     size_t l = strlen(aud);
@@ -6556,6 +6428,7 @@ void player_tick(float dt) {
     if (mkv)
       mkv_set_pos(mkv, t, b > t ? b - t : -1);
     dts_tick();
+    vs = video_state();
     if (!P.isTrailer && (!P.embKnown || !P.mkvTracksOk || mkv_state(mkv) == MKV_FALLBACK))
       load_emb_tracks(); /* until the file's list settles (the TV's own list may come late) */
     if (P.isP2p) {
@@ -6588,12 +6461,21 @@ void player_tick(float dt) {
       player_chapters(P.url, pc, n);
     }
   }
-  if (P.dts.conv == 2 && !P.failed && (vs == VID_ERROR || (!video_live() && now_() - P.dts.convT0 > 25))) {
-    dts_conv_failed(vs == VID_ERROR ? video_error() : "no picture after 25 s");
+  if (P.dts.conv == 2 && !P.failed &&
+      (vs == VID_ERROR || video_audio_unsupported() || (!video_live() && now_() - P.dts.convT0 > 25))) {
+    dts_conv_failed(vs == VID_ERROR             ? video_error()
+                    : video_audio_unsupported() ? "audio refused"
+                                                : "no picture after 25 s");
     return;
   }
   if (P.dts.deferUntil)
     dts_defer_tick();
+  vs = video_state();
+  if (vs == VID_ERROR && P.dts.nativeOrd) {
+    P.dts.nativeOrd = 0;
+    fail(T("Audio track unavailable"));
+    return;
+  }
   if (vs == VID_ERROR && !P.failed && P.started && P.isP2p && !P.p2pRetried &&
       p2p_moved_recently()) { /* the P2P stream's storage moved (a USB drive pulled out): the same stream once more,
                                  same moment */
@@ -6651,7 +6533,7 @@ void player_tick(float dt) {
       auto_audio();
     }
   } /* the TV can list its tracks after the picture starts */
-  if (!P.live && video_live()) {
+  if (!P.live && !P.dts.nativeOrd && video_live()) {
     if (!P.liveT0) {
       P.liveT0 = now_();
       P.steadyAt = 0;
@@ -8960,8 +8842,9 @@ static int ph_audio_n(void) { /* the tracks in the file, asked twice a second at
   static double at;
   static int n;
   if (now_() - at > 0.5 || now_() < at) {
-    VidTrack ts[16];
-    n = video_audio_tracks(ts, 16);
+    AudioTracks tracks;
+    audio_read(&tracks);
+    n = tracks.nFile ? tracks.nFile : tracks.nNative;
     at = now_();
   }
   return n;
@@ -9072,7 +8955,7 @@ static void ph_geo(void) {
       ids[n++] = "cc";
   } else
     ids[n++] = "subs";
-  if (!trailer && ph_audio_n() >= 2)
+  if (!trailer && ph_audio_n() > 0)
     ids[n++] = "aud";
   ids[n++] = "asp";
   if (!trailer)

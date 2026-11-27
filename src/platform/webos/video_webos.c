@@ -90,7 +90,7 @@ static struct {
   int w, h, rate;
   long bits;
   char hdr[24], scan[24];
-  VidTrack aud[16];
+  VidTrack aud[64];
   int naud;
   VidTrack txt[24];
   int ntxt;
@@ -368,7 +368,7 @@ static void parse_tracks(const char *p) {
   const char *a = strstr(p, "\"audioTrackInfo\"");
   if (a) {
     const char *o = strchr(a, '[');
-    while (o && *o && S.naud < 16) {
+    while (o && *o && S.naud < (int)(sizeof S.aud / sizeof S.aud[0])) {
       o++;
       while (*o == ' ' || *o == ',' || *o == '\n')
         o++;
