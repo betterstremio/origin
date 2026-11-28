@@ -114,6 +114,10 @@ static int delete_key(int k) {
 }
 
 static void draw_delete(void) {
+  /* app.c keeps drawing every overlay that has shown (for its closing motion): closed, the sheet draws nothing and
+     takes no touch, or it stayed on the page after Delete or Cancel */
+  if (app_overlay != &deleteSheet)
+    return;
   float w = SB_W - 2 * PH_M;
   if (w > 420)
     w = 420;
