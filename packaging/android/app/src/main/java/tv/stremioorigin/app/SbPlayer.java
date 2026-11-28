@@ -85,7 +85,9 @@ public final class SbPlayer {
             .setAllowCrossProtocolRedirects(true).setConnectTimeoutMs(15000).setReadTimeoutMs(30000)
             .setUserAgent("StremioOrigin (Android; native)");
         DefaultRenderersFactory rf = new DefaultRenderersFactory(ctx).setEnableDecoderFallback(true)
-            .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER);
+            // the device's own decoders and HDMI passthrough first (a receiver keeps DTS:X, Atmos), FFmpeg after them:
+            // DTS and TrueHD play on a box or phone with neither, as PCM
+            .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON);
         ExoPlayer p = new ExoPlayer.Builder(ctx, rf).setMediaSourceFactory(new DefaultMediaSourceFactory(new DefaultDataSource.Factory(ctx, http))).build();
         p.setVideoSurfaceView(surface);
         p.addListener(new Player.Listener() {
