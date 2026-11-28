@@ -440,10 +440,20 @@ public class MainActivity extends SDLActivity {
                 if (ac.supportsEncoding(androidx.media3.common.C.ENCODING_DOLBY_TRUEHD)) truehd = 1;
                 if (ac.supportsEncoding(androidx.media3.common.C.ENCODING_AC3)) ac3 = 1;           // passed to a receiver or the TV over HDMI
                 if (ac.supportsEncoding(androidx.media3.common.C.ENCODING_E_AC3) || ac.supportsEncoding(androidx.media3.common.C.ENCODING_E_AC3_JOC)) eac3 = 1;
+                // what neither the device nor the HDMI sink takes, SbPlayer's FFmpeg renderer decodes (TVs and phones alike)
+                if (ffmpeg(androidx.media3.common.MimeTypes.AUDIO_DTS)) dts = 1;
+                if (ffmpeg(androidx.media3.common.MimeTypes.AUDIO_TRUEHD)) truehd = 1;
+                if (ffmpeg(androidx.media3.common.MimeTypes.AUDIO_AC3)) ac3 = 1;
+                if (ffmpeg(androidx.media3.common.MimeTypes.AUDIO_E_AC3)) eac3 = 1;
             } catch (Throwable t) { Log.w(TAG, "caps", t); ac3 = eac3 = 1; }   // (unknown: as a TV)
             String s = "maxRes=" + maxRes + ",hdr=" + hdr + ",dv=" + dv + ",av1=" + av1 + ",dts=" + dts + ",truehd=" + truehd + ",ac3=" + ac3 + ",eac3=" + eac3;
             Log.i(TAG, "device caps " + s);
             return s;
+        }
+        @androidx.annotation.OptIn(markerClass = androidx.media3.common.util.UnstableApi.class)
+        static boolean ffmpeg(String mime) {
+            try { return androidx.media3.decoder.ffmpeg.FfmpegLibrary.isAvailable() && androidx.media3.decoder.ffmpeg.FfmpegLibrary.supportsFormat(mime); }
+            catch (Throwable t) { return false; }
         }
     }
 }

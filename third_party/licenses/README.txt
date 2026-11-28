@@ -12,6 +12,8 @@ The Android build adds (tools/android/build-deps.sh fetches and pins them; they 
 - curl 8.11.0 (curl licence, MIT-style, curl-MIT-like.txt): libcurl.so.
 - Mbed TLS 3.6.2 (Apache-2.0, mbedtls-Apache-2.0.txt): inside libcurl.so.
 - AndroidX Media3 1.5.0 / ExoPlayer and AndroidX Annotation (Apache-2.0, the same text as mbedtls-Apache-2.0.txt): the video player.
+- Jellyfin's Media3 FFmpeg decoder 1.5.0+1 (org.jellyfin.media3:media3-ffmpeg-decoder, github.com/jellyfin/jellyfin-androidx-media;
+  GPL-3.0, the text in torrent-engine-GPL-3.0.txt; FFmpeg inside it, LGPL 2.1 or later): DTS and TrueHD where the device has no decoder.
 The Windows build adds (tools/windows/build-deps.sh fetches and pins them; they are not in third_party/):
 - SDL 2.30.9 (sdl2-zlib.txt), curl 8.11.0 (curl-MIT-like.txt), Mbed TLS 3.6.2 (mbedtls-Apache-2.0.txt) and zlib 1.3.1
   (zlib licence, zlib-zlib.txt): linked into Origin.exe.

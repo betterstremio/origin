@@ -43,7 +43,11 @@ android {
     }
     buildFeatures { buildConfig true }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
-    packagingOptions { jniLibs { useLegacyPackaging true } }   // extracted to nativeLibraryDir: the engine is opened by path
+    packagingOptions {
+        jniLibs { useLegacyPackaging true }   // extracted to nativeLibraryDir: the engine is opened by path
+        // the FFmpeg decoder ships every CPU type; only the ones the app is built for are kept (the universal APK too)
+        ['arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64'].findAll { !abis.contains(it) }.each { jniLibs.excludes.add("lib/$it/**") }
+    }
     sourceSets { main { java.srcDirs += ['build/sdl-java'] } }
     lint { abortOnError false; checkReleaseBuilds false }
 }
@@ -54,6 +58,9 @@ dependencies {
     implementation "androidx.media3:media3-exoplayer-hls:$m3"
     implementation "androidx.media3:media3-exoplayer-dash:$m3"
     implementation "androidx.media3:media3-ui:$m3"
+    // FFmpeg's audio decoders for Media3 (Jellyfin's build, GPL-3.0): DTS, DTS-HD (its core) and TrueHD decoded in
+    // software where the device has no decoder of its own and the TV or receiver doesn't take them over HDMI
+    implementation "org.jellyfin.media3:media3-ffmpeg-decoder:$m3+1"
     implementation 'androidx.annotation:annotation:1.9.1'
     implementation 'androidx.annotation:annotation-experimental:1.4.1'
 }
